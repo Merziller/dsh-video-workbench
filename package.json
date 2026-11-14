@@ -1,0 +1,27 @@
+{
+  "name": "dsh-video-workbench-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dual-Engine (HTML/GSAP & Remotion) Video Workbench + Voice Pack System for DeepSeek Harness (DSH)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dsh": "node ./scripts/dsh-runner.mjs",
+    "dsh:video": "node ./scripts/dsh-runner.mjs video",
+    "setup:profile": "node ./scripts/install-profile.mjs",
+    "test": "node ./scripts/self-test.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "remotion",
+    "gsap",
+    "indextts",
+    "gpt-sovits",
+    "video-workbench"
+  ]
+}

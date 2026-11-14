@@ -1,0 +1,58 @@
+# Environment & Secrets (NEVER commit personal paths or API keys)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+secrets.json
+
+# Dependencies & Package Manager Caches
+node_modules/
+.npm-cache/
+.pnpm-store/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build & Runtime State
+dist/
+build/
+output/
+.frames-snapshot/
+frames-concat.txt
+.dsh-home/
+.remotion/
+.tmp/
+tmp/
+
+# Local Imported Voice Packs & User Assets (keep only example template)
+voice-packs/catalog.json
+voice-packs/imported/
+voice-packs/samples/
+
+# Generated Media & Test Artifacts
+*.mp4
+*.mov
+*.webm
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.pt
+*.pth
+*.onnx
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo

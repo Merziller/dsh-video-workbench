@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeepSeek Harness 双引擎视频工作台演示</title>
+  <style>
+    @font-face {
+      font-family: 'DSH-YaHei';
+      src: local('Microsoft YaHei UI'), local('Microsoft YaHei'), local('微软雅黑');
+      font-weight: 400 700;
+    }
+    @font-face {
+      font-family: 'DSH-Mono';
+      src: local('Consolas'), local('Cascadia Mono');
+      font-weight: 400 700;
+    }
+    :root {
+      --bg-color: #0B1020;
+      --surface-color: #131C33;
+      --text-primary: #F8FAFC;
+      --text-secondary: #CBD5E1;
+      --accent-color: #38BDF8;
+      --font-sans: 'DSH-YaHei', 'Microsoft YaHei', sans-serif;
+      --font-mono: 'DSH-Mono', 'Consolas', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: var(--bg-color);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      user-select: none;
+    }
+    #viewport {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at 18% 20%, rgba(56, 189, 248, 0.14), transparent 55%),
+                  radial-gradient(circle at 82% 80%, rgba(99, 102, 241, 0.14), transparent 55%),
+                  var(--bg-color);
+    }
+    .scene-stage {
+      position: relative;
+      width: 88%;
+      height: 84%;
+      background: rgba(19, 28, 51, 0.88);
+      border: 1px solid rgba(56, 189, 248, 0.32);
+      border-radius: 24px;
+      padding: 40px 48px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+      overflow: hidden;
+    }
+    .scene-bg-glow {
+      position: absolute;
+      width: 420px;
+      height: 420px;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.25;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .scene-glow-1 { top: -120px; right: -80px; background: #38bdf8; }
+    .scene-glow-2 { bottom: -140px; left: -60px; background: #818cf8; }
+    .scene-glow-3 { top: -100px; left: 30%; background: #34d399; }
+    .scene-header {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: 15px;
+      letter-spacing: 0.08em;
+    }
+    .scene-badge {
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.16);
+      color: var(--accent-color);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      font-weight: 700;
+    }
+    .scene-voice-tag {
+      color: var(--text-primary);
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      padding: 6px 14px;
+      border-radius: 999px;
+    }
+    .scene-body {
+      margin: auto 0;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      z-index: 2;
+    }
+    .scene-title {
+      font-size: clamp(32px, 4.2vw, 54px);
+      font-weight: 700;
+      line-height: 1.2;
+      color: var(--text-primary);
+      text-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+    .scene-visual-desc {
+      font-size: clamp(16px, 1.8vw, 22px);
+      color: var(--text-secondary);
+      max-width: 85%;
+      line-height: 1.6;
+    }
+    .scene-metrics {
+      display: flex;
+      gap: 18px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .metric-card {
+      background: rgba(11, 16, 32, 0.78);
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      border-radius: 14px;
+      padding: 12px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .metric-label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .metric-val {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--accent-color);
+    }
+    .waveform-bars {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      height: 22px;
+      padding-top: 2px;
+    }
+    .waveform-bar {
+      width: 5px;
+      height: 12px;
+      border-radius: 3px;
+      background: linear-gradient(180deg, #38bdf8, #34d399);
+    }
+    .scene-subtitle-bar {
+      background: rgba(9, 13, 24, 0.9);
+      border-left: 4px solid var(--accent-color);
+      padding: 16px 24px;
+      border-radius: 12px;
+      z-index: 2;
+    }
+    .subtitle-text {
+      font-size: clamp(18px, 2.1vw, 26px);
+      color: var(--text-primary);
+      line-height: 1.45;
+      font-weight: 500;
+    }
+    .stage-progress-track {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 5px;
+      background: rgba(255, 255, 255, 0.08);
+      z-index: 3;
+    }
+    .stage-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #38bdf8, #818cf8, #34d399);
+    }
+    #hud-counter {
+      position: fixed;
+      bottom: 14px;
+      right: 22px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-secondary);
+      background: rgba(11, 16, 32, 0.8);
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+  </style>
+</head>
+<body>
+  <div id="viewport"></div>
+  <div id="hud-counter">FRAME 0</div>
+
+  
+  <!-- 分镜 1: 双引擎视频工作台：从对话到成片 -->
+  <template id="scene-01">
+    <div class="scene-stage" data-scene-id="scene-01" data-scene-index="1">
+      <div class="scene-bg-glow scene-glow-1"></div>
+      <header class="scene-header">
+        <span class="scene-badge">SCENE 01 · 平静</span>
+        <span class="scene-voice-tag">🎙️ auto</span>
+      </header>
+      <main class="scene-body">
+        <h1 class="scene-title">双引擎视频工作台：从对话到成片</h1>
+        <p class="scene-visual-desc">科技蓝流体背景，展示 [DeepSeek Harness | HTML 视频] 胶囊切换器与双引擎架构图。</p>
+        <div class="scene-metrics">
+          <div class="metric-card">
+            <span class="metric-label">DURATION</span>
+            <span class="metric-val metric-duration">4.50s</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">FRAMES</span>
+            <span class="metric-val metric-frames">135f @ 30fps</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">ENGINE</span>
+            <span class="metric-val metric-engine">HTML</span>
+          </div>
+          <div class="metric-card waveform-card">
+            <span class="metric-label">AUDIO WAVEFORM</span>
+            <div class="waveform-bars">
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+            </div>
+          </div>
+        </div>
+      </main>
+      <footer class="scene-subtitle-bar">
+        <span class="subtitle-text" id="subtitle-text-scene-01">欢迎体验 DeepSeek Harness 视频工作台。支持 HTML 与 Remotion 双引擎无缝切换，让多模态视频创作真正实现工程化与帧级可控。</span>
+      </footer>
+      <div class="stage-progress-track">
+        <div class="stage-progress-fill"></div>
+      </div>
+    </div>
+  </template>
+
+  <!-- 分镜 2: 自定义音色包导入与 AI 智能声线匹配 -->
+  <template id="scene-02">
+    <div class="scene-stage" data-scene-id="scene-02" data-scene-index="2">
+      <div class="scene-bg-glow scene-glow-2"></div>
+      <header class="scene-header">
+        <span class="scene-badge">SCENE 02 · 高兴</span>
+        <span class="scene-voice-tag">🎙️ auto</span>
+      </header>
+      <main class="scene-body">
+        <h1 class="scene-title">自定义音色包导入与 AI 智能声线匹配</h1>
+        <p class="scene-visual-desc">展示音色包管理矩阵、声波频谱动画与 ffprobe 帧级时长回填流程。</p>
+        <div class="scene-metrics">
+          <div class="metric-card">
+            <span class="metric-label">DURATION</span>
+            <span class="metric-val metric-duration">5.00s</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">FRAMES</span>
+            <span class="metric-val metric-frames">150f @ 30fps</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">ENGINE</span>
+            <span class="metric-val metric-engine">HTML</span>
+          </div>
+          <div class="metric-card waveform-card">
+            <span class="metric-label">AUDIO WAVEFORM</span>
+            <div class="waveform-bars">
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+            </div>
+          </div>
+        </div>
+      </main>
+      <footer class="scene-subtitle-bar">
+        <span class="subtitle-text" id="subtitle-text-scene-02">无论是温婉叙事、知性主播还是激昂评书，系统都能根据分镜情绪与角色定位自由匹配最佳音色，并支持随时导入你的专属音色包。</span>
+      </footer>
+      <div class="stage-progress-track">
+        <div class="stage-progress-fill"></div>
+      </div>
+    </div>
+  </template>
+
+  <!-- 分镜 3: 3×3 九宫格多模态视觉自检与一键渲染 -->
+  <template id="scene-03">
+    <div class="scene-stage" data-scene-id="scene-03" data-scene-index="3">
+      <div class="scene-bg-glow scene-glow-3"></div>
+      <header class="scene-header">
+        <span class="scene-badge">SCENE 03 · 平静</span>
+        <span class="scene-voice-tag">🎙️ auto</span>
+      </header>
+      <main class="scene-body">
+        <h1 class="scene-title">3×3 九宫格多模态视觉自检与一键渲染</h1>
+        <p class="scene-visual-desc">3×3 九宫格分镜快照缩略图矩阵，伴随 H.264 渲染完成徽章。</p>
+        <div class="scene-metrics">
+          <div class="metric-card">
+            <span class="metric-label">DURATION</span>
+            <span class="metric-val metric-duration">4.50s</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">FRAMES</span>
+            <span class="metric-val metric-frames">135f @ 30fps</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">ENGINE</span>
+            <span class="metric-val metric-engine">HTML</span>
+          </div>
+          <div class="metric-card waveform-card">
+            <span class="metric-label">AUDIO WAVEFORM</span>
+            <div class="waveform-bars">
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+              <span class="waveform-bar"></span>
+            </div>
+          </div>
+        </div>
+      </main>
+      <footer class="scene-subtitle-bar">
+        <span class="subtitle-text" id="subtitle-text-scene-03">在合成最终视频前，自动抽帧生成三乘三九宫格快照，配合多模态视觉自检消除排版瑕疵，一键编码输出高清成片。</span>
+      </footer>
+      <div class="stage-progress-track">
+        <div class="stage-progress-fill"></div>
+      </div>
+    </div>
+  </template>
+
+  <script id="dsh-script-data" type="application/json">
+{
+  "title": "DeepSeek Harness 双引擎视频工作台演示",
+  "engine": "html",
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "audience": "开发者与数字内容创作者",
+  "goal": "展示 HTML/GSAP 与 Remotion 双引擎工作台及本地音色包智能配音能力",
+  "voiceMode": "auto",
+  "defaultVoiceId": "auto",
+  "theme": {
+    "background": "#0B1020",
+    "surface": "#131C33",
+    "textPrimary": "#F8FAFC",
+    "textSecondary": "#CBD5E1",
+    "accent": "#38BDF8"
+  },
+  "scenes": [
+    {
+      "id": "scene-01",
+      "index": 1,
+      "title": "双引擎视频工作台：从对话到成片",
+      "narration": "欢迎体验 DeepSeek Harness 视频工作台。支持 HTML 与 Remotion 双引擎无缝切换，让多模态视频创作真正实现工程化与帧级可控。",
+      "emotion": "平静",
+      "role": "host",
+      "voiceId": "auto",
+      "voiceLocked": false,
+      "voiceMatchReason": "",
+      "visualPrompt": "科技蓝流体背景，展示 [DeepSeek Harness | HTML 视频] 胶囊切换器与双引擎架构图。",
+      "audioFile": "",
+      "durationSec": 4.5,
+      "durationInFrames": 135,
+      "startFrame": 0,
+      "startSec": 0,
+      "subtitles": [
+        {
+          "index": 1,
+          "text": "欢迎体验 DeepSeek Harness 视频工作台。",
+          "startSec": 0,
+          "endSec": 1.636,
+          "startFrame": 0,
+          "endFrame": 50
+        },
+        {
+          "index": 2,
+          "text": "支持 HTML 与 Remotion 双引擎无缝切换，让多模态视频创作真正实现工程化与帧级可控。",
+          "startSec": 1.636,
+          "endSec": 4.5,
+          "startFrame": 49,
+          "endFrame": 135
+        }
+      ]
+    },
+    {
+      "id": "scene-02",
+      "index": 2,
+      "title": "自定义音色包导入与 AI 智能声线匹配",
+      "narration": "无论是温婉叙事、知性主播还是激昂评书，系统都能根据分镜情绪与角色定位自由匹配最佳音色，并支持随时导入你的专属音色包。",
+      "emotion": "高兴",
+      "role": "storyteller",
+      "voiceId": "auto",
+      "voiceLocked": false,
+      "voiceMatchReason": "",
+      "visualPrompt": "展示音色包管理矩阵、声波频谱动画与 ffprobe 帧级时长回填流程。",
+      "audioFile": "",
+      "durationSec": 5,
+      "durationInFrames": 150,
+      "startFrame": 135,
+      "startSec": 4.5,
+      "subtitles": [
+        {
+          "index": 1,
+          "text": "无论是温婉叙事、知性主播还是激昂评书，系统都能根据分镜情绪与角色定位自由匹配最佳音色，并支持随时导入你的专属音色包。",
+          "startSec": 0,
+          "endSec": 5,
+          "startFrame": 0,
+          "endFrame": 150
+        }
+      ]
+    },
+    {
+      "id": "scene-03",
+      "index": 3,
+      "title": "3×3 九宫格多模态视觉自检与一键渲染",
+      "narration": "在合成最终视频前，自动抽帧生成三乘三九宫格快照，配合多模态视觉自检消除排版瑕疵，一键编码输出高清成片。",
+      "emotion": "平静",
+      "role": "narrator",
+      "voiceId": "auto",
+      "voiceLocked": false,
+      "voiceMatchReason": "",
+      "visualPrompt": "3×3 九宫格分镜快照缩略图矩阵，伴随 H.264 渲染完成徽章。",
+      "audioFile": "",
+      "durationSec": 4.5,
+      "durationInFrames": 135,
+      "startFrame": 285,
+      "startSec": 9.5,
+      "subtitles": [
+        {
+          "index": 1,
+          "text": "在合成最终视频前，自动抽帧生成三乘三九宫格快照，配合多模态视觉自检消除排版瑕疵，一键编码输出高清成片。",
+          "startSec": 0,
+          "endSec": 4.5,
+          "startFrame": 0,
+          "endFrame": 135
+        }
+      ]
+    }
+  ],
+  "totalDurationSec": 14,
+  "totalDurationInFrames": 420,
+  "updatedAt": "2026-11-14T10:15:12.918Z"
+}
+  </script>
+
+  <script>
+    (function() {
+      const rawScript = document.getElementById('dsh-script-data').textContent;
+      const scriptData = JSON.parse(rawScript);
+      const viewport = document.getElementById('viewport');
+      const hud = document.getElementById('hud-counter');
+      const fps = Number(scriptData.fps) || 30;
+      const scenes = scriptData.scenes || [];
+      let currentFrame = 0;
+
+      function findSceneForFrame(frame) {
+        for (let i = 0; i < scenes.length; i++) {
+          const s = scenes[i];
+          const start = Number(s.startFrame || 0);
+          const dur = Number(s.durationInFrames || 90);
+          if (frame >= start && frame < start + dur) {
+            return {
+              scene: s,
+              sceneIdx: i,
+              localFrame: frame - start,
+              progress: (frame - start) / Math.max(1, dur),
+            };
+          }
+        }
+        const lastIdx = Math.max(0, scenes.length - 1);
+        const last = scenes[lastIdx] || scenes[0];
+        const lastDur = Number(last?.durationInFrames || 90);
+        return {
+          scene: last,
+          sceneIdx: lastIdx,
+          localFrame: Math.max(0, lastDur - 1),
+          progress: 1,
+        };
+      }
+
+      function renderAtFrame(frame) {
+        currentFrame = Math.max(0, Math.floor(Number(frame) || 0));
+        const hit = findSceneForFrame(currentFrame);
+        if (!hit || !hit.scene) return;
+
+        const tpl = document.getElementById(hit.scene.id);
+        if (tpl) {
+          viewport.innerHTML = '';
+          const clone = tpl.content.cloneNode(true);
+          const stage = clone.querySelector('.scene-stage');
+          if (stage) {
+            const enterProgress = Math.min(1, hit.localFrame / 12);
+            stage.style.opacity = String((0.88 + 0.12 * enterProgress).toFixed(3));
+            stage.style.transform =
+              'translateY(' + ((1 - enterProgress) * 10).toFixed(1) + 'px) scale(' + (0.985 + 0.015 * enterProgress).toFixed(3) + ')';
+          }
+
+          // Dynamically sync scene metadata from latest #dsh-script-data
+          const badgeEl = clone.querySelector('.scene-badge');
+          if (badgeEl) {
+            badgeEl.textContent = 'SCENE 0' + (hit.sceneIdx + 1) + ' · ' + (hit.scene.emotion || '平静');
+          }
+          const voiceTagEl = clone.querySelector('.scene-voice-tag');
+          if (voiceTagEl) {
+            voiceTagEl.textContent = '🎙️ ' + (hit.scene.voiceName || hit.scene.voiceId || 'AI Auto');
+          }
+          const durEl = clone.querySelector('.metric-duration');
+          if (durEl) {
+            durEl.textContent = Number(hit.scene.durationSec || 4).toFixed(2) + 's';
+          }
+          const framesEl = clone.querySelector('.metric-frames');
+          if (framesEl) {
+            framesEl.textContent = (hit.scene.durationInFrames || 120) + 'f @ ' + fps + 'fps';
+          }
+
+          // Deterministic frame-driven audio waveform bar animation
+          const bars = clone.querySelectorAll('.waveform-bar');
+          bars.forEach(function(bar, bIdx) {
+            const wave = Math.abs(Math.sin(currentFrame * 0.35 + bIdx * 0.9 + hit.sceneIdx));
+            const hPx = Math.round(6 + wave * 15);
+            bar.style.height = hPx + 'px';
+          });
+
+          // Stage progress bar
+          const progressFill = clone.querySelector('.stage-progress-fill');
+          if (progressFill) {
+            progressFill.style.width = Math.min(100, Math.max(2, hit.progress * 100)).toFixed(1) + '%';
+          }
+
+          // Active sentence subtitle lookup
+          const secInScene = hit.localFrame / fps;
+          const subs = hit.scene.subtitles || [];
+          const activeSub =
+            subs.find(function(sub) {
+              return secInScene >= sub.startSec && secInScene <= sub.endSec;
+            }) || subs[subs.length - 1];
+          const subEl = clone.querySelector('.subtitle-text');
+          if (subEl) {
+            subEl.textContent = activeSub && activeSub.text ? activeSub.text : hit.scene.narration || '';
+          }
+          viewport.appendChild(clone);
+        }
+        if (hud) {
+          hud.textContent =
+            'SCENE 0' +
+            (hit.sceneIdx + 1) +
+            ' · FRAME ' +
+            currentFrame +
+            ' / ' +
+            (scriptData.totalDurationInFrames || 0) +
+            ' · ' +
+            (currentFrame / fps).toFixed(2) +
+            's';
+        }
+      }
+
+      // Deterministic frame-seek bridge for Playwright / Web Workbench iframe
+      window.__seekToFrame = function(frame) {
+        renderAtFrame(frame);
+        return currentFrame;
+      };
+      window.__getScriptData = function() {
+        return scriptData;
+      };
+
+      window.addEventListener('message', function(ev) {
+        if (!ev.data || typeof ev.data !== 'object') return;
+        if (ev.data.type === 'dsh-video:seek') {
+          renderAtFrame(ev.data.frame || 0);
+        }
+      });
+
+      const params = new URLSearchParams(window.location.search);
+      const initialFrame = params.has('frame')
+        ? Number(params.get('frame'))
+        : params.has('time')
+          ? Math.floor(Number(params.get('time')) * fps)
+          : 8;
+      renderAtFrame(initialFrame);
+    })();
+  </script>
+</body>
+</html>

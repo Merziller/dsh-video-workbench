@@ -1,0 +1,112 @@
+{
+  "title": "DeepSeek Harness 双引擎视频工作台演示 (Remotion)",
+  "engine": "remotion",
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "audience": "开发者与数字内容创作者",
+  "goal": "展示 HTML/GSAP 与 Remotion 双引擎工作台及本地音色包智能配音能力",
+  "voiceMode": "auto",
+  "defaultVoiceId": "auto",
+  "theme": {
+    "background": "#0B1020",
+    "surface": "#131C33",
+    "textPrimary": "#F8FAFC",
+    "textSecondary": "#CBD5E1",
+    "accent": "#38BDF8"
+  },
+  "scenes": [
+    {
+      "id": "scene-01",
+      "index": 1,
+      "title": "双引擎视频工作台：从对话到成片",
+      "narration": "欢迎体验 DeepSeek Harness 视频工作台。支持 HTML 与 Remotion 双引擎无缝切换，让多模态视频创作真正实现工程化与帧级可控。",
+      "emotion": "平静",
+      "role": "host",
+      "voiceId": "auto",
+      "voiceLocked": false,
+      "voiceMatchReason": "",
+      "visualPrompt": "科技蓝流体背景，展示 [DeepSeek Harness | HTML 视频] 胶囊切换器与双引擎架构图。",
+      "audioFile": "",
+      "durationSec": 4.5,
+      "durationInFrames": 135,
+      "startFrame": 0,
+      "startSec": 0,
+      "subtitles": [
+        {
+          "index": 1,
+          "text": "欢迎体验 DeepSeek Harness 视频工作台。",
+          "startSec": 0,
+          "endSec": 1.636,
+          "startFrame": 0,
+          "endFrame": 50
+        },
+        {
+          "index": 2,
+          "text": "支持 HTML 与 Remotion 双引擎无缝切换，让多模态视频创作真正实现工程化与帧级可控。",
+          "startSec": 1.636,
+          "endSec": 4.5,
+          "startFrame": 49,
+          "endFrame": 135
+        }
+      ]
+    },
+    {
+      "id": "scene-02",
+      "index": 2,
+      "title": "自定义音色包导入与 AI 智能声线匹配",
+      "narration": "无论是温婉叙事、知性主播还是激昂评书，系统都能根据分镜情绪与角色定位自由匹配最佳音色，并支持随时导入你的专属音色包。",
+      "emotion": "高兴",
+      "role": "storyteller",
+      "voiceId": "auto",
+      "voiceLocked": false,
+      "voiceMatchReason": "",
+      "visualPrompt": "展示音色包管理矩阵、声波频谱动画与 ffprobe 帧级时长回填流程。",
+      "audioFile": "",
+      "durationSec": 5,
+      "durationInFrames": 150,
+      "startFrame": 135,
+      "startSec": 4.5,
+      "subtitles": [
+        {
+          "index": 1,
+          "text": "无论是温婉叙事、知性主播还是激昂评书，系统都能根据分镜情绪与角色定位自由匹配最佳音色，并支持随时导入你的专属音色包。",
+          "startSec": 0,
+          "endSec": 5,
+          "startFrame": 0,
+          "endFrame": 150
+        }
+      ]
+    },
+    {
+      "id": "scene-03",
+      "index": 3,
+      "title": "3×3 九宫格多模态视觉自检与一键渲染",
+      "narration": "在合成最终视频前，自动抽帧生成三乘三九宫格快照，配合多模态视觉自检消除排版瑕疵，一键编码输出高清成片。",
+      "emotion": "平静",
+      "role": "narrator",
+      "voiceId": "auto",
+      "voiceLocked": false,
+      "voiceMatchReason": "",
+      "visualPrompt": "3×3 九宫格分镜快照缩略图矩阵，伴随 H.264 渲染完成徽章。",
+      "audioFile": "",
+      "durationSec": 4.5,
+      "durationInFrames": 135,
+      "startFrame": 285,
+      "startSec": 9.5,
+      "subtitles": [
+        {
+          "index": 1,
+          "text": "在合成最终视频前，自动抽帧生成三乘三九宫格快照，配合多模态视觉自检消除排版瑕疵，一键编码输出高清成片。",
+          "startSec": 0,
+          "endSec": 4.5,
+          "startFrame": 0,
+          "endFrame": 135
+        }
+      ]
+    }
+  ],
+  "totalDurationSec": 14,
+  "totalDurationInFrames": 420,
+  "updatedAt": "2026-11-14T10:15:12.919Z"
+}
