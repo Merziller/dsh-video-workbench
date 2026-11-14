@@ -35,6 +35,8 @@ window.__ModuleLoader__.load({
       'ai_master_voice',
       'ai_create_video',
       'ai_refine_scene',
+      'export_publish_pack',
+      'import_vendor_motion',
       'video_qa',
       'video_lint',
       'video_snapshot',
@@ -93,6 +95,33 @@ window.__ModuleLoader__.load({
       { value: 'glitch-cut', label: '数字故障切 (Glitch)' },
       { value: 'zoom-punch', label: '冲刺缩放 (Zoom Punch)' },
       { value: 'light-wipe', label: '高光掠过 (Light Wipe)' },
+    ]
+
+    const CREATION_MODE_OPTIONS = [
+      { id: 'ai-coded', title: '🤖 AI 自由写码模式', desc: '大模型直写高清 React/HTML 动效与物理转场代码' },
+      { id: 'schema-plan', title: '📐 Schema 结构化模式', desc: 'promo-plan/1 高保真配方编排 · 四档自动降级稳交付' },
+    ]
+
+    const BGM_MODE_OPTIONS = [
+      { id: 'llm-coded', icon: '🤖', title: 'AI 写配乐代码', desc: '大模型编写 JS DSP 代码合成 48kHz 原创立体声 WAV' },
+      { id: 'uploaded', icon: '🎵', title: '自由上传本地 BGM', desc: '上传个人 mp3/wav/flac 配乐，自动避让人声并混音' },
+      { id: 'tts-engine', icon: '🗣', title: 'IndexTTS-2.5 音色合成', desc: '用音色库或克隆声线合成空灵人声和弦氛围垫底' },
+    ]
+
+    const PLATFORM_OPTIONS = [
+      { id: 'universal', label: '通用成片', desc: '无边框遮挡 · 16:9 / 通用展示' },
+      { id: 'douyin', label: '抖音竖屏', desc: '避开底部18%文案栏与右侧9%赞评栏' },
+      { id: 'kuaishou', label: '快手竖屏', desc: '避开底部16%互动条与右侧图标区' },
+      { id: 'xiaohongshu', label: '小红书', desc: '3:4 / 9:16 图文底栏与右上角避让' },
+      { id: 'bilibili', label: 'B站横屏', desc: '顶部弹幕安全区与右上推荐卡片避让' },
+    ]
+
+    const QUICK_FIX_PILLS = [
+      { label: '🛡 字幕上移进安全区', prompt: '请把所有分镜字幕位置上移入平台安全区内，避免被抖音/快手底部栏或B站控件遮挡，并加大高对比描边。' },
+      { label: '🔊 配乐降 3dB 突出人声', prompt: '保持口播人声响度不变，把背景音乐压低约 3dB，强化人声开口时的自动闪避 Ducking。' },
+      { label: '⚡ 加快镜头与转场节奏', prompt: '把全片转场和关键字卡入场节奏提快 15%，消除画面停顿拖沓感。' },
+      { label: '✨ 强化标题动效与高光', prompt: '加强主标题与关键数字卡片的弹簧进场动画与高光扫过粒子质感。' },
+      { label: '🎬 切换黑金电影级调色', prompt: '调整当前画面的暗角、对比度与标题边框为黑金胶片质感。' },
     ]
 
     const DARK_THEME = {
@@ -501,17 +530,40 @@ window.__ModuleLoader__.load({
       const [selectedCodePath, setSelectedCodePath] = useState('')
       const [showSafeGuides, setShowSafeGuides] = useState(false)
       const [showMatrixPreview, setShowMatrixPreview] = useState(false)
+      const [voiceTab, setVoiceTab] = useState('library') // 'library' | 'clone'
+      const [cloneSubMode, setCloneSubMode] = useState('mic') // 'mic' | 'file' | 'path'
+      const [micRecording, setMicRecording] = useState(false)
+      const [micSeconds, setMicSeconds] = useState(0)
+      const [recordedB64, setRecordedB64] = useState('')
+      const [recordedFileName, setRecordedFileName] = useState('')
+      const [cloneVoiceName, setCloneVoiceName] = useState('')
+      const [cloneVoiceGender, setCloneVoiceGender] = useState('female')
+      const [cloneVoicePrompt, setCloneVoicePrompt] = useState('')
+      const [cloneAuditionText, setCloneAuditionText] = useState('你好，这是用 IndexTTS-2.5 声音克隆实验室刚刚生成的效果试听，音色自然饱满。')
+      const [cloneAuditionVoiceId, setCloneAuditionVoiceId] = useState('')
+      const [cloneAuditionUrl, setCloneAuditionUrl] = useState('')
+      const [safeZonePreflight, setSafeZonePreflight] = useState(null)
+      const [showVendorModal, setShowVendorModal] = useState(false)
+      const [vendorSourceDir, setVendorSourceDir] = useState('')
+      const [vendorName, setVendorName] = useState('')
+      const [vendorDurationSec, setVendorDurationSec] = useState(4)
+      const [publishPackResult, setPublishPackResult] = useState(null)
+      const [bgmComposePreviewUrl, setBgmComposePreviewUrl] = useState('')
 
       // Director Studio Form (Step 2)
       const [directorForm, setDirectorForm] = useState({
         topic: '',
         style: 'cinematic',
         engine: 'remotion',
+        creationMode: 'ai-coded',
+        bgmMode: 'llm-coded',
+        bgmTtsPrompt: '科技光影律动 温暖深沉氛围铺底',
+        targetPlatform: 'universal',
         aspectRatio: 'auto',
         quality: '1080p',
         customWidth: 1080,
         customHeight: 1920,
-        aiBadge: false,
+        aiBadge: true,
         useDraftReference: true,
         fps: 30,
         voiceId: 'auto',
@@ -539,6 +591,11 @@ window.__ModuleLoader__.load({
       const previewAudioRef = useRef(null)
       const fileInputRef = useRef(null)
       const folderInputRef = useRef(null)
+      const bgmInputRef = useRef(null)
+      const cloneFileInputRef = useRef(null)
+      const mediaRecorderRef = useRef(null)
+      const micTimerRef = useRef(null)
+      const micChunksRef = useRef([])
 
       const notify = useCallback((message, type = 'info') => {
         setToast({ message, type, id: Date.now() })
@@ -651,11 +708,14 @@ window.__ModuleLoader__.load({
                 topic: ap.script?.topic || prev.topic || '',
                 style: ap.script?.style || prev.style || 'cinematic',
                 engine: ap.script?.engine || prev.engine || 'remotion',
+                creationMode: ap.script?.creationMode || prev.creationMode || 'ai-coded',
+                bgmMode: ap.script?.bgmMode || ap.script?.audioSpec?.bgmMode || prev.bgmMode || 'llm-coded',
+                targetPlatform: ap.script?.targetPlatform || prev.targetPlatform || 'universal',
                 aspectRatio: ap.script?.requestedAspectRatio || ap.script?.aspectRatio || prev.aspectRatio || 'auto',
                 quality: ap.script?.quality || prev.quality || '1080p',
                 customWidth: Number(ap.script?.width) || prev.customWidth || 1080,
                 customHeight: Number(ap.script?.height) || prev.customHeight || 1920,
-                aiBadge: Boolean(ap.script?.aiBadge),
+                aiBadge: ap.script?.aiBadge !== undefined ? Boolean(ap.script.aiBadge) : true,
                 fps: Number(ap.script?.fps) || prev.fps || 30,
                 voiceId: ap.script?.defaultVoiceId || prev.voiceId || 'auto',
               }))
@@ -681,6 +741,21 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         refreshState('')
       }, [])
+
+      useEffect(() => {
+        if (!activeProjectDir) return
+        let cancelled = false
+        const plat = directorForm.targetPlatform || script?.targetPlatform || 'universal'
+        connFetch(`/api/video-workbench/safe-zone?projectDir=${encodeURIComponent(activeProjectDir)}&platform=${encodeURIComponent(plat)}`)
+          .then((r) => r.json())
+          .then((d) => {
+            if (!cancelled && d.ok) setSafeZonePreflight(d.preflight)
+          })
+          .catch(() => {})
+        return () => {
+          cancelled = true
+        }
+      }, [activeProjectDir, directorForm.targetPlatform, script?.width, script?.height, script?.targetPlatform, assetVersion, connFetch])
 
       useEffect(() => {
         const handler = (ev) => {
@@ -820,6 +895,8 @@ window.__ModuleLoader__.load({
       // Handlers: Projects
       const handleSelectProject = async (dir) => {
         setIsPlaying(false)
+        setPublishPackResult(null)
+        setBgmComposePreviewUrl('')
         setActiveProjectDir(dir)
         await refreshState(dir, { autoStep: true })
       }
@@ -840,6 +917,9 @@ window.__ModuleLoader__.load({
               width: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? directorForm.customWidth : undefined,
               height: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? directorForm.customHeight : undefined,
               aiBadge: directorForm.aiBadge,
+              targetPlatform: directorForm.targetPlatform,
+              bgmMode: directorForm.bgmMode,
+              creationMode: directorForm.creationMode,
               defaultVoiceId: directorForm.voiceId,
             }),
           })
@@ -1046,6 +1126,9 @@ window.__ModuleLoader__.load({
             width: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customWidth) : undefined,
             height: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customHeight) : undefined,
             aiBadge: directorForm.aiBadge,
+            targetPlatform: directorForm.targetPlatform,
+            bgmMode: directorForm.bgmMode,
+            creationMode: directorForm.creationMode,
             fps: directorForm.fps,
             voiceId: directorForm.voiceId,
           }
@@ -1102,6 +1185,10 @@ window.__ModuleLoader__.load({
               width: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customWidth) : undefined,
               height: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customHeight) : undefined,
               aiBadge: directorForm.aiBadge,
+              creationMode: directorForm.creationMode,
+              bgmMode: directorForm.bgmMode,
+              bgmTtsPrompt: directorForm.bgmTtsPrompt,
+              targetPlatform: directorForm.targetPlatform,
               useDraftReference: forceDraftRef,
               fps: directorForm.fps,
               voiceId: directorForm.voiceId,
@@ -1118,8 +1205,9 @@ window.__ModuleLoader__.load({
           setSelectedSceneIdx(0)
           await refreshState(activeProjectDir, { autoStep: true, preferredStep: 4 })
           const rounds = finalData.buildLog?.repairRoundsUsed ?? 0
+          const tierNote = finalData.buildLog?.tierUsed ? ` · 降级策略 Tier ${finalData.buildLog.tierUsed}` : ''
           notify(
-            `大模型 AI 编程出片完成！编译与 ${rounds} 轮自检通过，画幅 ${finalData.script?.width}×${finalData.script?.height}`,
+            `${finalData.buildLog?.creationMode === 'schema-plan' ? 'Schema 结构化导演' : '大模型 AI 编程'}出片完成！编译与 ${rounds} 轮自检通过${tierNote}，画幅 ${finalData.script?.width}×${finalData.script?.height}`,
             'success',
           )
         } catch (err) {
@@ -1161,9 +1249,12 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const handleUpdateFormatQuick = async (nextRatio, nextQuality) => {
+      const handleUpdateFormatQuick = async (nextRatio, nextQuality, nextPlatform) => {
         if (!activeProjectDir) return
-        setBusyLabel('正在切换视频比例与画布尺寸...')
+        if (nextPlatform) {
+          setDirectorForm((prev) => ({ ...prev, targetPlatform: nextPlatform }))
+        }
+        setBusyLabel('正在切换视频比例、平台安全区与画布尺寸...')
         try {
           const res = await connFetch('/api/video-workbench/action', {
             method: 'POST',
@@ -1173,13 +1264,14 @@ window.__ModuleLoader__.load({
               action: 'update-format',
               aspectRatio: nextRatio,
               quality: nextQuality,
+              ...(nextPlatform ? { targetPlatform: nextPlatform } : {}),
             }),
           })
           const data = await res.json()
           if (data.ok) {
             setAssetVersion((v) => v + 1)
             await refreshState(activeProjectDir)
-            notify(data.dimensions?.reason || '画幅已更新', 'success')
+            notify(nextPlatform ? `已切换至「${PLATFORM_OPTIONS.find((p) => p.id === nextPlatform)?.label || nextPlatform}」安全区基准` : data.dimensions?.reason || '画幅已更新', 'success')
           }
         } finally {
           setBusyLabel('')
@@ -1216,14 +1308,19 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const handleAiRefine = async () => {
-        if (!activeProjectDir || !refinePrompt.trim()) {
+      const handleAiRefine = async (overrideInstruction) => {
+        const finalInstruction =
+          typeof overrideInstruction === 'string' && overrideInstruction.trim()
+            ? overrideInstruction.trim()
+            : refinePrompt.trim()
+        if (!activeProjectDir || !finalInstruction) {
           notify('请输入你希望 AI 调整画面/特效/文案的意见', 'error')
           return
         }
         if (!llmConfig?.configured) {
+          setRefinePrompt(finalInstruction)
           setShowLlmModal(true)
-          notify('请先配置大模型接口后再使用自然语言精修', 'info')
+          notify('已填入修改指令；请先配置大模型接口后再启动精修', 'info')
           return
         }
         setBusyProgress(10)
@@ -1236,7 +1333,7 @@ window.__ModuleLoader__.load({
               async: true,
               projectDir: activeProjectDir,
               sceneId: refineScope === 'scene' ? selectedScene?.id || '' : '',
-              instruction: refinePrompt.trim(),
+              instruction: finalInstruction,
               render: true,
             }),
           })
@@ -1446,6 +1543,308 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // Handlers: 3-Mode BGM (Upload / LLM Code / IndexTTS-2.5), Voice Cloning Lab, Publish Pack & Vendor Motion
+      const handleUploadBgmFile = async (file) => {
+        if (!activeProjectDir || !file) return
+        setBusyLabel(`正在上传背景音乐「${file.name}」...`)
+        try {
+          const dataBase64 = await readFileAsBase64(file)
+          const res = await connFetch('/api/video-workbench/bgm/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectDir: activeProjectDir,
+              fileName: file.name,
+              dataBase64,
+            }),
+          })
+          const data = await res.json()
+          if (!data.ok) {
+            notify(`上传 BGM 失败: ${data.error}`, 'error')
+            return
+          }
+          setDirectorForm((prev) => ({ ...prev, bgmMode: 'uploaded' }))
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify(`已切换为自由上传 BGM「${data.asset?.name || file.name}」（混音时人声进入会自动压低配乐音量）`, 'success')
+        } catch (err) {
+          notify(`上传 BGM 出错: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleLlmComposeBgm = async () => {
+        if (!activeProjectDir) return
+        if (!llmConfig?.configured) {
+          setShowLlmModal(true)
+          notify('请先配置大模型接口，才能让 AI 编写配乐合成代码', 'info')
+          return
+        }
+        setBusyLabel('大模型正在编写纯 JS 数字音频合成代码并运算 48kHz 配乐...')
+        try {
+          const res = await connFetch('/api/video-workbench/audio/llm-compose', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectDir: activeProjectDir }),
+          })
+          const data = await res.json()
+          if (!data.ok) {
+            notify(`AI 写配乐失败: ${data.error}`, 'error')
+            return
+          }
+          setDirectorForm((prev) => ({ ...prev, bgmMode: 'llm-coded' }))
+          setBgmComposePreviewUrl(data.previewUrl || '')
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify(`AI 配乐代码已完成写入 (${data.relScriptPath}) 并生成试听母带`, 'success')
+        } catch (err) {
+          notify(`AI 写配乐出错: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleTtsComposeBgm = async () => {
+        if (!activeProjectDir) return
+        setBusyLabel('IndexTTS-2.5 正在用选定音色合成氛围音乐垫底...')
+        try {
+          const res = await connFetch('/api/video-workbench/audio/tts-compose', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectDir: activeProjectDir,
+              promptText: directorForm.bgmTtsPrompt || script?.title || '深沉空灵氛围音景',
+              voiceId: directorForm.voiceId || 'auto',
+              mode: 'bgm-pad',
+              durationSec: Math.min(18, Math.max(6, Number(script?.totalDurationSec) || 10)),
+              emotion: '深沉',
+            }),
+          })
+          const data = await res.json()
+          if (!data.ok) {
+            notify(`配音引擎作曲失败: ${data.error}`, 'error')
+            return
+          }
+          setDirectorForm((prev) => ({ ...prev, bgmMode: 'tts-engine' }))
+          setBgmComposePreviewUrl(data.previewUrl || '')
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify('IndexTTS-2.5 已合成氛围音景并绑定为主配乐！', 'success')
+        } catch (err) {
+          notify(`配音引擎作曲失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleStopMicRecord = () => {
+        if (micTimerRef.current) {
+          clearInterval(micTimerRef.current)
+          micTimerRef.current = null
+        }
+        try {
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop()
+          }
+        } catch {}
+        setMicRecording(false)
+      }
+
+      const handleStartMicRecord = async () => {
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+          notify('当前浏览器或环境不支持麦克风直录，请切换到「上传本地音频」选择录音文件', 'error')
+          return
+        }
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+          micChunksRef.current = []
+          const mr = new MediaRecorder(stream)
+          mediaRecorderRef.current = mr
+          mr.ondataavailable = (ev) => {
+            if (ev.data && ev.data.size > 0) micChunksRef.current.push(ev.data)
+          }
+          mr.onstop = async () => {
+            stream.getTracks().forEach((t) => t.stop())
+            const blob = new Blob(micChunksRef.current, { type: mr.mimeType || 'audio/webm' })
+            const b64 = await readFileAsBase64(blob)
+            setRecordedB64(b64)
+            setRecordedFileName(`mic-clone-${Date.now()}.webm`)
+            if (!cloneVoiceName.trim()) setCloneVoiceName(`我的声音-${new Date().toTimeString().slice(0, 5).replace(':', '')}`)
+            notify('麦克风采样完成！点击「生成并加入专属音色库」即可立即使用与试听', 'success')
+          }
+          mr.start(250)
+          setMicRecording(true)
+          setMicSeconds(0)
+          micTimerRef.current = setInterval(() => {
+            setMicSeconds((s) => {
+              if (s + 1 >= 15) {
+                handleStopMicRecord()
+                return 15
+              }
+              return s + 1
+            })
+          }, 1000)
+        } catch (err) {
+          notify(`无法开启麦克风 (${err.message})，可改用「上传本地音频」导入`, 'error')
+        }
+      }
+
+      const handlePickCloneFile = async (file) => {
+        if (!file) return
+        const b64 = await readFileAsBase64(file)
+        setRecordedB64(b64)
+        setRecordedFileName(file.name)
+        if (!cloneVoiceName.trim()) {
+          setCloneVoiceName(file.name.replace(/\.[^.]+$/, ''))
+        }
+        notify(`已载入参考人声文件「${file.name}」，点击提交即可完成降噪与音色克隆`, 'info')
+      }
+
+      const handleSubmitVoiceClone = async () => {
+        if (cloneSubMode === 'path') {
+          if (!voiceImportPath.trim()) {
+            notify('请填写本机参考音频路径 (.wav/.mp3/.pt)', 'error')
+            return
+          }
+          setVoiceImportName(cloneVoiceName || voiceImportName)
+          setVoiceImportGender(cloneVoiceGender)
+          await handleImportVoicePack()
+          return
+        }
+        if (!recordedB64) {
+          notify('请先录制 5–12 秒清晰人声，或选择一个本地参考音频文件', 'error')
+          return
+        }
+        setBusyLabel('正在用 FFmpeg 执行 80Hz 滤波、去静音与响度归一标准化克隆...')
+        try {
+          const res = await connFetch('/api/video-workbench/voices/clone-upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              audioBase64: recordedB64,
+              fileName: recordedFileName || 'voice-clone.webm',
+              name: cloneVoiceName.trim() || '我的专属声音',
+              gender: cloneVoiceGender,
+              promptText: cloneVoicePrompt.trim(),
+              stripSilence: true,
+            }),
+          })
+          const data = await res.json()
+          if (!data.ok) {
+            notify(`声音克隆入库失败: ${data.error}`, 'error')
+            return
+          }
+          setVoiceCatalog(data.voiceCatalog || [])
+          setCloneAuditionVoiceId(data.voice?.id || '')
+          setRecordedB64('')
+          setRecordedFileName('')
+          notify(`声音克隆成功！音色「${data.voice?.name}」(${data.durationSec}s 有效人声) 已入库，可点击下方即时试听`, 'success')
+        } catch (err) {
+          notify(`声音克隆失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleAuditionClonedVoice = async (overrideId) => {
+        const vid =
+          overrideId ||
+          cloneAuditionVoiceId ||
+          voiceCatalog.find((v) => v.isCloned || v.id?.startsWith('clone-') || v.category === '专属声纹克隆')?.id ||
+          'auto'
+        setBusyLabel(`IndexTTS-2.5 正在实时克隆合成试听...`)
+        try {
+          const res = await connFetch('/api/video-workbench/voices/clone-preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              voiceId: vid,
+              text: cloneAuditionText.trim(),
+              emotion: '温暖',
+            }),
+          })
+          const data = await res.json()
+          if (!data.ok || !data.audioDataUrl) {
+            notify(`实时试听合成失败: ${data.error || '未返回音频流'}`, 'error')
+            return
+          }
+          setCloneAuditionUrl(data.audioDataUrl)
+          setCloneAuditionVoiceId(data.voiceUsed || vid)
+          if (previewAudioRef.current) {
+            previewAudioRef.current.src = data.audioDataUrl
+            previewAudioRef.current.play().catch(() => {})
+            setPlayingVoiceId(data.voiceUsed || vid)
+          }
+          notify(`克隆声线试听生成完成 (${data.durationSec || ''}s)`, 'success')
+        } catch (err) {
+          notify(`实时试听出错: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleExportPublishPack = async (overridePlatform) => {
+        if (!activeProjectDir) return
+        setBusyLabel('正在打包平台封面图、三×三质检墙、标题标签与 AI 合规说明...')
+        try {
+          const res = await connFetch('/api/video-workbench/publish-pack', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectDir: activeProjectDir,
+              platform: overridePlatform || directorForm.targetPlatform || 'universal',
+            }),
+          })
+          const data = await res.json()
+          if (!data.ok) {
+            notify(`生成发布包失败: ${data.error}`, 'error')
+            return
+          }
+          setPublishPackResult(data)
+          notify(`平台发布包已导出至: ${data.packDir}`, 'success')
+        } catch (err) {
+          notify(`生成发布包失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleImportVendorMotion = async () => {
+        if (!activeProjectDir || !vendorSourceDir.trim()) {
+          notify('请填写 .motion 或外部 HTML 动效模板目录路径', 'error')
+          return
+        }
+        setBusyLabel('正在使用无头 Chromium 隔离渲染外部动效模板并剥离音轨 (-an)...')
+        try {
+          const res = await connFetch('/api/video-workbench/vendor/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectDir: activeProjectDir,
+              sourceDir: vendorSourceDir.trim(),
+              name: vendorName.trim() || undefined,
+              durationSec: Number(vendorDurationSec) || 4,
+            }),
+          })
+          const data = await res.json()
+          if (!data.ok) {
+            notify(`隔离渲染导入失败: ${data.error}`, 'error')
+            return
+          }
+          setShowVendorModal(false)
+          setVendorSourceDir('')
+          setVendorName('')
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify(`外部动效片段已隔离压制并导入至「${data.assetPath}」`, 'success')
+        } catch (err) {
+          notify(`导入 .motion 出错: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
       // -----------------------------------------------------------------------
       // REUSABLE STYLES (Computed cleanly from Adaptive Theme `T`)
       // -----------------------------------------------------------------------
@@ -1572,6 +1971,24 @@ window.__ModuleLoader__.load({
           webkitdirectory: 'true',
           onChange: (ev) => {
             handleUploadFiles(ev.target.files)
+            ev.target.value = ''
+          },
+        }),
+        h('input', {
+          ref: bgmInputRef,
+          type: 'file',
+          accept: 'audio/*,.mp3,.wav,.flac,.m4a,.ogg,.aac',
+          onChange: (ev) => {
+            if (ev.target.files?.[0]) handleUploadBgmFile(ev.target.files[0])
+            ev.target.value = ''
+          },
+        }),
+        h('input', {
+          ref: cloneFileInputRef,
+          type: 'file',
+          accept: 'audio/*,.mp3,.wav,.flac,.m4a,.ogg',
+          onChange: (ev) => {
+            if (ev.target.files?.[0]) handlePickCloneFile(ev.target.files[0])
             ev.target.value = ''
           },
         }),
@@ -2005,6 +2422,8 @@ window.__ModuleLoader__.load({
               { style: { display: 'flex', justifyContent: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '18px' } },
               h('button', { className: 'dsh-vw-btn', onClick: () => fileInputRef.current?.click(), style: blueBtnStyle }, h(Icon, { name: 'upload', size: 14 }), ' 选择多文件'),
               h('button', { className: 'dsh-vw-btn', onClick: () => folderInputRef.current?.click(), style: ghostBtnStyle }, h(Icon, { name: 'folder', size: 14 }), ' 选择整个文件夹'),
+              h('button', { className: 'dsh-vw-btn', onClick: () => bgmInputRef.current?.click(), style: ghostBtnStyle }, '🎵 上传配乐 BGM'),
+              h('button', { className: 'dsh-vw-btn', onClick: () => setShowVendorModal(true), style: ghostBtnStyle }, '✨ 导入 .motion 动效片段'),
             ),
             h(
               'div',
@@ -2261,6 +2680,118 @@ window.__ModuleLoader__.load({
                   ),
                 ),
               ),
+              // Creation Mode Selector (AI Coded vs Schema Plan w/ Tier 1-4 Degradation)
+              h(
+                'div',
+                null,
+                h('label', { style: { display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '7px' } }, '创作生成架构模式'),
+                h(
+                  'div',
+                  { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
+                  CREATION_MODE_OPTIONS.map((cm) => {
+                    const on = directorForm.creationMode === cm.id
+                    return h(
+                      'button',
+                      {
+                        key: cm.id,
+                        className: 'dsh-vw-btn',
+                        onClick: () => setDirectorForm((prev) => ({ ...prev, creationMode: cm.id })),
+                        style: {
+                          padding: '9px 10px',
+                          borderRadius: '10px',
+                          textAlign: 'left',
+                          background: on ? T.accentBlueBg : T.bgElevated,
+                          border: `1px solid ${on ? T.accentBlueBorder : T.borderSubtle}`,
+                          color: T.textPrimary,
+                        },
+                      },
+                      h('div', { style: { fontSize: '12px', fontWeight: 700, color: on ? T.accentBlue : T.textPrimary } }, cm.title),
+                      h('div', { style: { fontSize: '10.5px', color: T.textMuted, marginTop: '2px', lineHeight: 1.35 } }, cm.desc),
+                    )
+                  }),
+                ),
+              ),
+              // 3-Mode Audio / BGM Engine Card
+              h(
+                'div',
+                { style: { padding: '12px', borderRadius: '11px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '9px' } },
+                h('label', { style: { fontSize: '12px', fontWeight: 800 } }, '🎵 背景音乐与声场生成方式 (三模式自由切换)'),
+                h(
+                  'div',
+                  { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '7px' } },
+                  BGM_MODE_OPTIONS.map((bm) => {
+                    const on = directorForm.bgmMode === bm.id
+                    return h(
+                      'button',
+                      {
+                        key: bm.id,
+                        className: 'dsh-vw-btn',
+                        onClick: () => setDirectorForm((prev) => ({ ...prev, bgmMode: bm.id })),
+                        style: {
+                          padding: '8px 7px',
+                          borderRadius: '9px',
+                          textAlign: 'left',
+                          background: on ? T.accentGoldBg : T.bgPanel,
+                          border: `1px solid ${on ? T.accentGoldBorder : T.borderSubtle}`,
+                          color: T.textPrimary,
+                        },
+                      },
+                      h('div', { style: { fontSize: '11.5px', fontWeight: 700, color: on ? T.accentGold : T.textPrimary } }, `${bm.icon} ${bm.title}`),
+                      h('div', { style: { fontSize: '10px', color: T.textMuted, marginTop: '2px', lineHeight: 1.35 } }, bm.desc),
+                    )
+                  }),
+                ),
+                directorForm.bgmMode === 'llm-coded'
+                  ? h(
+                      'div',
+                      { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
+                      h('span', { style: { fontSize: '11px', color: T.textSecondary } }, '成片时大模型会自动编写 audio/ai_bgm_synth.js 生成原创音乐；也可先点击试写试听'),
+                      h(
+                        'button',
+                        { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleLlmComposeBgm, style: { ...ghostBtnStyle, fontSize: '11px', padding: '5px 10px' } },
+                        '🎹 AI 现写代码试生成 BGM',
+                      ),
+                    )
+                  : directorForm.bgmMode === 'uploaded'
+                  ? h(
+                      'div',
+                      { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
+                      h(
+                        'span',
+                        { style: { fontSize: '11px', color: T.textSecondary } },
+                        script?.bgm?.uploadedPath || script?.bgm?.path
+                          ? `当前已挂载个人配乐: ${script.bgm.uploadedPath || script.bgm.path}`
+                          : `当前工程已导入 ${assetSummary.music || 0} 首个人配乐（上传后将优先用作背景音乐）`,
+                      ),
+                      h(
+                        'button',
+                        { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => bgmInputRef.current?.click(), style: { ...blueBtnStyle, fontSize: '11px', padding: '5px 11px' } },
+                        '🎵 选择本地音频文件上传',
+                      ),
+                    )
+                  : h(
+                      'div',
+                      { style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
+                      h(
+                        'div',
+                        { style: { display: 'flex', gap: '6px' } },
+                        h('input', {
+                          value: directorForm.bgmTtsPrompt,
+                          onChange: (ev) => setDirectorForm((prev) => ({ ...prev, bgmTtsPrompt: ev.target.value })),
+                          placeholder: '输入配音引擎要哼唱/氛围铺底的乐感提示词...',
+                          style: { ...inputStyle, fontSize: '11.5px', padding: '6px 10px' },
+                        }),
+                        h(
+                          'button',
+                          { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleTtsComposeBgm, style: { ...blueBtnStyle, fontSize: '11px', padding: '6px 11px' } },
+                          '🎙 IndexTTS 合成 BGM',
+                        ),
+                      ),
+                    ),
+                bgmComposePreviewUrl
+                  ? h('audio', { src: bgmComposePreviewUrl, controls: true, style: { width: '100%', height: '32px' } })
+                  : null,
+              ),
             ),
             // RIGHT COLUMN: Aspect Ratio + Resolution + Voice + Dual-Track Action Buttons
             h(
@@ -2346,6 +2877,50 @@ window.__ModuleLoader__.load({
                       }),
                     )
                   : null,
+              ),
+              // Platform Safe-Zone Selector
+              h(
+                'div',
+                null,
+                h(
+                  'div',
+                  { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '7px' } },
+                  h('label', { style: { fontSize: '13px', fontWeight: 700 } }, '目标发布平台（安全区自动避让）'),
+                  safeZonePreflight
+                    ? h(
+                        'span',
+                        { style: { fontSize: '10.5px', color: safeZonePreflight.passed ? T.accentGreen : T.accentGold } },
+                        safeZonePreflight.passed ? '✓ 安全区校验通过' : `⚠ 字幕/贴片有 ${safeZonePreflight.collisions?.length || 1} 处靠边告警`,
+                      )
+                    : null,
+                ),
+                h(
+                  'div',
+                  { style: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px' } },
+                  PLATFORM_OPTIONS.map((pl) => {
+                    const on = directorForm.targetPlatform === pl.id
+                    return h(
+                      'button',
+                      {
+                        key: pl.id,
+                        title: pl.desc,
+                        className: 'dsh-vw-btn',
+                        onClick: () => setDirectorForm((prev) => ({ ...prev, targetPlatform: pl.id })),
+                        style: {
+                          padding: '7px 4px',
+                          borderRadius: '8px',
+                          textAlign: 'center',
+                          background: on ? T.accentBlueBg : T.bgElevated,
+                          border: `1px solid ${on ? T.accentBlueBorder : T.borderSubtle}`,
+                          color: on ? T.accentBlue : T.textPrimary,
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                        },
+                      },
+                      pl.label,
+                    )
+                  }),
+                ),
               ),
               // Voice Selection Strip
               h(
@@ -2469,13 +3044,30 @@ window.__ModuleLoader__.load({
                 ASPECT_RATIO_OPTIONS.filter((o) => o.id !== 'auto').map((o) => h('option', { key: o.id, value: o.id }, o.label)),
               ),
               h(
+                'select',
+                {
+                  value: directorForm.targetPlatform || script?.targetPlatform || 'universal',
+                  onChange: (ev) => {
+                    handleUpdateFormatQuick(script?.aspectRatio || '16:9', script?.quality || '1080p', ev.target.value)
+                    setShowSafeGuides(true)
+                  },
+                  style: { ...inputStyle, width: 'auto', padding: '4px 10px', fontSize: '12px' },
+                },
+                PLATFORM_OPTIONS.map((pl) => h('option', { key: pl.id, value: pl.id }, `平台: ${pl.label}`)),
+              ),
+              h(
                 'button',
                 {
                   className: 'dsh-vw-btn',
                   onClick: () => setShowSafeGuides((v) => !v),
-                  style: { ...ghostBtnStyle, padding: '4px 10px', color: showSafeGuides ? T.accentGold : T.textSecondary },
+                  style: { ...ghostBtnStyle, padding: '4px 10px', color: showSafeGuides ? T.accentGold : safeZonePreflight?.passed === false ? T.accentRed : T.textSecondary },
                 },
-                '安全框参考线',
+                safeZonePreflight?.passed === false ? '安全框遮罩 ⚠' : '平台安全框遮罩',
+              ),
+              h(
+                'button',
+                { className: 'dsh-vw-btn', onClick: () => setShowVendorModal(true), style: { ...ghostBtnStyle, padding: '4px 10px' } },
+                '✨ 导入 .motion',
               ),
               h(
                 'button',
@@ -2551,22 +3143,62 @@ window.__ModuleLoader__.load({
                     onLoad: () => seekToFrame(currentFrame, false),
                   })
                 : h('div', { style: { color: '#9CA3B5', fontSize: '13px', padding: '40px', textAlign: 'center' } }, '请先在第 2 步生成本地草稿或大模型成片'),
-              // Optional Safe-Zone Viewfinder Overlay
+              // Platform-Accurate Safe-Zone Exclusion Overlay + Inner Safe Boundary
               showSafeGuides
                 ? h(
                     'div',
-                    {
-                      style: {
-                        position: 'absolute',
-                        inset: '8%',
-                        border: '1px dashed rgba(229, 169, 60, 0.55)',
-                        pointerEvents: 'none',
+                    { style: { position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 12 } },
+                    (safeZonePreflight?.obstructions || []).map((obs) =>
+                      h(
+                        'div',
+                        {
+                          key: obs.id,
+                          style: {
+                            position: 'absolute',
+                            left: `${obs.x * 100}%`,
+                            top: `${obs.y * 100}%`,
+                            width: `${obs.w * 100}%`,
+                            height: `${obs.h * 100}%`,
+                            background: obs.tone === 'danger' ? 'rgba(244, 63, 94, 0.24)' : 'rgba(229, 169, 60, 0.16)',
+                            border: `1px dashed ${obs.tone === 'danger' ? 'rgba(244, 63, 94, 0.65)' : 'rgba(229, 169, 60, 0.6)'}`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          },
+                        },
+                        h(
+                          'span',
+                          {
+                            style: {
+                              padding: '2px 7px',
+                              borderRadius: '4px',
+                              background: 'rgba(0,0,0,0.68)',
+                              color: '#FFF',
+                              fontSize: '10px',
+                              fontWeight: 700,
+                            },
+                          },
+                          `遮挡区 · ${obs.label}`,
+                        ),
+                      ),
+                    ),
+                    h(
+                      'div',
+                      {
+                        style: {
+                          position: 'absolute',
+                          top: `${(safeZonePreflight?.safeInsets?.top ?? 0.08) * 100}%`,
+                          bottom: `${(safeZonePreflight?.safeInsets?.bottom ?? 0.08) * 100}%`,
+                          left: `${(safeZonePreflight?.safeInsets?.left ?? 0.08) * 100}%`,
+                          right: `${(safeZonePreflight?.safeInsets?.right ?? 0.08) * 100}%`,
+                          border: '1.5px dashed rgba(34, 197, 94, 0.72)',
+                        },
                       },
-                    },
-                    h('div', { style: { position: 'absolute', left: '33.33%', top: 0, bottom: 0, borderLeft: '1px solid rgba(255,255,255,0.12)' } }),
-                    h('div', { style: { position: 'absolute', left: '66.66%', top: 0, bottom: 0, borderLeft: '1px solid rgba(255,255,255,0.12)' } }),
-                    h('div', { style: { position: 'absolute', top: '33.33%', left: 0, right: 0, borderTop: '1px solid rgba(255,255,255,0.12)' } }),
-                    h('div', { style: { position: 'absolute', top: '66.66%', left: 0, right: 0, borderTop: '1px solid rgba(255,255,255,0.12)' } }),
+                      h('div', { style: { position: 'absolute', left: '33.33%', top: 0, bottom: 0, borderLeft: '1px solid rgba(255,255,255,0.12)' } }),
+                      h('div', { style: { position: 'absolute', left: '66.66%', top: 0, bottom: 0, borderLeft: '1px solid rgba(255,255,255,0.12)' } }),
+                      h('div', { style: { position: 'absolute', top: '33.33%', left: 0, right: 0, borderTop: '1px solid rgba(255,255,255,0.12)' } }),
+                      h('div', { style: { position: 'absolute', top: '66.66%', left: 0, right: 0, borderTop: '1px solid rgba(255,255,255,0.12)' } }),
+                    ),
                   )
                 : null,
             ),
@@ -2707,7 +3339,7 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-              h('span', { style: { fontSize: '12px', fontWeight: 800, color: T.accentBlue } }, '💬 对 AI 说（自然语言精修）'),
+              h('span', { style: { fontSize: '12px', fontWeight: 800, color: T.accentBlue } }, '💬 对 AI 说（小白快捷一键纠错 / 自然语言精修）'),
               historyCount > 0
                 ? h(
                     'button',
@@ -2717,11 +3349,33 @@ window.__ModuleLoader__.load({
                   )
                 : null,
             ),
+            h(
+              'div',
+              { style: { display: 'flex', flexWrap: 'wrap', gap: '5px' } },
+              QUICK_FIX_PILLS.map((pill) =>
+                h(
+                  'button',
+                  {
+                    key: pill.label,
+                    className: 'dsh-vw-btn',
+                    disabled: Boolean(busyLabel),
+                    onClick: () => handleAiRefine(pill.prompt),
+                    style: {
+                      ...ghostBtnStyle,
+                      padding: '3px 8px',
+                      fontSize: '10.5px',
+                      borderRadius: '99px',
+                    },
+                  },
+                  pill.label,
+                ),
+              ),
+            ),
             h('textarea', {
               rows: 3,
               value: refinePrompt,
               onChange: (ev) => setRefinePrompt(ev.target.value),
-              placeholder: '例如：把这一幕改成震撼的数据数字滚动特效，配色更暖一点，背景节拍更紧凑...',
+              placeholder: '点上方快捷胶囊一键修片，或直接说：把这一幕改成震撼的数字滚动特效，配乐更紧凑...',
               style: { ...inputStyle, fontSize: '12px', resize: 'vertical' },
             }),
             h(
@@ -2940,6 +3594,18 @@ window.__ModuleLoader__.load({
               { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
               h('button', { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleRenderMp4(true), style: ghostBtnStyle }, '⚡ 720P 极速试渲染'),
               h('button', { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleRenderMp4(false), style: goldBtnStyle }, h(Icon, { name: 'film', size: 14 }), ' 渲染最终高清 MP4'),
+              hasMp4
+                ? h(
+                    'button',
+                    {
+                      className: 'dsh-vw-btn',
+                      disabled: Boolean(busyLabel),
+                      onClick: () => handleExportPublishPack(directorForm.targetPlatform),
+                      style: { ...ghostBtnStyle, borderColor: T.accentGoldBorder, color: T.accentGold },
+                    },
+                    '📦 一键导出平台发布包',
+                  )
+                : null,
               mp4Url
                 ? h(
                     'a',
@@ -3057,6 +3723,39 @@ window.__ModuleLoader__.load({
                 : null,
             ),
           ),
+          publishPackResult
+            ? h(
+                'div',
+                { style: { ...panelStyle, padding: '18px', borderColor: T.accentGoldBorder, display: 'flex', flexDirection: 'column', gap: '12px' } },
+                h(
+                  'div',
+                  { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' } },
+                  h('div', { style: { fontSize: '15px', fontWeight: 800, color: T.accentGold } }, `📦 平台发布包已生成 (${publishPackResult.platformLabel || publishPackResult.platform})`),
+                  h('span', { style: { fontSize: '11px', fontFamily: 'Consolas, monospace', color: T.textMuted } }, publishPackResult.packDir),
+                ),
+                h(
+                  'div',
+                  { style: { display: 'grid', gridTemplateColumns: '220px 1fr', gap: '16px', alignItems: 'start' } },
+                  publishPackResult.coverUrl
+                    ? h('img', { src: publishPackResult.coverUrl, style: { width: '100%', borderRadius: '9px', border: `1px solid ${T.borderStrong}` } })
+                    : h('div', { style: { padding: '24px', borderRadius: '9px', background: T.bgElevated, textAlign: 'center', fontSize: '12px', color: T.textMuted } }, '封面图 cover.png 已写入目录'),
+                  h(
+                    'div',
+                    { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+                    h('div', { style: { fontSize: '12px', fontWeight: 700 } }, '推荐发布标题 (点击可复制 / 参考 meta.md)：'),
+                    (publishPackResult.suggestedTitles || []).map((t, idx) =>
+                      h(
+                        'div',
+                        { key: idx, style: { fontSize: '12px', padding: '6px 10px', borderRadius: '7px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}` } },
+                        t,
+                      ),
+                    ),
+                    h('div', { style: { fontSize: '12px', color: T.accentBlue, fontWeight: 600 } }, (publishPackResult.hashtags || []).join(' ')),
+                    h('div', { style: { fontSize: '11px', color: T.textSecondary, lineHeight: 1.45 } }, `合规与授权声明：${publishPackResult.complianceNotice || ''} · 商用字体 SIL OFL 1.1`),
+                  ),
+                ),
+              )
+            : null,
         ),
       )
 
@@ -3503,112 +4202,359 @@ window.__ModuleLoader__.load({
               },
               h(
                 'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 800 } }, `本地人声音色库 (${voiceCatalog.length} 个)`),
-                h('button', { onClick: () => setShowVoiceModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 16 })),
-              ),
-              h(
-                'div',
-                { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-                h('input', {
-                  value: voiceSearch,
-                  onChange: (ev) => setVoiceSearch(ev.target.value),
-                  placeholder: '搜索音色名称或标签 (如 解说 / 男声 / 磁性)...',
-                  style: { ...inputStyle, flex: 1 },
-                }),
-                ['all', 'female', 'male'].map((g) =>
+                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' } },
+                h(
+                  'div',
+                  { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
                   h(
                     'button',
                     {
-                      key: g,
                       className: 'dsh-vw-btn',
-                      onClick: () => setVoiceGenderFilter(g),
+                      onClick: () => setVoiceTab('library'),
                       style: {
                         ...ghostBtnStyle,
-                        background: voiceGenderFilter === g ? T.accentGoldBg : T.bgElevated,
-                        borderColor: voiceGenderFilter === g ? T.accentGoldBorder : T.borderSubtle,
+                        padding: '7px 14px',
+                        background: voiceTab === 'library' ? T.accentGoldBg : T.bgElevated,
+                        borderColor: voiceTab === 'library' ? T.accentGoldBorder : T.borderSubtle,
+                        color: voiceTab === 'library' ? T.accentGold : T.textPrimary,
+                        fontWeight: 700,
                       },
                     },
-                    g === 'all' ? '全部' : g === 'female' ? '女声' : '男声',
+                    `🎙 本地音色库 (${voiceCatalog.length})`,
+                  ),
+                  h(
+                    'button',
+                    {
+                      className: 'dsh-vw-btn',
+                      onClick: () => setVoiceTab('clone'),
+                      style: {
+                        ...ghostBtnStyle,
+                        padding: '7px 14px',
+                        background: voiceTab === 'clone' ? T.accentBlueBg : T.bgElevated,
+                        borderColor: voiceTab === 'clone' ? T.accentBlueBorder : T.borderSubtle,
+                        color: voiceTab === 'clone' ? T.accentBlue : T.textPrimary,
+                        fontWeight: 700,
+                      },
+                    },
+                    '🧬 声音克隆实验室 (录 5 秒即克隆本人声音)',
                   ),
                 ),
-                h(
-                  'button',
-                  {
-                    className: 'dsh-vw-btn',
-                    onClick: () => handleAssignVoice({ id: 'auto', name: 'AI 自动匹配' }),
-                    style: { ...blueBtnStyle, fontSize: '12px', padding: '6px 12px' },
-                  },
-                  '设为 AI 自动分配',
-                ),
+                h('button', { 'aria-label': '关闭', title: '关闭弹窗', onClick: () => setShowVoiceModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 16 })),
               ),
-              // Quick custom voice pack import
-              h(
-                'div',
-                { style: { display: 'flex', gap: '6px', padding: '10px', borderRadius: '9px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}` } },
-                h('input', {
-                  value: voiceImportPath,
-                  onChange: (ev) => setVoiceImportPath(ev.target.value),
-                  placeholder: '导入自定义参考音频/模型路径 (.wav / .pt)',
-                  style: { ...inputStyle, flex: 1.5, fontSize: '12px', padding: '6px 10px' },
-                }),
-                h('input', {
-                  value: voiceImportName,
-                  onChange: (ev) => setVoiceImportName(ev.target.value),
-                  placeholder: '音色名称',
-                  style: { ...inputStyle, flex: 0.7, fontSize: '12px', padding: '6px 10px' },
-                }),
-                h(
-                  'select',
-                  { value: voiceImportGender, onChange: (ev) => setVoiceImportGender(ev.target.value), style: { ...inputStyle, width: '74px', fontSize: '12px', padding: '6px' } },
-                  h('option', { value: 'female' }, '女'),
-                  h('option', { value: 'male' }, '男'),
-                ),
-                h('button', { className: 'dsh-vw-btn', onClick: handleImportVoicePack, style: ghostBtnStyle }, '导入'),
-              ),
-              h(
-                'div',
-                { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' } },
-                filteredVoices.slice(0, 60).map((v) => {
-                  const isPlayingThis = playingVoiceId === v.id
-                  return h(
+              voiceTab === 'clone'
+                ? h(
                     'div',
-                    {
-                      key: v.id,
-                      style: {
-                        padding: '9px 12px',
-                        borderRadius: '9px',
-                        background: T.bgElevated,
-                        border: `1px solid ${T.borderSubtle}`,
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: '10px',
-                      },
-                    },
+                    { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' } },
                     h(
                       'div',
-                      { style: { minWidth: 0 } },
-                      h('div', { style: { fontSize: '13px', fontWeight: 700 } }, v.name || v.id),
-                      h('div', { style: { fontSize: '11px', color: T.textMuted } }, `${v.gender || ''} · ${(v.tags || []).slice(0, 4).join(' / ')}`),
+                      { style: { padding: '12px', borderRadius: '10px', background: resolvedDark ? 'rgba(56,189,248,0.08)' : 'rgba(37,99,235,0.05)', border: `1px solid ${T.accentBlueBorder}`, fontSize: '12px', color: T.textSecondary, lineHeight: 1.55 } },
+                      'IndexTTS-2.5 支持零样本（Zero-Shot）人声克隆：只需 ',
+                      h('strong', { style: { color: T.textPrimary } }, '5–12 秒清晰干声'),
+                      '（现录麦克风 / 上传 mp3、wav、m4a、flac / 本机路径），系统自动用 FFmpeg 去除低频底噪、裁剪首尾静音并标准化至 24kHz 单声道 WAV 写入本地私有库，绝不上传云端。',
+                    ),
+                    // 3 clone input sources
+                    h(
+                      'div',
+                      { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' } },
+                      [
+                        { id: 'mic', label: '🎙 麦克风现场录音' },
+                        { id: 'file', label: '📁 选择本地音频文件' },
+                        { id: 'path', label: '📂 粘贴本机路径' },
+                      ].map((m) =>
+                        h(
+                          'button',
+                          {
+                            key: m.id,
+                            className: 'dsh-vw-btn',
+                            onClick: () => setCloneSubMode(m.id),
+                            style: {
+                              ...ghostBtnStyle,
+                              justifyContent: 'center',
+                              background: cloneSubMode === m.id ? T.accentGoldBg : T.bgElevated,
+                              borderColor: cloneSubMode === m.id ? T.accentGoldBorder : T.borderSubtle,
+                              color: cloneSubMode === m.id ? T.accentGold : T.textPrimary,
+                            },
+                          },
+                          m.label,
+                        ),
+                      ),
+                    ),
+                    cloneSubMode === 'mic'
+                      ? h(
+                          'div',
+                          { style: { padding: '14px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${micRecording ? T.accentRed : T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '9px' } },
+                          h('div', { style: { fontSize: '12px', color: T.textSecondary } }, '参考朗读示例（自然语速读完即可）：「你好，我是正在录制视频配音的创作者，今天天气晴朗，故事从这里正式开始。」'),
+                          h(
+                            'div',
+                            { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+                            !micRecording
+                              ? h('button', { className: 'dsh-vw-btn', onClick: handleStartMicRecord, style: goldBtnStyle }, '🔴 开始录制声音 (5–15 秒)')
+                              : h('button', { className: 'dsh-vw-btn', onClick: handleStopMicRecord, style: { ...goldBtnStyle, background: T.accentRed, color: '#FFF' } }, `⏹ 停止录音 (${micSeconds}s / 15s)`),
+                            recordedB64
+                              ? h('span', { style: { fontSize: '12px', color: T.accentGreen, fontWeight: 700 } }, `✓ 已采集录音样本 (${recordedFileName})`)
+                              : null,
+                          ),
+                        )
+                      : cloneSubMode === 'file'
+                      ? h(
+                          'div',
+                          { style: { padding: '14px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' } },
+                          h(
+                            'div',
+                            { style: { fontSize: '12px', color: recordedB64 ? T.accentGreen : T.textSecondary } },
+                            recordedB64 ? `✓ 已选择音频样本：${recordedFileName}` : '支持本地 .wav / .mp3 / .flac / .m4a / .ogg 文件，推荐 5–15 秒纯净人声',
+                          ),
+                          h('button', { className: 'dsh-vw-btn', onClick: () => cloneFileInputRef.current?.click(), style: blueBtnStyle }, '选择音频文件'),
+                        )
+                      : h('input', {
+                          value: voiceImportPath,
+                          onChange: (ev) => setVoiceImportPath(ev.target.value),
+                          placeholder: '填写本机参考音频或索引文件绝对路径 (.wav / .mp3 / .pt)',
+                          style: inputStyle,
+                        }),
+                    // Clone metadata + submit
+                    h(
+                      'div',
+                      { style: { display: 'grid', gridTemplateColumns: '1.35fr 92px 1.65fr', gap: '8px' } },
+                      h('input', {
+                        value: cloneVoiceName,
+                        onChange: (ev) => setCloneVoiceName(ev.target.value),
+                        placeholder: '音色名称（如 我的配音）',
+                        style: inputStyle,
+                      }),
+                      h(
+                        'select',
+                        { value: cloneVoiceGender, onChange: (ev) => setCloneVoiceGender(ev.target.value), style: inputStyle },
+                        h('option', { value: 'female' }, '女声'),
+                        h('option', { value: 'male' }, '男声'),
+                      ),
+                      h('input', {
+                        value: cloneVoicePrompt,
+                        onChange: (ev) => setCloneVoicePrompt(ev.target.value),
+                        placeholder: '参考台词（选填，留空自动识别）',
+                        style: inputStyle,
+                      }),
                     ),
                     h(
+                      'button',
+                      { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleSubmitVoiceClone, style: { ...goldBtnStyle, width: '100%' } },
+                      '🧬 降噪标准化并加入专属音色库',
+                    ),
+                    // Audition Lab
+                    h(
                       'div',
-                      { style: { display: 'flex', gap: '6px', flexShrink: 0 } },
+                      { style: { padding: '12px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '8px' } },
+                      h('div', { style: { fontSize: '12px', fontWeight: 800 } }, '🎧 克隆音色即时合成试听与选用'),
                       h(
-                        'button',
-                        { className: 'dsh-vw-btn', onClick: () => handlePreviewVoice(v), style: { ...ghostBtnStyle, padding: '4px 10px' } },
-                        h(Icon, { name: isPlayingThis ? 'pause' : 'play', size: 11 }),
-                        isPlayingThis ? '停止' : '试听',
+                        'div',
+                        { style: { display: 'flex', gap: '8px' } },
+                        h(
+                          'select',
+                          {
+                            value:
+                              cloneAuditionVoiceId ||
+                              voiceCatalog.find((v) => v.isCloned || v.id?.startsWith('clone-') || v.category === '专属声纹克隆')?.id ||
+                              '',
+                            onChange: (ev) => setCloneAuditionVoiceId(ev.target.value),
+                            style: { ...inputStyle, flex: 0.9 },
+                          },
+                          voiceCatalog.filter((v) => v.isCloned || v.id?.startsWith('clone-') || v.category === '专属声纹克隆' || v.tags?.includes('自定义音色')).length
+                            ? voiceCatalog
+                                .filter((v) => v.isCloned || v.id?.startsWith('clone-') || v.category === '专属声纹克隆' || v.tags?.includes('自定义音色'))
+                                .map((v) => h('option', { key: v.id, value: v.id }, `${v.name} (已克隆)`))
+                            : voiceCatalog.slice(0, 20).map((v) => h('option', { key: v.id, value: v.id }, v.name)),
+                        ),
+                        h('input', {
+                          value: cloneAuditionText,
+                          onChange: (ev) => setCloneAuditionText(ev.target.value),
+                          placeholder: '输入任意一句台词，立即试听你克隆出来的配音效果...',
+                          style: { ...inputStyle, flex: 1.6 },
+                        }),
                       ),
                       h(
-                        'button',
-                        { className: 'dsh-vw-btn', onClick: () => handleAssignVoice(v), style: { ...goldBtnStyle, padding: '4px 12px', fontSize: '12px' } },
-                        '选用',
+                        'div',
+                        { style: { display: 'flex', gap: '8px' } },
+                        h(
+                          'button',
+                          { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleAuditionClonedVoice(), style: { ...blueBtnStyle, flex: 1 } },
+                          '▶ 用 IndexTTS-2.5 实时试听',
+                        ),
+                        h(
+                          'button',
+                          {
+                            className: 'dsh-vw-btn',
+                            onClick: () => {
+                              const picked =
+                                cloneAuditionVoiceId ||
+                                voiceCatalog.find((v) => v.isCloned || v.id?.startsWith('clone-') || v.category === '专属声纹克隆')?.id
+                              if (picked) handleAssignVoice(voiceCatalog.find((v) => v.id === picked) || { id: picked, name: picked })
+                            },
+                            style: { ...ghostBtnStyle, flex: 0.8 },
+                          },
+                          '✓ 设为当前全局配音',
+                        ),
                       ),
+                      cloneAuditionUrl ? h('audio', { src: cloneAuditionUrl, controls: true, style: { width: '100%', height: '32px' } }) : null,
                     ),
                   )
+                : h(
+                    'div',
+                    { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '10px' } },
+                    h(
+                      'div',
+                      { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+                      h('input', {
+                        value: voiceSearch,
+                        onChange: (ev) => setVoiceSearch(ev.target.value),
+                        placeholder: '搜索音色名称或标签 (如 解说 / 男声 / 磁性)...',
+                        style: { ...inputStyle, flex: 1 },
+                      }),
+                      ['all', 'female', 'male'].map((g) =>
+                        h(
+                          'button',
+                          {
+                            key: g,
+                            className: 'dsh-vw-btn',
+                            onClick: () => setVoiceGenderFilter(g),
+                            style: {
+                              ...ghostBtnStyle,
+                              background: voiceGenderFilter === g ? T.accentGoldBg : T.bgElevated,
+                              borderColor: voiceGenderFilter === g ? T.accentGoldBorder : T.borderSubtle,
+                            },
+                          },
+                          g === 'all' ? '全部' : g === 'female' ? '女声' : '男声',
+                        ),
+                      ),
+                      h(
+                        'button',
+                        {
+                          className: 'dsh-vw-btn',
+                          onClick: () => handleAssignVoice({ id: 'auto', name: 'AI 自动匹配' }),
+                          style: { ...blueBtnStyle, fontSize: '12px', padding: '6px 12px' },
+                        },
+                        '设为 AI 自动分配',
+                      ),
+                    ),
+                    // Quick custom voice pack import
+                    h(
+                      'div',
+                      { style: { display: 'flex', gap: '6px', padding: '10px', borderRadius: '9px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}` } },
+                      h('input', {
+                        value: voiceImportPath,
+                        onChange: (ev) => setVoiceImportPath(ev.target.value),
+                        placeholder: '导入自定义参考音频/模型路径 (.wav / .pt)',
+                        style: { ...inputStyle, flex: 1.5, fontSize: '12px', padding: '6px 10px' },
+                      }),
+                      h('input', {
+                        value: voiceImportName,
+                        onChange: (ev) => setVoiceImportName(ev.target.value),
+                        placeholder: '音色名称',
+                        style: { ...inputStyle, flex: 0.7, fontSize: '12px', padding: '6px 10px' },
+                      }),
+                      h(
+                        'select',
+                        { value: voiceImportGender, onChange: (ev) => setVoiceImportGender(ev.target.value), style: { ...inputStyle, width: '74px', fontSize: '12px', padding: '6px' } },
+                        h('option', { value: 'female' }, '女'),
+                        h('option', { value: 'male' }, '男'),
+                      ),
+                      h('button', { className: 'dsh-vw-btn', onClick: handleImportVoicePack, style: ghostBtnStyle }, '导入'),
+                    ),
+                    h(
+                      'div',
+                      { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' } },
+                      filteredVoices.slice(0, 60).map((v) => {
+                        const isPlayingThis = playingVoiceId === v.id
+                        return h(
+                          'div',
+                          {
+                            key: v.id,
+                            style: {
+                              padding: '9px 12px',
+                              borderRadius: '9px',
+                              background: T.bgElevated,
+                              border: `1px solid ${T.borderSubtle}`,
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              gap: '10px',
+                            },
+                          },
+                          h(
+                            'div',
+                            { style: { minWidth: 0 } },
+                            h('div', { style: { fontSize: '13px', fontWeight: 700 } }, v.name || v.id),
+                            h('div', { style: { fontSize: '11px', color: T.textMuted } }, `${v.gender || ''} · ${(v.tags || []).slice(0, 4).join(' / ')}`),
+                          ),
+                          h(
+                            'div',
+                            { style: { display: 'flex', gap: '6px', flexShrink: 0 } },
+                            h(
+                              'button',
+                              { className: 'dsh-vw-btn', onClick: () => handlePreviewVoice(v), style: { ...ghostBtnStyle, padding: '4px 10px' } },
+                              h(Icon, { name: isPlayingThis ? 'pause' : 'play', size: 11 }),
+                              isPlayingThis ? '停止' : '试听',
+                            ),
+                            h(
+                              'button',
+                              { className: 'dsh-vw-btn', onClick: () => handleAssignVoice(v), style: { ...goldBtnStyle, padding: '4px 12px', fontSize: '12px' } },
+                              '选用',
+                            ),
+                          ),
+                        )
+                      }),
+                    ),
+                  ),
+            ),
+          )
+        : null
+
+      const vendorModal = showVendorModal
+        ? h(
+            'div',
+            { style: modalBackdropStyle, onClick: () => setShowVendorModal(false) },
+            h(
+              'div',
+              {
+                style: { ...panelStyle, width: '520px', maxWidth: '95vw', padding: '22px', display: 'flex', flexDirection: 'column', gap: '12px' },
+                onClick: (ev) => ev.stopPropagation(),
+              },
+              h(
+                'div',
+                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 800 } }, '✨ 外部 .motion / HTML 动效模板隔离导入'),
+                h('button', { 'aria-label': '关闭', title: '关闭弹窗', onClick: () => setShowVendorModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 16 })),
+              ),
+              h('p', { style: { margin: 0, fontSize: '12px', color: T.textSecondary, lineHeight: 1.55 } }, '为防外部复杂特效代码破坏主工程编译与字体规范，系统将把目录复制到 vendor/ 目录，通过独立无头 Chromium 渲染成纯画面无声 MP4 (-an) 后安全嵌入时间轴。'),
+              h('input', {
+                value: vendorSourceDir,
+                onChange: (ev) => setVendorSourceDir(ev.target.value),
+                placeholder: '填写本地 .motion / 外部 HTML 模板文件夹绝对路径 (含 index.html)',
+                style: inputStyle,
+              }),
+              h(
+                'div',
+                { style: { display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '8px' } },
+                h('input', {
+                  value: vendorName,
+                  onChange: (ev) => setVendorName(ev.target.value),
+                  placeholder: '片段名称 (如 logo-reveal)',
+                  style: inputStyle,
                 }),
+                h('input', {
+                  type: 'number',
+                  min: 1,
+                  max: 30,
+                  value: vendorDurationSec,
+                  onChange: (ev) => setVendorDurationSec(ev.target.value),
+                  placeholder: '截取时长 (秒)',
+                  style: inputStyle,
+                }),
+              ),
+              h(
+                'div',
+                { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' } },
+                h('button', { className: 'dsh-vw-btn', onClick: () => setShowVendorModal(false), style: ghostBtnStyle }, '取消'),
+                h('button', { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleImportVendorMotion, style: goldBtnStyle }, '🎬 无头 Chromium 隔离渲染导入'),
               ),
             ),
           )
@@ -3646,6 +4592,7 @@ window.__ModuleLoader__.load({
         llmModal,
         codeDrawer,
         voiceModal,
+        vendorModal,
       )
     }
 

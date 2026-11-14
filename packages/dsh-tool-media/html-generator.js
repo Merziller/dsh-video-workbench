@@ -9,6 +9,13 @@
  * - 6 Distinct .motion Layouts: 3d-stage-opener, kinetic-impact, media-split-motion, mosaic-pulse-wall, compare-dual, radial-climax
  * - Deterministic `window.__seekToFrame(frame)` for full-FPS CDP capture + smooth live `requestAnimationFrame` preview
  */
+import {
+  buildBundledFontFaceCss,
+  buildComplianceNoticeText,
+  PRIMARY_MONO_STACK,
+  PRIMARY_SANS_STACK,
+  resolveSafeZoneSpec,
+} from '@dsh-video/shared'
 
 const PALETTES = {
   tech: {
@@ -323,6 +330,9 @@ export function buildRichHtmlVideo(script) {
   const width = Number(script?.width) || 1920
   const height = Number(script?.height) || 1080
   const beats = Array.isArray(script?.bgm?.beats) ? script.bgm.beats : []
+  const safeZone = resolveSafeZoneSpec(width, height, script?.targetPlatform || 'universal')
+  const complianceNotice = buildComplianceNoticeText(script)
+  const bundledFontFaceCss = buildBundledFontFaceCss('fonts')
 
   let cursorFrame = 0
   const timeline = scenes.map((s, idx) => {
@@ -374,8 +384,7 @@ export function buildRichHtmlVideo(script) {
   <meta name="viewport" content="width=${width}, initial-scale=1.0" />
   <title>${escapeHtml(script?.title || 'DSH Motion Video')}</title>
   <style>
-    @font-face { font-family: 'Microsoft YaHei'; src: local('Microsoft YaHei UI'), local('Microsoft YaHei'), local('PingFang SC'); }
-    @font-face { font-family: 'Consolas'; src: local('Consolas'), local('Cascadia Mono'); }
+    ${bundledFontFaceCss}
 
     :root {
       --bg: ${theme.background};
@@ -385,8 +394,8 @@ export function buildRichHtmlVideo(script) {
       --accent: ${theme.accent};
       --accent2: ${theme.accent2};
       --gold: ${theme.gold};
-      --font-sans: 'Microsoft YaHei', 'PingFang SC', sans-serif;
-      --font-mono: 'Consolas', monospace;
+      --font-sans: ${PRIMARY_SANS_STACK};
+      --font-mono: ${PRIMARY_MONO_STACK};
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -673,15 +682,15 @@ export function buildRichHtmlVideo(script) {
     #c-br { right: 32px; bottom: 32px; border-right-width: 2px; border-bottom-width: 2px; }
 
     #sub-wrap {
-      position: absolute; left: 0; right: 0; bottom: 42px;
+      position: absolute; left: ${safeZone.safePaddingPx.left}px; right: ${safeZone.safePaddingPx.right}px; bottom: ${Number(script?.subtitleBottomPx) || safeZone.subtitleBottomPx}px;
       display: flex; justify-content: center; pointer-events: none; z-index: 25;
     }
     #sub-pill {
       padding: 8px 26px; border-radius: 10px;
-      background: rgba(5,7,11,0.72);
-      border: 1px solid rgba(255,255,255,0.12);
-      font-family: var(--font-sans); font-size: 32px; font-weight: 700; line-height: 1.35;
-      color: #FFFFFF; max-width: 1520px; text-align: center; white-space: nowrap;
+      background: rgba(5,7,11,0.78);
+      border: 1px solid rgba(255,255,255,0.14);
+      font-family: var(--font-sans); font-size: ${width < height ? 28 : 32}px; font-weight: 700; line-height: 1.35;
+      color: #FFFFFF; max-width: ${Math.round(width * 0.84)}px; text-align: center; white-space: ${width < height ? 'normal' : 'nowrap'};
       text-shadow: 0 2px 8px rgba(0,0,0,0.92);
     }
     #progress-line {
@@ -693,20 +702,29 @@ export function buildRichHtmlVideo(script) {
       background: linear-gradient(90deg, var(--accent), var(--gold));
     }
     #ai-badge {
-      position: absolute; top: 24px; right: 28px; z-index: 28;
+      position: absolute; top: ${Math.max(24, safeZone.safePaddingPx.top)}px; left: ${Math.max(28, safeZone.safePaddingPx.left)}px; z-index: 28;
       padding: 6px 14px; border-radius: 999px;
-      background: rgba(8,12,20,0.72); border: 1px solid rgba(255,255,255,0.16);
-      font: 600 15px var(--font-sans); color: #CBD5E1; letter-spacing: 0.03em;
+      background: rgba(8,12,20,0.76); border: 1px solid rgba(255,255,255,0.18);
+      font: 600 15px var(--font-sans); color: #E2E8F0; letter-spacing: 0.03em;
+    }
+    #end-notice-wrap {
+      position: absolute; left: ${safeZone.safePaddingPx.left}px; right: ${safeZone.safePaddingPx.right}px; bottom: ${Math.round((Number(script?.subtitleBottomPx) || safeZone.subtitleBottomPx) + (width < height ? 88 : 72))}px;
+      display: flex; justify-content: center; pointer-events: none; z-index: 29; opacity: 0;
+    }
+    #end-notice {
+      padding: 7px 18px; border-radius: 999px;
+      background: rgba(6,10,18,0.86); border: 1px solid color-mix(in srgb, var(--accent2) 38%, transparent);
+      font: 600 15px var(--font-sans); color: #CBD5E1; letter-spacing: 0.02em; text-align: center;
     }
     ${width < height ? `
     /* Portrait Responsive Adaptation (${width}x${height}) */
     .k-split-grid, .k-split-grid.k-reverse {
       flex-direction: column; justify-content: center; gap: 28px;
-      padding: 84px 52px 175px;
+      padding: ${Math.max(84, safeZone.safePaddingPx.top)}px ${Math.max(44, safeZone.safePaddingPx.right)}px ${Math.max(190, safeZone.subtitleBottomPx + 80)}px ${Math.max(44, safeZone.safePaddingPx.left)}px;
     }
     .k-left-col { width: 100%; align-items: center; text-align: center; }
     .k-right-col { width: 100%; }
-    .k-center-stage { padding: 84px 52px 175px; gap: 22px; }
+    .k-center-stage { padding: ${Math.max(84, safeZone.safePaddingPx.top)}px ${Math.max(44, safeZone.safePaddingPx.right)}px ${Math.max(190, safeZone.subtitleBottomPx + 80)}px ${Math.max(44, safeZone.safePaddingPx.left)}px; gap: 22px; }
     .k-headline { font-size: 58px; }
     .k-headline-lg { font-size: 66px; }
     .k-headline-md { font-size: 50px; }
@@ -715,10 +733,10 @@ export function buildRichHtmlVideo(script) {
     .k-card-stage { max-width: 100%; }
     .k-pip-frame { right: 8px; bottom: -18px; width: 38%; }
     .k-mosaic-grid {
-      width: ${Math.round(width * 0.9)}px; height: ${Math.round(height * 0.56)}px;
+      width: ${Math.round(width * 0.88)}px; height: ${Math.round(height * 0.52)}px;
       grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(3, 1fr); gap: 14px;
     }
-    .k-mosaic-overlay { left: 40px; right: 40px; bottom: 155px; flex-direction: column; align-items: flex-start; gap: 14px; }
+    .k-mosaic-overlay { left: 40px; right: 40px; bottom: ${Math.max(180, safeZone.subtitleBottomPx + 70)}px; flex-direction: column; align-items: flex-start; gap: 14px; }
     .k-cnt-num { font-size: 52px; }
     .k-compare-row { flex-direction: column; gap: 20px; }
     .k-cmp-card { max-width: 100%; width: 100%; padding: 28px 24px; }
@@ -726,8 +744,8 @@ export function buildRichHtmlVideo(script) {
     .k-cmp-bridge { width: 3px; height: 34px; }
     .k-cmp-bridge i { border-top: none; border-left: 3px dashed rgba(255,255,255,0.45); }
     .k-glow-bar { width: ${Math.round(width * 0.65)}px; }
-    #sub-wrap { bottom: 96px; }
-    #sub-pill { max-width: ${Math.round(width * 0.9)}px; font-size: 28px; white-space: normal; }
+    #sub-wrap { bottom: ${Number(script?.subtitleBottomPx) || safeZone.subtitleBottomPx}px; }
+    #sub-pill { max-width: ${Math.round(width * 0.84)}px; font-size: 28px; white-space: normal; }
     ` : width === height ? `
     /* Square 1:1 Adaptation */
     .k-split-grid, .k-split-grid.k-reverse {
@@ -760,7 +778,8 @@ export function buildRichHtmlVideo(script) {
       <div id="c-bl" class="k-corner"></div>
       <div id="c-br" class="k-corner"></div>
     </div>
-    ${script?.aiBadge ? `<div id="ai-badge">${typeof script.aiBadge === 'string' ? script.aiBadge : 'AI 生成 · 仅供参考'}</div>` : ''}
+    <div id="ai-badge">${escapeHtml(typeof script?.aiBadge === 'string' && script.aiBadge.trim() ? script.aiBadge : complianceNotice.badgeText)}</div>
+    <div id="end-notice-wrap"><div id="end-notice">${escapeHtml(complianceNotice.endNoticeBody)}</div></div>
     <div id="sub-wrap"><div id="sub-pill"></div></div>
     <div id="progress-line"><div id="progress-fill"></div></div>
   </div>
@@ -782,6 +801,7 @@ export function buildRichHtmlVideo(script) {
     const flashEl = document.getElementById('flash');
     const subPill = document.getElementById('sub-pill');
     const progFill = document.getElementById('progress-fill');
+    const endNoticeWrap = document.getElementById('end-notice-wrap');
 
     function fitStage() {
       const s = Math.min(window.innerWidth / CFG.width, window.innerHeight / CFG.height) || 1;
@@ -1260,6 +1280,11 @@ export function buildRichHtmlVideo(script) {
         if (subPill.textContent !== txt) subPill.textContent = txt;
       } else {
         subPill.style.display = 'none';
+      }
+      if (endNoticeWrap) {
+        const noticeStartSec = Math.max(0, CFG.totalSec - Math.min(2.2, Math.max(1.0, CFG.totalSec * 0.2)));
+        const nAlpha = t >= noticeStartSec ? clamp((t - noticeStartSec) / 0.35) : 0;
+        endNoticeWrap.style.opacity = nAlpha.toFixed(3);
       }
     }
 

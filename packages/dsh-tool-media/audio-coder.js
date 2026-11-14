@@ -1,0 +1,352 @@
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import vm from 'node:vm'
+import { resolveBinaries, runCommandRedirected } from '@dsh-video/shared'
+import { executeGenerateSpeech } from '@dsh-video/tool-local-tts'
+import { DSP_SR, encodeStereoWav } from './audio-dsp.js'
+
+const FORBIDDEN_AUDIO_CODE_PATTERNS = [
+  { rx: /\brequire\s*\(/, reason: '禁止使用 require()' },
+  { rx: /\bimport\s+[\s\S]*?\bfrom\b|\bimport\s*\(/, reason: '禁止在音频合成脚本中使用 import 语句' },
+  { rx: /\b(?:process|globalThis|global|Buffer)\b/, reason: '禁止访问 Node 全局对象或进程对象' },
+  { rx: /\b(?:child_process|fs\/promises|node:fs|node:vm|worker_threads)\b/, reason: '禁止引用系统模块' },
+  { rx: /\b(?:eval|Function)\s*\(/, reason: '禁止使用 eval() 或 new Function()' },
+  { rx: /\b(?:fetch|XMLHttpRequest|WebSocket)\b/, reason: '禁止在音频合成代码中发起网络请求' },
+  { rx: /while\s*\(\s*true\s*\)/, reason: '禁止死循环 while(true)' },
+]
+
+/**
+ * Verify LLM-authored DSP synthesis code strictly uses pure math without filesystem,
+ * network, process, or dynamic eval access.
+ */
+export function scanAiAudioCodeSandbox(code) {
+  const src = String(code || '')
+  const errors = []
+  if (!src.trim()) {
+    errors.push('AI 配乐合成代码为空')
+    return { ok: false, errors }
+  }
+  for (const item of FORBIDDEN_AUDIO_CODE_PATTERNS) {
+    if (item.rx.test(src)) {
+      errors.push(item.reason)
+    }
+  }
+  if (!/function\s+synthesizeBgm\b|const\s+synthesizeBgm\s*=|let\s+synthesizeBgm\s*=/.test(src)) {
+    errors.push('脚本必须定义函数 synthesizeBgm(ctx)')
+  }
+  return { ok: errors.length === 0, errors }
+}
+
+/**
+ * Execute sandboxed JS audio synthesis code inside an isolated Node `vm` context
+ * and encode normalized 48kHz stereo WAV output.
+ */
+export function executeAiAudioSynthScript({
+  code,
+  outWavPath,
+  durationSec = 10,
+  sampleRate = DSP_SR,
+  bpm = 112,
+  beats = [],
+  mood = 'tech',
+}) {
+  const scan = scanAiAudioCodeSandbox(code)
+  if (!scan.ok) {
+    throw new Error(`AI 音频沙箱安检未通过: ${scan.errors.join('; ')}`)
+  }
+
+  const safeDur = Math.max(1, Math.min(180, Number(durationSec) || 10))
+  const totalSamples = Math.max(sampleRate, Math.ceil(safeDur * sampleRate))
+  const left = new Float32Array(totalSamples)
+  const right = new Float32Array(totalSamples)
+
+  // Strip optional `export ` modifiers so LLM ESM snippets execute inside isolated VM context
+  const sanitizedBody = String(code)
+    .replace(/\bexport\s+default\s+/g, '')
+    .replace(/\bexport\s+(?=(?:function|const|let|var)\b)/g, '')
+
+  const sandbox = {
+    Math,
+    Number,
+    Array,
+    Float32Array,
+    Int16Array,
+    String,
+    Boolean,
+    __dshCtx: {
+      sampleRate,
+      durationSec: safeDur,
+      totalSamples,
+      bpm: Number(bpm) || 112,
+      beats: Array.isArray(beats) ? beats : [],
+      mood: String(mood || 'tech'),
+      left,
+      right,
+      midiToHz: (midi) => 440 * Math.pow(2, (Number(midi) - 69) / 12),
+      clamp: (x, a = -1, b = 1) => (x < a ? a : x > b ? b : x),
+      tanh: (x) => Math.tanh(x),
+    },
+  }
+
+  const wrappedScript = `${sanitizedBody}\n;if (typeof synthesizeBgm !== 'function') { throw new Error('Missing synthesizeBgm(ctx)'); }\n__dshResult = synthesizeBgm(__dshCtx);`
+  const context = vm.createContext(sandbox)
+  vm.runInContext(wrappedScript, context, { timeout: 3500 })
+
+  const outL = sandbox.__dshResult?.left?.length >= totalSamples ? sandbox.__dshResult.left : left
+  const outR = sandbox.__dshResult?.right?.length >= totalSamples ? sandbox.__dshResult.right : right
+
+  // Peak normalize + fade-in/out safety envelope
+  let peak = 0
+  let energy = 0
+  for (let i = 0; i < totalSamples; i++) {
+    const l = Number.isFinite(outL[i]) ? outL[i] : 0
+    const r = Number.isFinite(outR[i]) ? outR[i] : 0
+    outL[i] = l
+    outR[i] = r
+    const ap = Math.max(Math.abs(l), Math.abs(r))
+    if (ap > peak) peak = ap
+    energy += l * l + r * r
+  }
+
+  if (peak < 1e-4) {
+    throw new Error('AI 配乐脚本生成的音频波形为静音，请检查振荡器与增益公式')
+  }
+
+  const normGain = peak > 0.9 ? 0.85 / peak : peak < 0.15 ? 0.65 / peak : 1.0
+  const fadeSamples = Math.min(Math.floor(totalSamples * 0.12), Math.floor(sampleRate * 0.35))
+  for (let i = 0; i < totalSamples; i++) {
+    let env = 1
+    if (i < Math.min(fadeSamples, Math.floor(sampleRate * 0.06))) {
+      env = i / Math.max(1, Math.min(fadeSamples, Math.floor(sampleRate * 0.06)))
+    } else if (i >= totalSamples - fadeSamples) {
+      env = (totalSamples - 1 - i) / Math.max(1, fadeSamples)
+    }
+    outL[i] = Math.tanh(outL[i] * normGain * 0.9) * env
+    outR[i] = Math.tanh(outR[i] * normGain * 0.9) * env
+  }
+
+  const wavBuf = encodeStereoWav(outL, outR, sampleRate)
+  const absOut = resolve(outWavPath)
+  mkdirSync(dirname(absOut), { recursive: true })
+  writeFileSync(absOut, wavBuf)
+
+  return {
+    wavPath: absOut,
+    sampleRate,
+    durationSec: Number((totalSamples / sampleRate).toFixed(3)),
+    rmsDb: Number((10 * Math.log10(Math.max(1e-12, energy / (totalSamples * 2)))).toFixed(2)),
+    peakBeforeNorm: Number(peak.toFixed(4)),
+  }
+}
+
+export function buildAudioCoderPromptPackage({
+  topic = '',
+  mood = 'tech',
+  bpm = 112,
+  durationSec = 10,
+  beats = [],
+  scenes = [],
+}) {
+  const system = `你是精通 Web Audio / PCM 数字信号合成 (DSP Synthesis) 的 AI 音乐作曲程序员。
+你的任务是根据视频主题、情绪节奏与分镜结构，直接编写纯 JavaScript 时域 DSP 合成代码生成 48kHz 立体声背景音乐！
+
+=== DSP 编程规范 (严格 JSON 输出) ===
+1. 输出严格 JSON：{ "files": { "audio/ai_bgm_synth.js": "..." }, "summary": "简短说明乐器配器与律动", "bpm": 112 }
+2. 代码中必须定义函数 \`function synthesizeBgm(ctx) { ... }\`。
+3. \`ctx\` 提供：
+   - \`sampleRate\`: 48000, \`durationSec\`: 总秒数, \`totalSamples\`: 总采样点数
+   - \`bpm\`, \`beats\`, \`mood\`, \`left\` (Float32Array), \`right\` (Float32Array)
+   - \`midiToHz(midi)\`, \`clamp(x, a, b)\`, \`tanh(x)\`
+4. 沙箱禁止：严禁 require/import/fs/fetch/process/eval/Function/globalThis/while(true)。仅允许纯数学数组运算直接写入 \`ctx.left[i]\` 和 \`ctx.right[i]\`！
+5. 音色与编曲质感：请结合柔和正弦/FM 合成垫音和弦 (Chords/Pad)、深沉次低音 (Sub Bassline)、卡点底鼓脉冲 (Kick envelope aligned to beatSec)、清脆闭镲或立体声琶音，做到宽声场（左右声道微相移/反相声像）且不刺耳、无破音。`
+
+  const user = JSON.stringify(
+    {
+      task: '编写 AI 定制配乐 JavaScript DSP 合成代码 (synthesizeBgm)',
+      topic,
+      mood,
+      bpm,
+      durationSec,
+      beatsCount: Array.isArray(beats) ? beats.length : 0,
+      scenes: (scenes || []).map((s, i) => ({
+        index: i + 1,
+        title: s.title,
+        emotion: s.emotion,
+        startSec: s.startSec,
+        durationSec: s.durationSec,
+      })),
+    },
+    null,
+    2,
+  )
+
+  return { system, user }
+}
+
+function parseJsonFromLlmText(rawText) {
+  const cleaned = String(rawText || '').trim()
+  const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenced ? fenced[1].trim() : cleaned
+  try {
+    return JSON.parse(candidate)
+  } catch {
+    const start = candidate.indexOf('{')
+    const end = candidate.lastIndexOf('}')
+    if (start >= 0 && end > start) {
+      return JSON.parse(candidate.slice(start, end + 1))
+    }
+    throw new Error('AI 配乐返回内容不是有效的 JSON')
+  }
+}
+
+/**
+ * Invoke LLM to author `audio/ai_bgm_synth.js`, sandbox-validate & synthesize `audio/bgm-llm.wav`.
+ */
+export async function generateAiCodedBgmTrack({
+  projectDir,
+  script,
+  callLlmChatFn,
+}) {
+  if (typeof callLlmChatFn !== 'function') {
+    throw new Error('需要注入 callLlmChatFn 才能执行 AI 编程配乐')
+  }
+  const absDir = resolve(projectDir)
+  const durationSec = Math.max(3, Number(script?.totalDurationSec) || 12)
+  const bpm = Number(script?.audioSpec?.bpm || script?.bgm?.bpm || 112)
+  const mood = script?.audioSpec?.mood || script?.style || 'tech'
+  const beats = Array.isArray(script?.bgm?.beats) ? script.bgm.beats : []
+
+  const { system, user } = buildAudioCoderPromptPackage({
+    topic: script?.title || script?.topic || '',
+    mood,
+    bpm,
+    durationSec,
+    beats,
+    scenes: script?.scenes || [],
+  })
+
+  const res = await callLlmChatFn({
+    system,
+    messages: [{ role: 'user', content: user }],
+    temperature: 0.45,
+    maxTokens: 3600,
+    responseFormat: 'json',
+  })
+
+  const parsed = parseJsonFromLlmText(res?.text || '')
+  const code = parsed?.files?.['audio/ai_bgm_synth.js'] || parsed?.code || ''
+  if (!code) {
+    throw new Error('LLM 未返回 audio/ai_bgm_synth.js 合成代码')
+  }
+
+  const scriptFile = join(absDir, 'audio', 'ai_bgm_synth.js')
+  const wavFile = join(absDir, 'audio', 'bgm-llm.wav')
+  mkdirSync(dirname(scriptFile), { recursive: true })
+  writeFileSync(scriptFile, code, 'utf8')
+
+  const execRes = executeAiAudioSynthScript({
+    code,
+    outWavPath: wavFile,
+    durationSec,
+    bpm: Number(parsed?.bpm) || bpm,
+    beats,
+    mood,
+  })
+
+  return {
+    ok: true,
+    bgmMode: 'llm-coded',
+    scriptPath: scriptFile,
+    relScriptPath: 'audio/ai_bgm_synth.js',
+    wavPath: execRes.wavPath,
+    relWavPath: 'audio/bgm-llm.wav',
+    summary: parsed?.summary || 'AI 大模型实时编写的纯数学 DSP 配乐已渲染',
+    rmsDb: execRes.rmsDb,
+    bpm: Number(parsed?.bpm) || bpm,
+    code,
+  }
+}
+
+/**
+ * Mode 3 (`tts-engine`): Use IndexTTS-2.5 to synthesize a vocal seed from user prompt / voice / clone
+ * and sculpt it through FFmpeg reverb/chorus/pitch filters into ambient BGM pad or stinger SFX.
+ */
+export async function synthesizeTtsEngineAudioCue({
+  projectDir,
+  promptText = '啊——嗯——光影律动，未来已来。',
+  voiceId = 'auto',
+  mode = 'bgm-pad',
+  durationSec = 10,
+  emotion = '深沉空灵',
+}) {
+  const absDir = resolve(projectDir)
+  const audioDir = join(absDir, 'audio')
+  mkdirSync(audioDir, { recursive: true })
+
+  const seedWav = join(audioDir, 'tts-bgm-seed.wav')
+  const targetDur = Math.max(2, Math.min(180, Number(durationSec) || 10))
+
+  const ttsRes = await executeGenerateSpeech({
+    text: String(promptText || '嗯——科技律动，沉浸声场。').trim(),
+    emotion,
+    voiceId,
+    outputPath: seedWav,
+    fps: 30,
+  })
+
+  const { ffmpeg } = resolveBinaries()
+  const outName = mode === 'sfx-stinger' ? 'sfx-tts-stinger.wav' : 'bgm-tts.wav'
+  const outWav = join(audioDir, outName)
+
+  const filterGraph =
+    mode === 'sfx-stinger'
+      ? [
+          'aresample=48000',
+          'asetrate=48000*0.84,atempo=1.08',
+          'aecho=0.8:0.88:45|95|160:0.45|0.32|0.2',
+          'lowpass=f=4200,highpass=f=60',
+          'loudnorm=I=-16:TP=-2.0',
+        ].join(',')
+      : mode === 'vocal-hook'
+        ? [
+            'aresample=48000',
+            'aecho=0.75:0.85:120|240:0.42|0.25',
+            `aloop=loop=-1:size=480000`,
+            `atrim=0:${targetDur.toFixed(3)}`,
+            `afade=t=in:st=0:d=0.45,afade=t=out:st=${Math.max(0.2, targetDur - 0.8).toFixed(3)}:d=0.8`,
+            'loudnorm=I=-20:TP=-2.5',
+          ].join(',')
+        : [
+            // `bgm-pad`: atmospheric pitched-down warm ambient voice pad
+            'aresample=48000',
+            'asetrate=48000*0.76,atempo=1.05',
+            'aecho=0.85:0.9:75|155|280|420:0.55|0.42|0.28|0.18',
+            'lowpass=f=2200,highpass=f=85',
+            'aloop=loop=-1:size=960000',
+            `atrim=0:${targetDur.toFixed(3)}`,
+            `afade=t=in:st=0:d=0.8,afade=t=out:st=${Math.max(0.2, targetDur - 1.1).toFixed(3)}:d=1.1`,
+            'loudnorm=I=-22:TP=-3.0',
+          ].join(',')
+
+  const res = await runCommandRedirected(
+    ffmpeg,
+    ['-y', '-i', seedWav, '-af', filterGraph, '-ar', '48000', '-ac', '2', outWav],
+    { timeoutMs: 45_000 },
+  )
+
+  if (res.code !== 0 || !existsSync(outWav)) {
+    throw new Error(`配音引擎氛围音轨声学塑形失败: ${res.stderr}`)
+  }
+
+  return {
+    ok: true,
+    bgmMode: 'tts-engine',
+    cueMode: mode,
+    voiceId: ttsRes.voiceUsed?.id || voiceId,
+    voiceName: ttsRes.voiceUsed?.name || voiceId,
+    seedWavPath: seedWav,
+    wavPath: outWav,
+    relWavPath: `audio/${outName}`,
+    durationSec: targetDur,
+  }
+}

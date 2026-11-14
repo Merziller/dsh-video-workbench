@@ -13,11 +13,14 @@ import {
   useVideoConfig,
 } from 'remotion';
 import scriptData from '../script.json';
-import { AIBadge } from './lib/shotcraft';
+import { AIBadge, EndNotice, FONT_SANS, FONT_MONO } from './lib/shotcraft';
 
 const PALETTE: any = {"background":"#070B16","surface":"#111A30","textPrimary":"#F8FAFC","textSecondary":"#CBD5E1","accent":"#38BDF8","accent2":"#7DB2FF","gold":"#F5B92E","rgbAccent":"125,178,255","rgbGold":"245,185,46","titleGrad":"linear-gradient(180deg,#FFFFFF 0%,#E2E8F0 52%,#94A3B8 100%)","accentGrad":"linear-gradient(180deg,#CFE1FF 0%,#4F95FF 55%,#1F5FE0 100%)"};
-const SANS = 'Microsoft YaHei, PingFang SC, sans-serif';
-const MONO = 'Consolas, monospace';
+const SANS = FONT_SANS;
+const MONO = FONT_MONO;
+const DEFAULT_SUBTITLE_BOTTOM = 140;
+const DEFAULT_BADGE_TEXT = "AI 辅助创作";
+const DEFAULT_END_NOTICE = "本视频由 DeepSeek Harness 创作：AI 大模型编码驱动视觉合成 · AI 编程合成配乐 + IndexTTS-2.5 语音合成";
 const easeOut = Easing.bezier(0.22, 1, 0.36, 1);
 
 const PARTICLES = Array.from({ length: 34 }, (_, i) => {
@@ -996,18 +999,18 @@ export const VideoComposition: React.FC = () => {
       ))}
 
       <AIBadge
-        visible={Boolean(sData.aiBadge)}
-        text={typeof sData.aiBadge === 'string' ? sData.aiBadge : undefined}
+        visible={true}
+        text={typeof sData.aiBadge === 'string' && sData.aiBadge.trim() ? sData.aiBadge : DEFAULT_BADGE_TEXT}
         accentColor={PALETTE.accent}
       />
 
-      {/* Clean Single-Line Broadcast Subtitles */}
+      {/* Clean Single-Line Broadcast Subtitles (Platform Safe-Zone Aligned) */}
       {subText ? (
         <AbsoluteFill
           style={{
             justifyContent: 'flex-end',
             alignItems: 'center',
-            paddingBottom: isPortrait ? 96 : 46,
+            paddingBottom: Number(sData.subtitleBottomPx) || DEFAULT_SUBTITLE_BOTTOM || (isPortrait ? 240 : 110),
             pointerEvents: 'none',
             zIndex: 40,
           }}
@@ -1057,6 +1060,11 @@ export const VideoComposition: React.FC = () => {
           }}
         />
       </div>
+
+      <EndNotice
+        text={DEFAULT_END_NOTICE}
+        accentColor={PALETTE.accent}
+      />
 
       
     </AbsoluteFill>

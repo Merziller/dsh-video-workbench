@@ -24,10 +24,12 @@ import { extname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   REPO_ROOT,
+  readScriptJson,
   resolveBinaries,
   resolveEnvPath,
   runCommandRedirected,
 } from '@dsh-video/shared'
+import { renderHtmlSegmentsWithCache } from './segment-cache.js'
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -46,6 +48,9 @@ const MIME = {
   '.wav': 'audio/wav',
   '.mp3': 'audio/mpeg',
   '.m4a': 'audio/mp4',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
 }
 
 function startStaticProjectServer(projectDir) {
@@ -282,18 +287,132 @@ export async function renderHtmlVideoToMp4({
   outMp4Path,
   snapshotFrames = [],
   snapshotDir = '',
+  useSegmentCache = true,
   onProgress,
 }) {
-  const tmpBase = join(REPO_ROOT, '.tmp')
-  mkdirSync(tmpBase, { recursive: true })
-  const mjpegPath = join(tmpBase, `frames-${Date.now()}.mjpeg`)
-  const mjpegFd = openSync(mjpegPath, 'w')
+  const { ffmpeg } = resolveBinaries()
   const snapMap = new Map()
   snapshotFrames.forEach((f, idx) => {
     if (!snapMap.has(f)) snapMap.set(f, [])
     snapMap.get(f).push(idx)
   })
   if (snapshotDir) mkdirSync(snapshotDir, { recursive: true })
+
+  // Deterministic Per-Scene Segment Cache fast-path (when script.json has >=2 scenes)
+  let scriptData = null
+  if (useSegmentCache) {
+    try {
+      scriptData = readScriptJson(projectDir).data
+    } catch {}
+  }
+
+  if (useSegmentCache && scriptData && Array.isArray(scriptData.scenes) && scriptData.scenes.length >= 2) {
+    let serverObj = null
+    let cdpSession = null
+    const ensureBrowser = async () => {
+      if (!serverObj) {
+        serverObj = await startStaticProjectServer(projectDir)
+      }
+      if (!cdpSession) {
+        cdpSession = await openCdpSession(browserBin, width, height)
+        await waitForPageReady(cdpSession.cdp, `http://127.0.0.1:${serverObj.port}/index.html?render=1`)
+      }
+      return cdpSession
+    }
+
+    try {
+      const segRes = await renderHtmlSegmentsWithCache({
+        projectDir,
+        script: scriptData,
+        ffmpeg,
+        outMp4: outMp4Path,
+        audioWavPath: audioPath,
+        fps,
+        renderWidth: width,
+        renderHeight: height,
+        onProgress,
+        captureFrameRangeToSilentMp4: async ({ startFrame, endFrameExclusive, outSilentMp4 }) => {
+          const sess = await ensureBrowser()
+          const tmpBase = join(REPO_ROOT, '.tmp')
+          mkdirSync(tmpBase, { recursive: true })
+          const mjpegPath = join(tmpBase, `seg-${startFrame}-${Date.now()}.mjpeg`)
+          const mjpegFd = openSync(mjpegPath, 'w')
+          try {
+            for (let f = startFrame; f < endFrameExclusive; f++) {
+              await sess.cdp.send('Runtime.evaluate', {
+                expression: `Promise.resolve(window.__seekToFrame ? window.__seekToFrame(${f}) : ${f}).then(() => new Promise(r => requestAnimationFrame(r)))`,
+                awaitPromise: true,
+              })
+              const shot = await sess.cdp.send('Page.captureScreenshot', {
+                format: 'jpeg',
+                quality: 90,
+                optimizeForSpeed: true,
+              })
+              writeSync(mjpegFd, Buffer.from(shot.data, 'base64'))
+              if (snapshotDir && snapMap.has(f)) {
+                const pShot = await sess.cdp.send('Page.captureScreenshot', { format: 'png' })
+                const pngBuf = Buffer.from(pShot.data, 'base64')
+                for (const idx of snapMap.get(f)) {
+                  const sPath = join(snapshotDir, `shot_${String(idx).padStart(2, '0')}.png`)
+                  const pFd = openSync(sPath, 'w')
+                  writeSync(pFd, pngBuf)
+                  closeSync(pFd)
+                }
+              }
+            }
+          } finally {
+            try { closeSync(mjpegFd) } catch {}
+          }
+
+          const segSec = Number(((endFrameExclusive - startFrame) / fps).toFixed(3))
+          try {
+            const enc = await runCommandRedirected(
+              ffmpeg,
+              [
+                '-y', '-f', 'mjpeg', '-framerate', String(fps), '-i', mjpegPath,
+                '-vf', 'scale=in_range=full:out_color_matrix=bt709:out_range=tv,format=yuv420p',
+                '-c:v', 'libx264', '-preset', 'medium', '-crf', '19', '-pix_fmt', 'yuv420p',
+                '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
+                '-g', String(Math.max(15, fps)), '-sc_threshold', '0', '-video_track_timescale', '90000', '-an', '-t', String(segSec),
+                outSilentMp4,
+              ],
+              { timeoutMs: 180_000 },
+            )
+            if (enc.code !== 0 || !existsSync(outSilentMp4)) {
+              throw new Error(`Segment encode failed: ${enc.stderr}`)
+            }
+          } finally {
+            try { unlinkSync(mjpegPath) } catch {}
+          }
+        },
+      })
+
+      // Extract any snapshot frames missing due to cache hits straight from final outMp4Path
+      if (snapshotDir && snapshotFrames.length > 0) {
+        for (let i = 0; i < snapshotFrames.length; i++) {
+          const sPath = join(snapshotDir, `shot_${String(i).padStart(2, '0')}.png`)
+          if (!existsSync(sPath)) {
+            const atSec = (Number(snapshotFrames[i]) || 0) / fps
+            await runCommandRedirected(
+              ffmpeg,
+              ['-y', '-ss', atSec.toFixed(3), '-i', outMp4Path, '-frames:v', '1', sPath],
+              { timeoutMs: 15_000 },
+            ).catch(() => {})
+          }
+        }
+      }
+
+      return { ok: true, framesRendered: totalFrames, outputPath: outMp4Path, segmentCache: segRes }
+    } finally {
+      if (cdpSession) cdpSession.cleanup()
+      if (serverObj) try { serverObj.server.close() } catch {}
+    }
+  }
+
+  const tmpBase = join(REPO_ROOT, '.tmp')
+  mkdirSync(tmpBase, { recursive: true })
+  const mjpegPath = join(tmpBase, `frames-${Date.now()}.mjpeg`)
+  const mjpegFd = openSync(mjpegPath, 'w')
 
   const { server, port } = await startStaticProjectServer(projectDir)
   const session = await openCdpSession(browserBin, width, height)
@@ -334,7 +453,6 @@ export async function renderHtmlVideoToMp4({
     try { server.close() } catch {}
   }
 
-  const { ffmpeg } = resolveBinaries()
   const totalSec = Number((totalFrames / fps).toFixed(3))
   const ffArgs = ['-y', '-f', 'mjpeg', '-framerate', String(fps), '-i', mjpegPath]
   if (audioPath && existsSync(audioPath)) {
@@ -434,6 +552,8 @@ export async function renderRemotionProject({ projectDir, outMp4Path, snapshotFr
         output: join(snapshotDir, `shot_${String(i).padStart(2, '0')}.png`),
         imageFormat: 'png',
         browserExecutable,
+        offthreadVideoThreads: 1,
+        offthreadVideoCacheSizeInBytes: 256 * 1024 * 1024,
       })
     }
   }
@@ -448,6 +568,8 @@ export async function renderRemotionProject({ projectDir, outMp4Path, snapshotFr
       crf: 19,
       outputLocation: outMp4Path,
       browserExecutable,
+      offthreadVideoThreads: 1,
+      offthreadVideoCacheSizeInBytes: 512 * 1024 * 1024,
     })
   }
 

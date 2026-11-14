@@ -51,6 +51,9 @@ function scanForHardcodedPaths(dir, relativePrefix = '') {
     'uploads',
     'public',
     'audio',
+    'cache',
+    'publish',
+    'vendor',
     'imported',
     'catalog.json',
   ])
@@ -94,7 +97,7 @@ async function generateSyntheticTestAssets(assetDir, ffmpeg) {
   )
   await runCommandRedirected(
     ffmpeg,
-    ['-y', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30', '-t', '2.5', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', brollMp4],
+    ['-y', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30', '-t', '2.5', '-c:v', 'libx264', '-bf', '0', '-g', '15', '-video_track_timescale', '90000', '-pix_fmt', 'yuv420p', brollMp4],
     { timeoutMs: 30_000 },
   )
   await runCommandRedirected(
@@ -152,6 +155,8 @@ async function runSelfTest() {
     'ai_create_video',
     'ai_master_voice',
     'configure_llm_model',
+    'export_publish_pack',
+    'import_vendor_motion',
     'list_voices',
     'import_voice_pack',
     'match_scene_voices',
@@ -425,6 +430,28 @@ async function runSelfTest() {
     const body = JSON.parse(init?.body || '{}')
     const sysPrompt = String(body?.system || '')
     const userPrompt = String(body?.messages?.[body.messages.length - 1]?.content || '')
+
+    // AI-Coded Audio BGM DSP script call
+    if (sysPrompt.includes('DSP') || userPrompt.includes('synthesizeBgm')) {
+      const codeStr = `function synthesizeBgm(ctx) {
+  const N = ctx.totalSamples;
+  for (let i = 0; i < N; i++) {
+    const t = i / ctx.sampleRate;
+    const kickEnv = Math.exp(-(t % (60 / (ctx.bpm || 112))) * 16);
+    const pad = Math.sin(2 * Math.PI * 220 * t) * 0.14 + Math.sin(2 * Math.PI * 329.63 * t) * 0.10;
+    const sub = Math.sin(2 * Math.PI * 55 * t) * 0.18 * kickEnv;
+    ctx.left[i] = ctx.tanh(pad + sub);
+    ctx.right[i] = ctx.tanh(pad * 0.94 + sub);
+  }
+}`
+      return new Response(
+        JSON.stringify({
+          model: 'mock-opus',
+          content: [{ type: 'text', text: JSON.stringify({ files: { 'audio/ai_bgm_synth.js': codeStr }, summary: 'Mock AI DSP 48kHz Synth', bpm: 112 }) }],
+        }),
+        { status: 200 },
+      )
+    }
 
     // Voice Mastering call (after TTS, before audio mix & codegen)
     if (sysPrompt.includes('声学') || userPrompt.includes('integratedLufs') || userPrompt.includes('tracks')) {
@@ -766,7 +793,209 @@ export const VideoComposition: React.FC = () => {
     `[10/11] Follow-DSH Discovery + All 4 Wire Protocols (${protoCases.map((c) => c.format).join(', ')}) + IndexTTS-2.5 v${liveHealth.version} + AI Voice Mastering (${vmLlmRes.scenesCount} tracks) OK!`,
   )
 
-  // 11. Re-scaffold clean starter demos + Open-Source Hygiene Scan
+  // 11. P0-P2 Fusion Verification (OFL Fonts, Safe-Zones, 3-Mode BGM, Voice Cloning + Audition, Schema Tier 1-4, Segment Cache, Vendor .motion, Publish Pack)
+  const { computeSafeZonePreflight } = await import('../packages/shared/compliance.js')
+  const { runSchemaDirectorWithDegradation } = await import('../packages/dsh-tool-media/plan-schema.js')
+  const { scanAiAudioCodeSandbox } = await import('../packages/dsh-tool-media/audio-coder.js')
+
+  // P0.1 OFL fonts copied + proprietary font explicitly rejected by video_lint
+  for (const fontName of ['NotoSansSC-VF.woff2', 'SourceHanSerifSC-Heavy.woff2', 'LICENSES.md']) {
+    if (!existsSync(join(tmpHtmlProj, 'fonts', fontName))) {
+      throw new Error(`Missing bundled commercial OFL font asset in project: fonts/${fontName}`)
+    }
+  }
+  const origHtmlIndex = readFileSync(join(tmpHtmlProj, 'index.html'), 'utf8')
+  writeFileSync(join(tmpHtmlProj, 'index.html'), origHtmlIndex + '\n<!-- font-family: "Microsoft YaHei"; -->\n', 'utf8')
+  const badFontLint = await executeVideoLint({ projectDir: tmpHtmlProj, engine: 'html' })
+  writeFileSync(join(tmpHtmlProj, 'index.html'), origHtmlIndex, 'utf8')
+  if (badFontLint.ok) {
+    throw new Error('Expected video_lint to REJECT proprietary Microsoft YaHei font reference!')
+  }
+
+  // P0.2 Platform Safe-Zone Geometric Preflight
+  const dyCollide = computeSafeZonePreflight({ width: 1080, height: 1920, targetPlatform: 'douyin' }, { subtitleBottomPx: 28 })
+  const dySafe = computeSafeZonePreflight({ width: 1080, height: 1920, targetPlatform: 'douyin' })
+  if (dyCollide.passed || dyCollide.collisions.length < 1 || !dySafe.passed) {
+    throw new Error(`Safe-zone preflight failed assertion: collide=${JSON.stringify(dyCollide)}, safe=${JSON.stringify(dySafe)}`)
+  }
+
+  // P1.2 HTML5 Segment Cache: post-mastering invalidates cleanly (render 1), consecutive unchanged hits cache (render 2)
+  const cacheRender1 = await executeVideoRender({
+    projectDir: tmpHtmlProj,
+    engine: 'html',
+    renderWidth: 1280,
+    renderHeight: 720,
+    useSegmentCache: true,
+  })
+  const cacheRender = await executeVideoRender({
+    projectDir: tmpHtmlProj,
+    engine: 'html',
+    renderWidth: 1280,
+    renderHeight: 720,
+    useSegmentCache: true,
+  })
+  const cacheFiles = existsSync(join(tmpHtmlProj, 'cache', 'segments'))
+    ? readdirSync(join(tmpHtmlProj, 'cache', 'segments')).filter((f) => f.endsWith('.mp4'))
+    : []
+  if (
+    !cacheRender1.ok ||
+    !cacheRender.ok ||
+    cacheFiles.length < 2 ||
+    (cacheRender.segmentCache?.cacheHits || 0) < 2 ||
+    (cacheRender.segmentCache?.cacheMisses || 0) !== 0
+  ) {
+    throw new Error(`Segment cache verification failed: cacheFiles=${cacheFiles.length}, segRes=${JSON.stringify(cacheRender.segmentCache)}`)
+  }
+
+  // 3-Mode BGM Verification (llm-coded / uploaded / tts-engine) + Audio Sandbox security check
+  const unsafeAudioScan = scanAiAudioCodeSandbox(`require('fs').readFileSync('/etc/passwd')`)
+  if (unsafeAudioScan.ok) {
+    throw new Error('Audio sandbox scanner failed to block forbidden require("fs") call!')
+  }
+  if (!existsSync(join(tmpAiProj, 'audio', 'ai_bgm_synth.js')) || !existsSync(join(tmpAiProj, 'audio', 'bgm-llm.wav'))) {
+    throw new Error('Mode 1 (llm-coded) BGM artifact audio/ai_bgm_synth.js or bgm-llm.wav missing in AI project!')
+  }
+  // Mode 2: Uploaded BGM API
+  const testBgmSrc = join(tmpAssetSrc, 'bgm_synth_track.wav')
+  const bgmUpRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1:4399/api/video-workbench/bgm/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectDir: tmpHtmlProj,
+        fileName: 'user-custom-bgm.wav',
+        dataBase64: readFileSync(testBgmSrc).toString('base64'),
+      }),
+    }),
+  )
+  const bgmUpJson = await bgmUpRes.json()
+  if (!bgmUpJson.ok || bgmUpJson.script?.bgmMode !== 'uploaded' || bgmUpJson.asset?.role !== 'music') {
+    throw new Error(`Mode 2 (uploaded) BGM route failed: ${JSON.stringify(bgmUpJson)}`)
+  }
+  // Mode 3: IndexTTS-2.5 TTS-Engine BGM Cue API
+  const ttsBgmRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1:4399/api/video-workbench/audio/tts-compose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectDir: tmpHtmlProj,
+        promptText: '温暖沉浸氛围哼唱和声',
+        voiceId: 'auto',
+        mode: 'bgm-pad',
+        durationSec: 6,
+      }),
+    }),
+  )
+  const ttsBgmJson = await ttsBgmRes.json()
+  if (!ttsBgmJson.ok || !existsSync(join(tmpHtmlProj, 'audio', 'bgm-tts.wav'))) {
+    throw new Error(`Mode 3 (tts-engine) BGM synthesis failed: ${JSON.stringify(ttsBgmJson)}`)
+  }
+
+  // Zero-Shot Voice Cloning Lab (Upload -> FFmpeg Clean/Norm -> Live IndexTTS-2.5 Clone Audition)
+  const sampleVoicePath =
+    process.env.DEFAULT_REF_AUDIO && existsSync(process.env.DEFAULT_REF_AUDIO)
+      ? process.env.DEFAULT_REF_AUDIO
+      : join(tmpHtmlProj, 'audio', `${twoScenes[0].id}.wav`)
+  const cloneUpRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1:4399/api/video-workbench/voices/clone-upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        audioBase64: readFileSync(sampleVoicePath).toString('base64'),
+        fileName: 'self-test-clone.wav',
+        name: '自检临时克隆音色',
+        gender: 'female',
+        stripSilence: false,
+      }),
+    }),
+  )
+  const cloneUpJson = await cloneUpRes.json()
+  if (!cloneUpJson.ok || !cloneUpJson.voice?.id) {
+    throw new Error(`Voice cloning upload API failed: ${JSON.stringify(cloneUpJson)}`)
+  }
+  const auditionRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1:4399/api/video-workbench/voices/clone-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        voiceId: cloneUpJson.voice.id,
+        text: '测试声音克隆即时试听输出。',
+      }),
+    }),
+  )
+  const auditionJson = await auditionRes.json()
+  if (!auditionJson.ok || !String(auditionJson.audioDataUrl || '').startsWith('data:audio/wav;base64,')) {
+    throw new Error(`Cloned voice audition API failed: ${JSON.stringify(auditionJson)}`)
+  }
+  // Remove synthetic test clone from persistent catalog/disk so user's clean library stays untouched
+  const userCatFile = join(REPO_ROOT, 'voice-packs', 'catalog.json')
+  if (existsSync(userCatFile)) {
+    try {
+      const parsedCat = JSON.parse(readFileSync(userCatFile, 'utf8'))
+      parsedCat.voices = (parsedCat.voices || []).filter((v) => v.id !== cloneUpJson.voice.id && v.id !== 'imported-custom-narrator')
+      writeFileSync(userCatFile, JSON.stringify(parsedCat, null, 2) + '\n', 'utf8')
+    } catch {}
+  }
+  rmSync(join(REPO_ROOT, 'voice-packs', 'imported', cloneUpJson.voice.id), { recursive: true, force: true })
+
+  // P1.1 Schema Plan Mode + Tier 1-4 Graceful Degradation
+  const tier4Res = await runSchemaDirectorWithDegradation({
+    topic: 'Tier 4 Rule Fallback Verification',
+    style: 'tech',
+    forceTierForTest: 4,
+  })
+  if (tier4Res.degradationTier !== 4 || tier4Res.plan?.version !== 'promo-plan/1' || (tier4Res.resolved?.resolvedShots?.length || 0) < 2) {
+    throw new Error(`Schema Tier 4 fallback assertion failed: ${JSON.stringify(tier4Res)}`)
+  }
+
+  // P2.2 Isolated .motion Vendor HTML Clip Importer (-an stripped audio)
+  const mockVendorDir = join(REPO_ROOT, '.tmp', 'mock-vendor-motion')
+  rmSync(mockVendorDir, { recursive: true, force: true })
+  mkdirSync(mockVendorDir, { recursive: true })
+  writeFileSync(
+    join(mockVendorDir, 'index.html'),
+    `<!DOCTYPE html><html><body style="margin:0;background:#090B10;color:#E5A93C;display:flex;align-items:center;justify-content:center;font-size:42px;font-family:sans-serif">VENDOR MOTION CLIP</body></html>`,
+    'utf8',
+  )
+  const vendorRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1:4399/api/video-workbench/vendor/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectDir: tmpHtmlProj,
+        sourceDir: mockVendorDir,
+        name: 'test-vendor-banner',
+        durationSec: 1.5,
+      }),
+    }),
+  )
+  const vendorJson = await vendorRes.json()
+  if (!vendorJson.ok || !existsSync(join(tmpHtmlProj, vendorJson.assetPath))) {
+    throw new Error(`Isolated .motion vendor import failed: ${JSON.stringify(vendorJson)}`)
+  }
+  const vendorProbe = await probeMediaStreams(bins.ffprobe, join(tmpHtmlProj, vendorJson.assetPath))
+  if (vendorProbe.streams.some((s) => s.codec_type === 'audio')) {
+    throw new Error('Isolated vendor clip MUST strip audio streams (-an)!')
+  }
+
+  // P2.1 Platform Publish Pack One-Click Exporter
+  const pubRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1:4399/api/video-workbench/publish-pack', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir: tmpHtmlProj, platform: 'douyin' }),
+    }),
+  )
+  const pubJson = await pubRes.json()
+  if (!pubJson.ok || !existsSync(pubJson.files?.coverPath || '') || !existsSync(pubJson.files?.metaPath || '')) {
+    throw new Error(`Publish Pack export failed: ${JSON.stringify(pubJson)}`)
+  }
+
+  console.log(
+    `[11/12] P0-P2 Fusion Suite OK (OFL fonts + Douyin Safe-Zone + Segment Cache [${cacheFiles.length} clips] + 3-Mode BGM + Voice Clone Audition + Tier 4 Fallback + Isolated Vendor .motion + Publish Pack)!`,
+  )
+
+  // 12. Re-scaffold clean starter demos & validate Lint + Open-Source Hygiene Scan
   const demoDir = join(REPO_ROOT, 'examples', 'demo-html-project')
   const demoRemotionDir = join(REPO_ROOT, 'examples', 'demo-remotion-project')
   scaffoldVideoProject(demoDir, {
@@ -779,13 +1008,20 @@ export const VideoComposition: React.FC = () => {
   })
   matchAllScenesInScript(demoDir, { voiceId: 'auto' })
   matchAllScenesInScript(demoRemotionDir, { voiceId: 'auto' })
+  syncProjectCodeFromScript(demoDir, readScriptJson(demoDir).data, { forceOverwrite: true })
+  syncProjectCodeFromScript(demoRemotionDir, readScriptJson(demoRemotionDir).data, { forceOverwrite: true })
+  const demoHtmlLint = await executeVideoLint({ projectDir: demoDir, engine: 'html' })
+  const demoRemLint = await executeVideoLint({ projectDir: demoRemotionDir, engine: 'remotion' })
+  if (!demoHtmlLint.ok || !demoRemLint.ok) {
+    throw new Error(`Demo lint check failed: html=${demoHtmlLint.errors.join(';')} rem=${demoRemLint.errors.join(';')}`)
+  }
 
   const violations = scanForHardcodedPaths(REPO_ROOT)
   if (violations.length > 0) {
     throw new Error(`Hardcoded machine paths found in tracked files: ${violations.join(', ')}`)
   }
   console.log(
-    `[11/11] Starter Demos reset & 0 hardcoded personal paths/keys across all tracked files!`,
+    `[12/12] Starter Demos lint-verified & 0 hardcoded personal paths/keys across all tracked files!`,
   )
   console.log('======================================================================')
 }

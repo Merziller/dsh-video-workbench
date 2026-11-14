@@ -19,8 +19,10 @@ import { executeGenerateSpeech, matchAllScenesInScript } from '@dsh-video/tool-l
 import { executeVideoLint, executeVideoRender, runTypecheckOnProject, scanAiGeneratedCodeSandbox } from '@dsh-video/tool-video-suite'
 import { importAssets, readAssets } from './asset-manager.js'
 import { buildBeatGrid, mixVideoAudio } from './audio-synth.js'
+import { generateAiCodedBgmTrack, synthesizeTtsEngineAudioCue } from './audio-coder.js'
+import { runSchemaDirectorWithDegradation } from './plan-schema.js'
 import { masterVoiceTracks } from './voice-master.js'
-import { resolvePalette } from './html-generator.js'
+import { buildRichHtmlVideo, resolvePalette } from './html-generator.js'
 import { callLlmChat, extractJsonFromLlmText, resolveLlmConfig } from './llm-client.js'
 import { syncRemotionPublicAssets, writeRemotionProjectFiles } from './remotion-generator.js'
 import {
@@ -291,6 +293,11 @@ export async function runAiStudioPipeline(options = {}) {
     userPrompt = '',
     sources,
     engine = 'remotion',
+    creationMode = 'ai-coded',
+    bgmMode = 'llm-coded',
+    bgmTtsPrompt = '',
+    uploadedBgmPath = '',
+    targetPlatform = 'universal',
     aspectRatio = 'auto',
     quality = '1080p',
     width,
@@ -299,7 +306,7 @@ export async function runAiStudioPipeline(options = {}) {
     ttsEngine,
     allowPlaceholder = false,
     fps: requestedFps = 30,
-    aiBadge = false,
+    aiBadge = true,
     useDraftReference = true,
     render = true,
     llmOverride = {},
@@ -317,7 +324,7 @@ export async function runAiStudioPipeline(options = {}) {
     onProgress?.({ stage, progress, message })
   }
 
-  emit('init', 5, '1/6 正在准备工程目录与素材清单...')
+  emit('init', 5, '1/7 正在准备工程目录与素材清单...')
   if (sources && (Array.isArray(sources) ? sources.length > 0 : true)) {
     await importAssets({ projectDir: absDir, sources })
   }
@@ -338,6 +345,9 @@ export async function runAiStudioPipeline(options = {}) {
   const visuals = (assetsManifest.items || []).filter((i) => i.type === 'image' || i.type === 'video')
   const importedMusic = (assetsManifest.items || []).filter((i) => i.role === 'music')
   const coreTopic = topic || existingScript?.topic || existingScript?.title || 'AI 视觉大片'
+  const resolvedPlatform = targetPlatform || existingScript?.targetPlatform || 'universal'
+  const resolvedBgmMode = bgmMode || existingScript?.audioSpec?.bgmMode || 'llm-coded'
+  const resolvedCreationMode = creationMode === 'schema-plan' ? 'schema-plan' : 'ai-coded'
 
   const baseDims = resolveVideoDimensions({
     aspectRatio,
@@ -348,29 +358,74 @@ export async function runAiStudioPipeline(options = {}) {
     assets: visuals,
   })
 
-  emit('architect', 14, `2/6 正在调用大模型 (${llmCfg.model || '未指定模型'}) 构思分镜、文案与定制配乐...`)
-  const directorPkg = buildDirectorPromptPackage({
-    topic: coreTopic,
-    userPrompt: userPrompt || existingScript?.goal || coreTopic,
-    aspectRatio: baseDims.aspectRatio,
-    quality: baseDims.quality,
-    width: baseDims.width,
-    height: baseDims.height,
-    targetEngine: engine,
-    assets: visuals,
-    draftScript: useDraftReference ? existingScript : null,
-  })
+  let archRes = { model: llmCfg.model || 'rule-engine', protocol: llmCfg.protocol || 'rule' }
+  let plan = null
+  let schemaMeta = null
 
-  const archRes = await callLlmChat({
-    overrideConfig: llmCfg,
-    fetchImpl,
-    system: directorPkg.system,
-    messages: [{ role: 'user', content: directorPkg.user }],
-    temperature: 0.5,
-  })
-  const plan = extractJsonFromLlmText(archRes.text)
-  if (!Array.isArray(plan?.scenes) || plan.scenes.length === 0) {
-    throw new Error('大模型未返回有效的分镜列表 (scenes)，请检查模型配置或重试。')
+  if (resolvedCreationMode === 'schema-plan') {
+    emit('architect', 14, '2/7 正在执行 Schema 分镜调度 (含 4 档强弱模型容错降级)...')
+    const schemaRes = await runSchemaDirectorWithDegradation({
+      projectDir: absDir,
+      topic: coreTopic,
+      style: existingScript?.style || 'tech',
+      targetPlatform: resolvedPlatform,
+      scriptData: existingScript || {},
+      assetsManifest,
+      callLlmChatFn: async (p) =>
+        callLlmChat({
+          overrideConfig: llmCfg,
+          fetchImpl,
+          ...p,
+        }),
+    })
+    schemaMeta = {
+      version: schemaRes.plan.version,
+      degradationTier: schemaRes.degradationTier,
+      tierLabel: schemaRes.tierLabel,
+      trace: schemaRes.trace,
+    }
+    plan = {
+      title: schemaRes.plan.title,
+      style: schemaRes.plan.style,
+      audioSpec: { mood: schemaRes.plan.style, bpm: schemaRes.plan.bpm, bgmMode: resolvedBgmMode },
+      scenes: schemaRes.resolved.resolvedShots.map((s) => ({
+        id: s.id,
+        title: s.title,
+        narration: s.narration,
+        emotion: s.emotion,
+        layout: s.layout,
+        kenBurns: s.kenBurns,
+        transition: s.transition,
+        highlights: s.highlights,
+        durationSec: s.durationSec,
+        assetPaths: (s.media || []).map((m) => m.path),
+      })),
+    }
+  } else {
+    emit('architect', 14, `2/7 正在调用大模型 (${llmCfg.model || '未指定模型'}) 构思分镜、文案与定制配乐...`)
+    const directorPkg = buildDirectorPromptPackage({
+      topic: coreTopic,
+      userPrompt: userPrompt || existingScript?.goal || coreTopic,
+      aspectRatio: baseDims.aspectRatio,
+      quality: baseDims.quality,
+      width: baseDims.width,
+      height: baseDims.height,
+      targetEngine: engine,
+      assets: visuals,
+      draftScript: useDraftReference ? existingScript : null,
+    })
+
+    archRes = await callLlmChat({
+      overrideConfig: llmCfg,
+      fetchImpl,
+      system: directorPkg.system,
+      messages: [{ role: 'user', content: directorPkg.user }],
+      temperature: 0.5,
+    })
+    plan = extractJsonFromLlmText(archRes.text)
+    if (!Array.isArray(plan?.scenes) || plan.scenes.length === 0) {
+      throw new Error('大模型未返回有效的分镜列表 (scenes)，请检查模型配置或重试。')
+    }
   }
 
   // Allow LLM to refine ratio if user chose 'auto'
@@ -440,7 +495,9 @@ export async function runAiStudioPipeline(options = {}) {
 
   const preTtsScript = {
     ...(existingScript || {}),
-    authoringMode: 'ai-coded',
+    authoringMode: resolvedCreationMode === 'schema-plan' ? 'schema-plan' : 'ai-coded',
+    creationMode: resolvedCreationMode,
+    targetPlatform: resolvedPlatform,
     title: plan.title || existingScript?.title || coreTopic,
     topic: coreTopic,
     style: plan.style || existingScript?.style || 'tech',
@@ -452,18 +509,21 @@ export async function runAiStudioPipeline(options = {}) {
     requestedAspectRatio: finalDims.requestedAspectRatio,
     quality: finalDims.quality,
     dimensionReason: finalDims.reason,
-    aiBadge: Boolean(aiBadge),
+    aiBadge: aiBadge !== false,
     voiceMode: voiceId && voiceId !== 'auto' ? 'manual' : 'auto',
     defaultVoiceId: voiceId || 'auto',
     theme,
-    audioSpec: plan.audioSpec || null,
+    audioSpec: { ...(plan.audioSpec || {}), bgmMode: resolvedBgmMode },
+    bgmMode: resolvedBgmMode,
     bgm: {
       enabled: true,
+      mode: resolvedBgmMode,
       mood: plan?.audioSpec?.mood || 'tech',
       bpm,
       volume: Number(plan?.audioSpec?.volume) || 0.28,
-      path: importedMusic[0]?.path || '',
-      source: importedMusic.length > 0 ? 'user-imported' : 'ai-audio-spec',
+      uploadedPath: uploadedBgmPath || importedMusic[0]?.path || '',
+      path: resolvedBgmMode === 'uploaded' ? (uploadedBgmPath || importedMusic[0]?.path || '') : '',
+      source: resolvedBgmMode === 'uploaded' && (uploadedBgmPath || importedMusic.length > 0) ? 'user-imported' : resolvedBgmMode,
     },
     scenes: plannedScenes,
   }
@@ -506,18 +566,66 @@ export async function runAiStudioPipeline(options = {}) {
   // Re-lock beat grid + full timing contract after ffprobe + vocal mastering backfills durations
   let lockedScript = readScriptJson(absDir).data
   const grid = buildBeatGrid(lockedScript.totalDurationSec || 12, bpm)
-  lockedScript.bgm = { ...(lockedScript.bgm || {}), beats: grid.beats.map((b) => b.time), bpm }
+  lockedScript.bgm = { ...(lockedScript.bgm || {}), beats: grid.beats.map((b) => b.time), bpm, mode: resolvedBgmMode }
+
+  let bgmCoderInfo = { mode: resolvedBgmMode, status: 'ok' }
+  if (resolvedBgmMode === 'llm-coded') {
+    emit('audio', 44, `5/7 正在让大模型 (${llmCfg.model || 'LLM'}) 编写纯数学 DSP 配乐代码...`)
+    try {
+      const coderAudioRes = await generateAiCodedBgmTrack({
+        projectDir: absDir,
+        script: lockedScript,
+        callLlmChatFn: async (p) =>
+          callLlmChat({
+            overrideConfig: llmCfg,
+            fetchImpl,
+            ...p,
+          }),
+      })
+      lockedScript.bgm.path = coderAudioRes.relWavPath
+      lockedScript.bgm.source = 'llm-coded'
+      lockedScript.bgm.codeScriptPath = coderAudioRes.relScriptPath
+      bgmCoderInfo = { mode: 'llm-coded', status: 'ok', summary: coderAudioRes.summary, scriptPath: coderAudioRes.relScriptPath }
+    } catch (err) {
+      bgmCoderInfo = { mode: 'llm-coded', status: 'fallback-dsp', error: err?.message || String(err) }
+    }
+  } else if (resolvedBgmMode === 'tts-engine') {
+    emit('audio', 44, '5/7 正在通过 IndexTTS-2.5 配音引擎声学塑形生成氛围 BGM...')
+    try {
+      const ttsBgmRes = await synthesizeTtsEngineAudioCue({
+        projectDir: absDir,
+        promptText: bgmTtsPrompt || `${coreTopic} 科技光影沉浸声景`,
+        voiceId,
+        mode: 'bgm-pad',
+        durationSec: lockedScript.totalDurationSec || 12,
+      })
+      lockedScript.bgm.path = ttsBgmRes.relWavPath
+      lockedScript.bgm.source = 'tts-engine'
+      bgmCoderInfo = { mode: 'tts-engine', status: 'ok', voiceName: ttsBgmRes.voiceName }
+    } catch (err) {
+      bgmCoderInfo = { mode: 'tts-engine', status: 'fallback-dsp', error: err?.message || String(err) }
+    }
+  } else if (resolvedBgmMode === 'uploaded') {
+    const pickUp = uploadedBgmPath || lockedScript?.bgm?.uploadedPath || importedMusic[0]?.path || ''
+    if (pickUp) {
+      lockedScript.bgm.uploadedPath = pickUp
+      lockedScript.bgm.path = pickUp
+      lockedScript.bgm.source = 'user-imported'
+      bgmCoderInfo = { mode: 'uploaded', status: 'ok', path: pickUp }
+    }
+  }
+
   lockedScript = writeScriptJson(absDir, lockedScript).data
 
-  // Force re-synthesis of bespoke AI-composed BGM before mixing
+  // Force re-synthesis of bespoke DSP BGM when neither uploaded nor custom WAV overrides
   const genBgmPath = join(absDir, 'audio', 'bgm-generated.wav')
-  if (lockedScript.bgm.source !== 'user-imported' && existsSync(genBgmPath)) {
+  if (lockedScript.bgm.source !== 'user-imported' && lockedScript.bgm.source !== 'llm-coded' && lockedScript.bgm.source !== 'tts-engine' && existsSync(genBgmPath)) {
     try {
       unlinkSync(genBgmPath)
     } catch {}
   }
 
-  emit('audio', 46, '5/7 正在生成定制合成配乐与音效母带 (output/master-audio.wav)...')
+  emit('audio', 48, '5/7 正在混音配乐与音效母带 (output/master-audio.wav)...')
   await mixVideoAudio({
     projectDir: absDir,
     script: lockedScript,
@@ -549,50 +657,70 @@ export async function runAiStudioPipeline(options = {}) {
   mkdirSync(join(absDir, 'output'), { recursive: true })
   writeFileSync(join(absDir, 'output', 'timing-contract.json'), JSON.stringify(timingContract, null, 2) + '\n', 'utf8')
 
-  emit('coder', 56, `6/7 正在让大模型 (${llmCfg.model}) 编写定制 ${engine === 'remotion' ? 'Remotion TSX' : 'HyperFrames HTML'} 视频源码...`)
-  const coderPkg =
-    engine === 'remotion'
-      ? buildRemotionCoderSkillsPrompt({
-          plan,
-          timingContract,
-          width: lockedScript.width,
-          height: lockedScript.height,
-          aspectRatio: lockedScript.aspectRatio,
-        })
-      : buildHtmlCoderSkillsPrompt({
-          plan,
-          timingContract,
-          width: lockedScript.width,
-          height: lockedScript.height,
-          aspectRatio: lockedScript.aspectRatio,
-        })
+  let checkResult = null
+  if (resolvedCreationMode === 'schema-plan') {
+    emit('coder', 58, '6/7 正在将 promo-plan/1 编译为确定性帧级安全工程...')
+    if (engine === 'remotion') {
+      writeRemotionProjectFiles(absDir, lockedScript, { rebuildTemplate: true })
+    } else {
+      writeFileSync(join(absDir, 'index.html'), buildRichHtmlVideo(lockedScript), 'utf8')
+      writeScriptJson(absDir, lockedScript)
+    }
+    const lintCheck = await executeVideoLint({ projectDir: absDir, mode: engine })
+    checkResult = {
+      ok: lintCheck.ok,
+      files: { [engine === 'remotion' ? 'src/VideoComposition.tsx' : 'index.html']: 'compiled-from-promo-plan' },
+      lintResult: lintCheck,
+      repairHistory: [{ round: 0, lintOk: lintCheck.ok, source: 'schema-plan' }],
+      errors: lintCheck.errors || [],
+    }
+  } else {
+    emit('coder', 56, `6/7 正在让大模型 (${llmCfg.model}) 编写定制 ${engine === 'remotion' ? 'Remotion TSX' : 'HyperFrames HTML'} 视频源码...`)
+    const coderPkg =
+      engine === 'remotion'
+        ? buildRemotionCoderSkillsPrompt({
+            plan,
+            timingContract,
+            width: lockedScript.width,
+            height: lockedScript.height,
+            aspectRatio: lockedScript.aspectRatio,
+          })
+        : buildHtmlCoderSkillsPrompt({
+            plan,
+            timingContract,
+            width: lockedScript.width,
+            height: lockedScript.height,
+            aspectRatio: lockedScript.aspectRatio,
+          })
 
-  const codeRes = await callLlmChat({
-    overrideConfig: llmCfg,
-    fetchImpl,
-    system: coderPkg.system,
-    messages: [{ role: 'user', content: coderPkg.user }],
-    temperature: 0.35,
-  })
-  const parsedCode = extractJsonFromLlmText(codeRes.text)
-  const initialFiles = parsedCode?.files && typeof parsedCode.files === 'object' ? parsedCode.files : {}
+    const codeRes = await callLlmChat({
+      overrideConfig: llmCfg,
+      fetchImpl,
+      system: coderPkg.system,
+      messages: [{ role: 'user', content: coderPkg.user }],
+      temperature: 0.35,
+    })
+    const parsedCode = extractJsonFromLlmText(codeRes.text)
+    const initialFiles = parsedCode?.files && typeof parsedCode.files === 'object' ? parsedCode.files : {}
 
-  const checkResult = await runCodeAutoRepairLoop({
-    absDir,
-    engine,
-    systemPrompt: coderPkg.system,
-    initialFiles,
-    lockedScript,
-    maxRepairRounds: repairRounds,
-    llmConfig: llmCfg,
-    fetchImpl,
-    onProgress: emit,
-  })
+    checkResult = await runCodeAutoRepairLoop({
+      absDir,
+      engine,
+      systemPrompt: coderPkg.system,
+      initialFiles,
+      lockedScript,
+      maxRepairRounds: repairRounds,
+      llmConfig: llmCfg,
+      fetchImpl,
+      onProgress: emit,
+    })
+  }
 
   if (!checkResult.ok) {
     const buildLog = {
       ok: false,
       engine,
+      creationMode: resolvedCreationMode,
       model: archRes.model,
       repairHistory: checkResult.repairHistory,
       errors: checkResult.errors,
@@ -603,10 +731,14 @@ export async function runAiStudioPipeline(options = {}) {
   }
 
   // Stamp AI authoring metadata onto script.json
-  lockedScript.authoringMode = 'ai-coded'
+  lockedScript.authoringMode = resolvedCreationMode === 'schema-plan' ? 'schema-plan' : 'ai-coded'
   lockedScript.aiMeta = {
     model: archRes.model,
     protocol: archRes.protocol,
+    creationMode: resolvedCreationMode,
+    bgmMode: resolvedBgmMode,
+    bgmCoderInfo,
+    schemaMeta,
     repairRoundsUsed: Math.max(0, checkResult.repairHistory.length - 1),
     generatedFiles: Object.keys(checkResult.files),
     builtAt: new Date().toISOString(),
@@ -616,6 +748,10 @@ export async function runAiStudioPipeline(options = {}) {
   const buildLog = {
     ok: true,
     engine,
+    creationMode: resolvedCreationMode,
+    bgmMode: resolvedBgmMode,
+    bgmCoderInfo,
+    schemaMeta,
     model: archRes.model,
     protocol: archRes.protocol,
     aspectRatio: lockedScript.aspectRatio,

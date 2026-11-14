@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { syncProjectFonts } from './compliance.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 export const REPO_ROOT = resolve(__dirname, '..', '..')
@@ -483,6 +484,7 @@ export function ensureWin11ProjectGuards(projectDir) {
       'utf8',
     )
   }
+  syncProjectFonts(absDir)
   return { npmrcPath }
 }
 
@@ -610,3 +612,5 @@ export function writeScriptJson(projectOrFile, scriptData) {
 
   return { scriptPath, projectDir, data: scriptData }
 }
+
+export * from './compliance.js'

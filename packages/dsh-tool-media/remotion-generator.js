@@ -9,6 +9,11 @@
  */
 import { copyFileSync, existsSync, linkSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
+import {
+  buildComplianceNoticeText,
+  resolveSafeZoneSpec,
+  syncProjectFonts,
+} from '@dsh-video/shared'
 import { resolvePalette } from './html-generator.js'
 import { writeShotcraftRemotionLib } from './shotcraft-lib.js'
 
@@ -49,6 +54,7 @@ export function syncRemotionPublicAssets(projectDir, script) {
       copyFileSync(masterWav, dest)
     } catch {}
   }
+  syncProjectFonts(absDir)
   return pubDir
 }
 
@@ -60,6 +66,8 @@ export function writeRemotionProjectFiles(projectDir, script, { rebuildTemplate 
   writeShotcraftRemotionLib(absDir)
 
   const theme = resolvePalette(script)
+  const safeZone = resolveSafeZoneSpec(script?.width || 1920, script?.height || 1080, script?.targetPlatform || 'universal')
+  const complianceNotice = buildComplianceNoticeText(script)
   const hasMasterAudio = existsSync(join(absDir, 'public', 'master-audio.wav'))
 
   writeFileSync(
@@ -75,21 +83,41 @@ registerRoot(RemotionRoot);
   writeFileSync(
     join(srcDir, 'Root.tsx'),
     `import React from 'react';
-import { Composition } from 'remotion';
+import { Composition, staticFile } from 'remotion';
 import scriptData from '../script.json';
 import { VideoComposition } from './VideoComposition';
+
+const BUNDLED_FONT_CSS = \`
+@font-face {
+  font-family: 'Noto Sans SC';
+  src: url('\${staticFile('fonts/NotoSansSC-VF.woff2')}') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Han Serif SC Heavy';
+  src: url('\${staticFile('fonts/SourceHanSerifSC-Heavy.woff2')}') format('woff2');
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+\`;
 
 export const RemotionRoot: React.FC = () => {
   const sData: any = scriptData;
   return (
-    <Composition
-      id="MainVideo"
-      component={VideoComposition}
-      durationInFrames={Math.max(30, Number(sData.totalDurationInFrames) || 300)}
-      fps={Number(sData.fps) || 30}
-      width={Number(sData.width) || 1920}
-      height={Number(sData.height) || 1080}
-    />
+    <>
+      <style dangerouslySetInnerHTML={{ __html: BUNDLED_FONT_CSS }} />
+      <Composition
+        id="MainVideo"
+        component={VideoComposition}
+        durationInFrames={Math.max(30, Number(sData.totalDurationInFrames) || 300)}
+        fps={Number(sData.fps) || 30}
+        width={Number(sData.width) || 1920}
+        height={Number(sData.height) || 1080}
+      />
+    </>
   );
 };
 `,
@@ -118,11 +146,14 @@ import {
   useVideoConfig,
 } from 'remotion';
 import scriptData from '../script.json';
-import { AIBadge } from './lib/shotcraft';
+import { AIBadge, EndNotice, FONT_SANS, FONT_MONO } from './lib/shotcraft';
 
 const PALETTE: any = ${JSON.stringify(theme)};
-const SANS = 'Microsoft YaHei, PingFang SC, sans-serif';
-const MONO = 'Consolas, monospace';
+const SANS = FONT_SANS;
+const MONO = FONT_MONO;
+const DEFAULT_SUBTITLE_BOTTOM = ${safeZone.subtitleBottomPx};
+const DEFAULT_BADGE_TEXT = ${JSON.stringify(complianceNotice.badgeText)};
+const DEFAULT_END_NOTICE = ${JSON.stringify(complianceNotice.endNoticeBody)};
 const easeOut = Easing.bezier(0.22, 1, 0.36, 1);
 
 const PARTICLES = Array.from({ length: 34 }, (_, i) => {
@@ -1101,18 +1132,18 @@ export const VideoComposition: React.FC = () => {
       ))}
 
       <AIBadge
-        visible={Boolean(sData.aiBadge)}
-        text={typeof sData.aiBadge === 'string' ? sData.aiBadge : undefined}
+        visible={true}
+        text={typeof sData.aiBadge === 'string' && sData.aiBadge.trim() ? sData.aiBadge : DEFAULT_BADGE_TEXT}
         accentColor={PALETTE.accent}
       />
 
-      {/* Clean Single-Line Broadcast Subtitles */}
+      {/* Clean Single-Line Broadcast Subtitles (Platform Safe-Zone Aligned) */}
       {subText ? (
         <AbsoluteFill
           style={{
             justifyContent: 'flex-end',
             alignItems: 'center',
-            paddingBottom: isPortrait ? 96 : 46,
+            paddingBottom: Number(sData.subtitleBottomPx) || DEFAULT_SUBTITLE_BOTTOM || (isPortrait ? 240 : 110),
             pointerEvents: 'none',
             zIndex: 40,
           }}
@@ -1162,6 +1193,11 @@ export const VideoComposition: React.FC = () => {
           }}
         />
       </div>
+
+      <EndNotice
+        text={DEFAULT_END_NOTICE}
+        accentColor={PALETTE.accent}
+      />
 
       ${hasMasterAudio ? `<Audio src={staticFile('master-audio.wav')} />` : ''}
     </AbsoluteFill>

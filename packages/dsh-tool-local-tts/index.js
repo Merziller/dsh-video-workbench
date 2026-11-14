@@ -11,6 +11,7 @@ import {
   writeScriptJson,
 } from '@dsh-video/shared'
 import {
+  cloneRecordedVoice,
   getVoiceCatalog,
   importVoicePack,
   matchAllScenesInScript,
@@ -19,6 +20,7 @@ import {
 import { ensureTtsServer, getTtsServerHealth } from './tts-server-manager.js'
 
 export {
+  cloneRecordedVoice,
   getVoiceCatalog,
   importVoicePack,
   matchAllScenesInScript,

@@ -4,7 +4,7 @@
  * multi-track audio mixing, AI storyboard planning, and one-click full video production.
  */
 import { join, resolve } from 'node:path'
-import { readScriptJson } from '@dsh-video/shared'
+import { readScriptJson, writeScriptJson } from '@dsh-video/shared'
 import { executeGenerateSpeech } from '@dsh-video/tool-local-tts'
 import {
   importAssets,
@@ -45,6 +45,16 @@ import {
   rollbackAiVersion,
   runAiStudioPipeline,
 } from './ai-coder.js'
+import {
+  generateAiCodedBgmTrack,
+  synthesizeTtsEngineAudioCue,
+} from './audio-coder.js'
+import {
+  PROMO_SHOT_RECIPES,
+  runSchemaDirectorWithDegradation,
+} from './plan-schema.js'
+import { exportPublishPack } from './publish-pack.js'
+import { registerVendorClip, renderVendorClipIsolated } from './vendor-clip.js'
 
 export {
   importAssets,
@@ -57,6 +67,13 @@ export {
   generateBgmWav,
   generateSfxWav,
   mixVideoAudio,
+  generateAiCodedBgmTrack,
+  synthesizeTtsEngineAudioCue,
+  PROMO_SHOT_RECIPES,
+  runSchemaDirectorWithDegradation,
+  exportPublishPack,
+  registerVendorClip,
+  renderVendorClipIsolated,
   masterVoiceTracks,
   probeVoiceAcousticTelemetry,
   planVideoFromAssets,
@@ -97,7 +114,9 @@ export async function produceFullVideo(options = {}) {
     quality = '1080p',
     width,
     height,
-    aiBadge = false,
+    aiBadge = true,
+    targetPlatform = 'universal',
+    bgmMode = 'auto',
     voiceId = 'auto',
     ttsEngine,
     allowPlaceholder = false,
@@ -146,7 +165,13 @@ export async function produceFullVideo(options = {}) {
   }
 
   curScript = readScriptJson(absDir).data
-  onProgress?.('3/5 正在生成双引擎画面工程（动效/特效/字幕/素材运镜）...')
+  curScript.targetPlatform = targetPlatform || curScript.targetPlatform || 'universal'
+  if (bgmMode && bgmMode !== 'auto') {
+    curScript.bgmMode = bgmMode
+    curScript.audioSpec = { ...(curScript.audioSpec || {}), bgmMode }
+  }
+  curScript = writeScriptJson(absDir, curScript).data
+  onProgress?.('3/5 正在生成双引擎画面工程（商用字体/安全区/动效/字幕）...')
   syncProjectCodeFromScript(absDir, curScript)
 
   const { executeVideoLint, executeVideoRender } = await import('@dsh-video/tool-video-suite')
@@ -423,6 +448,9 @@ export function apply(ctx) {
         topic: { type: 'string', description: 'Creative brief or video topic.' },
         userPrompt: { type: 'string', description: 'Detailed visual, pacing, or aesthetic instructions for the AI director/coder.' },
         engine: { type: 'string', enum: ['remotion', 'html'], description: 'Output engine (remotion strongly recommended for AI coding).' },
+        creationMode: { type: 'string', enum: ['ai-coded', 'schema-plan'], description: 'ai-coded for max creative ceiling or schema-plan for 4-tier degradation reliability.' },
+        bgmMode: { type: 'string', enum: ['llm-coded', 'uploaded', 'tts-engine'], description: 'BGM synthesis mode: llm-coded (LLM writes JS DSP synth code), uploaded (user track), or tts-engine (IndexTTS-2.5 atmospheric).' },
+        targetPlatform: { type: 'string', enum: ['universal', 'douyin', 'kuaishou', 'xiaohongshu', 'bilibili'], description: 'Target publishing platform safe zone preset.' },
         aspectRatio: { type: 'string', enum: ['auto', '16:9', '9:16', '3:4', '1:1', 'custom'], description: 'auto lets AI select from topic/assets; or specify exact ratio.' },
         quality: { type: 'string', enum: ['720p', '1080p', '2k', '4k', 'custom'], description: 'Output quality preset.' },
         width: { type: 'number', description: 'Custom pixel width.' },
@@ -487,6 +515,48 @@ export function apply(ctx) {
       const { runPostRenderQa } = await import('@dsh-video/tool-video-suite')
       const script = readScriptJson(args.projectDir).data
       return await runPostRenderQa({ projectDir: args.projectDir, mp4Path: args.mp4Path, script })
+    },
+  })
+
+  ctx.tools.register({
+    name: 'export_publish_pack',
+    description: 'Export a ready-to-publish platform bundle (MP4, cover PNG, 3x3 grid, QA report, and meta.md titles/tags/AI compliance statement).',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectDir: { type: 'string', description: 'Video project directory.' },
+        platform: { type: 'string', enum: ['universal', 'douyin', 'kuaishou', 'xiaohongshu', 'bilibili'], description: 'Target platform preset.' },
+      },
+      required: ['projectDir'],
+      additionalProperties: false,
+    },
+    output: { schema: { type: 'object', additionalProperties: true } },
+    timeoutMs: 60_000,
+    isConcurrencySafe: () => true,
+    async execute(args) {
+      return await exportPublishPack(args)
+    },
+  })
+
+  ctx.tools.register({
+    name: 'import_vendor_motion',
+    description: 'Render an external third-party HTML/.motion directory in isolated headless Chromium, strip audio (-an), and import as a project video asset.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectDir: { type: 'string', description: 'Video project directory.' },
+        sourceDir: { type: 'string', description: 'External .motion template folder path.' },
+        name: { type: 'string', description: 'Short bundle name.' },
+        durationSec: { type: 'number', description: 'Clip duration seconds (default 4).' },
+      },
+      required: ['projectDir', 'sourceDir'],
+      additionalProperties: false,
+    },
+    output: { schema: { type: 'object', additionalProperties: true } },
+    timeoutMs: 120_000,
+    isConcurrencySafe: () => false,
+    async execute(args) {
+      return await renderVendorClipIsolated(args)
     },
   })
 }

@@ -31,14 +31,14 @@ export const VIDEO_MAKER_SYSTEM_PROMPT = `你是 DeepSeek Harness「视频制作
 
 ## 二、Windows 11 本机与工程铁律
 1. **零 C 盘占用**：项目、\`.npm-cache\`、音频与成片保持在项目所在盘符。
-2. **字体栈**：\`"Microsoft YaHei", "PingFang SC", sans-serif\` 与 \`Consolas\`。
+2. **商用合规字体栈**：\`"Noto Sans SC", "Source Han Serif SC Heavy", sans-serif\` 与 \`"JetBrains Mono", Consolas, monospace\`（禁止使用 \`Microsoft YaHei\` 等闭源商用系统字体）。
 3. **零硬编码敏感信息**：禁止在源码写出个人本地盘符路径或明文密钥。
 
 ## 三、可用核心工具清单
-- 素材与导演策划：\`import_assets\`、\`list_assets\`、\`generate_sfx_bgm\`、\`plan_video_from_assets\`、\`produce_video\`
+- 素材与导演策划：\`import_assets\`、\`list_assets\`、\`generate_sfx_bgm\`、\`plan_video_from_assets\`、\`produce_video\`、\`import_vendor_motion\`
 - 模型与 AI 编程：\`get_llm_config\`、\`configure_llm_model\`、\`ai_master_voice\`、\`ai_create_video\`、\`ai_refine_scene\`、\`video_qa\`
 - 语音与音色包：\`list_voices\`、\`import_voice_pack\`、\`match_scene_voices\`、\`generate_speech\`
-- 检测与渲染：\`video_lint\`、\`video_snapshot\`、\`video_render\`
+- 检测与交付：\`video_lint\`、\`video_snapshot\`、\`video_render\`、\`export_publish_pack\`
 `
 
 /**
@@ -70,6 +70,10 @@ export function scaffoldVideoProject(projectDir, options = {}) {
     height: 1080,
     audience: options.audience || '开发者与数字内容创作者',
     goal: options.goal || '展示素材导入、AI 分镜策划、音效配乐混音、双引擎动效与本地真人配音全链路能力',
+    aiBadge: options.aiBadge !== undefined ? Boolean(options.aiBadge) : true,
+    targetPlatform: options.targetPlatform || 'universal',
+    bgmMode: options.bgmMode || 'llm-coded',
+    creationMode: options.creationMode || 'ai-coded',
     voiceMode: options.voiceMode || 'auto',
     defaultVoiceId: options.defaultVoiceId || 'auto',
     bgm: options.bgm || {

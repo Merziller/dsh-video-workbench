@@ -7,6 +7,7 @@ import {
   closeSync,
   readdirSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
@@ -16,6 +17,7 @@ import {
   probeAudioDuration,
   readScriptJson,
   REPO_ROOT,
+  resolveBinaries,
   resolveEnvPath,
   runCommandRedirected,
   writeScriptJson,
@@ -870,5 +872,95 @@ export function matchAllScenesInScript(projectOrFile, options = {}) {
     voiceMode: saved.data.voiceMode,
     defaultVoiceId: saved.data.defaultVoiceId,
     matches: results,
+  }
+}
+
+/**
+ * Decode recorded microphone WebM/WAV or uploaded local audio binary, strip silence/rumble,
+ * loudness-normalize to clean 24kHz mono WAV via FFmpeg, and register as a zero-shot clone voice pack.
+ */
+export async function cloneRecordedVoice({
+  audioBase64,
+  fileName = 'recorded-voice.webm',
+  name = '',
+  gender = 'female',
+  tags = [],
+  emotions = ['平静', '高兴', '激动'],
+  roles = ['narrator'],
+  promptText = '',
+  stripSilence = true,
+}) {
+  const cleanB64 = String(audioBase64 || '').replace(/^data:[^;]+;base64,/, '').trim()
+  if (!cleanB64) {
+    throw new Error('录音或音频文件二进制内容为空，无法克隆声纹')
+  }
+
+  const packsDir = getVoicePacksDir()
+  const tmpDir = join(packsDir, 'imported', '.tmp-clone')
+  mkdirSync(tmpDir, { recursive: true })
+
+  const safeSlug = String(name || 'my-voice')
+    .trim()
+    .replace(/[^\w\u4e00-\u9fff-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'my-voice'
+  const stamp = Date.now()
+  const rawExt = extname(String(fileName || 'mic.webm')).toLowerCase() || '.webm'
+  const rawInputPath = join(tmpDir, `${safeSlug}-${stamp}${rawExt}`)
+  const normalizedWav = join(tmpDir, `${safeSlug}-${stamp}-clean.wav`)
+
+  writeFileSync(rawInputPath, Buffer.from(cleanB64, 'base64'))
+
+  const { ffmpeg } = resolveBinaries()
+  const baseFilter = 'highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=9'
+  const trimFilter = stripSilence
+    ? `${baseFilter},silenceremove=start_periods=1:start_threshold=-42dB:detection=peak`
+    : baseFilter
+
+  let convRes = await runCommandRedirected(
+    ffmpeg,
+    ['-y', '-i', rawInputPath, '-t', '16', '-ac', '1', '-ar', '24000', '-af', trimFilter, normalizedWav],
+    { timeoutMs: 30_000 },
+  )
+  let probe = existsSync(normalizedWav) ? await probeAudioDuration(normalizedWav).catch(() => ({ durationSec: 0 })) : { durationSec: 0 }
+
+  // If aggressive silence gate trimmed soft microphone audio below 0.5s, fallback cleanly without silence removal
+  if (convRes.code !== 0 || probe.durationSec < 0.5) {
+    convRes = await runCommandRedirected(
+      ffmpeg,
+      ['-y', '-i', rawInputPath, '-t', '16', '-ac', '1', '-ar', '24000', '-af', baseFilter, normalizedWav],
+      { timeoutMs: 30_000 },
+    )
+    probe = existsSync(normalizedWav) ? await probeAudioDuration(normalizedWav).catch(() => ({ durationSec: 0 })) : { durationSec: 0 }
+  }
+
+  if (convRes.code !== 0 || !existsSync(normalizedWav) || probe.durationSec < 0.35) {
+    try { rmSync(rawInputPath, { force: true }) } catch {}
+    throw new Error(`克隆人声预处理失败 (有效发音时长 ${(probe.durationSec || 0).toFixed(2)}s 太短): ${convRes.stderr}`)
+  }
+
+  try {
+    const imported = await importVoicePack({
+      sourcePath: normalizedWav,
+      id: `clone-${safeSlug}-${stamp}`,
+      name: String(name || `我的声音克隆 (${safeSlug})`).trim(),
+      category: '专属声纹克隆',
+      gender: gender === 'male' ? 'male' : 'female',
+      engine: 'indextts25',
+      tags: ['我的声音', '零样本克隆', '自定义音色', ...(Array.isArray(tags) ? tags : [])],
+      emotions,
+      roles,
+      promptText,
+      copyToVoicePacks: true,
+    })
+
+    return {
+      ok: true,
+      voice: imported.importedVoices?.[0] || imported.voices?.[0] || null,
+      durationSec: Number(probe.durationSec.toFixed(2)),
+      normalizedSampleRate: 24000,
+    }
+  } finally {
+    try { rmSync(rawInputPath, { force: true }) } catch {}
+    try { rmSync(normalizedWav, { force: true }) } catch {}
   }
 }

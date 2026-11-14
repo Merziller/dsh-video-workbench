@@ -72,6 +72,7 @@ function spawnServer() {
     PYTHONIOENCODING: 'utf-8',
     PYTHONHOME: '',
     PYTHONPATH: '',
+    FOR_DISABLE_CONSOLE_CTRL_HANDLER: '1',
     HF_HOME: join(root, 'checkpoints'),
     HF_ENDPOINT: process.env.HF_ENDPOINT || 'https://hf-mirror.com',
     TRANSFORMERS_CACHE: join(root, 'tf_download'),

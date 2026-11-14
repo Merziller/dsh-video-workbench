@@ -7,7 +7,13 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { resolveBinaries, resolveEnvPath, runCommandRedirected } from '@dsh-video/shared'
+import {
+  computeSafeZonePreflight,
+  resolveBinaries,
+  resolveEnvPath,
+  RESTRICTED_COMMERCIAL_FONT_PATTERNS,
+  runCommandRedirected,
+} from '@dsh-video/shared'
 
 export function ensureRemotionJunction(projectDir) {
   const absDir = resolve(projectDir)
@@ -53,6 +59,12 @@ export function scanAiGeneratedCodeSandbox(filesMap = {}, { engine = 'remotion',
     if (/[A-Za-z]:\\(?:Users|Windows|Program Files|dsh)/i.test(code)) {
       errors.push(`${relPath}: 禁止硬编码本地盘符路径，请使用 staticFile() 或相对路径 assets/...`)
     }
+    for (const rx of RESTRICTED_COMMERCIAL_FONT_PATTERNS) {
+      if (rx.test(code)) {
+        errors.push(`${relPath}: 禁止使用受限商业字体 (${rx.source})，请改用开源商用 Noto Sans SC / FONT_SANS`)
+        break
+      }
+    }
 
     if (engine === 'remotion' && /\.(tsx|ts|jsx|js)$/i.test(relPath)) {
       if (/\bMath\.random\s*\(/.test(code)) {
@@ -76,6 +88,9 @@ export function scanAiGeneratedCodeSandbox(filesMap = {}, { engine = 'remotion',
       if (!/<template\s+id=["']scene-/i.test(code) && !/data-scene-id=["']scene-/i.test(code)) {
         warnings.push(`${relPath}: 建议包含各分镜对应的 <template id="scene-XX"> 节点以匹配分镜检视`)
       }
+      if (!/ai-badge/i.test(code)) {
+        warnings.push(`${relPath}: 建议保留 #ai-badge 合规标注元素`)
+      }
     }
   }
 
@@ -92,6 +107,9 @@ export function scanAiGeneratedCodeSandbox(filesMap = {}, { engine = 'remotion',
       }
       if (hasMasterAudio && !vc.includes('master-audio.wav')) {
         errors.push(`src/VideoComposition.tsx 必须通过 <Audio src={staticFile('master-audio.wav')} /> 挂载同步主音轨`)
+      }
+      if (!/AIBadge/.test(vc)) {
+        warnings.push('建议在 src/VideoComposition.tsx 最外层保留 <AIBadge /> 合规角标与 <EndNotice />')
       }
     }
   }
@@ -307,12 +325,59 @@ export async function runPostRenderQa({ projectDir, mp4Path, script, expectedWid
     },
   ]
 
+  // Check Platform Safe-Zone Preflight + Commercial OFL Font Bundle
+  const htmlPath = join(absDir, 'index.html')
+  const htmlContent = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf8') : ''
+  const safeZonePreflight = computeSafeZonePreflight(script || { width: actualW, height: actualH }, { htmlContent })
+  const hasOflFont =
+    existsSync(join(absDir, 'fonts', 'NotoSansSC-VF.woff2')) ||
+    existsSync(join(absDir, 'public', 'fonts', 'NotoSansSC-VF.woff2'))
+  checks.push({
+    name: `商用字体与平台安全区 (${safeZonePreflight.platformLabel})`,
+    passed: safeZonePreflight.passed && hasOflFont,
+    value:
+      safeZonePreflight.passed && hasOflFont
+        ? `SIL OFL Noto Sans SC 已就绪 · 字幕安全边距 ${safeZonePreflight.recommendedSubtitleBottomPx}px`
+        : !hasOflFont
+          ? '缺少 bundled NotoSansSC-VF.woff2'
+          : safeZonePreflight.collisions.map((c) => c.suggestion).join('; '),
+  })
+
+  // Generate compact 3x3 verification contact sheet directly from final MP4
+  const contactSheetOut = join(absDir, 'output', 'snapshot-3x3.png')
+  if (actualDurationSec > 0.5 && actualW > 0 && actualH > 0) {
+    const sampleFps = Math.max(0.15, Number((9 / Math.max(1, actualDurationSec)).toFixed(4)))
+    const thumbW = actualW < actualH ? 360 : 540
+    await runCommandRedirected(
+      ffmpeg,
+      [
+        '-y',
+        '-i',
+        targetMp4,
+        '-vf',
+        `fps=${sampleFps},scale=${thumbW}:-2,tile=3x3:padding=8:margin=8:color=0x0b1020`,
+        '-frames:v',
+        '1',
+        contactSheetOut,
+      ],
+      { timeoutMs: 30_000 },
+    ).catch(() => {})
+  }
+  const hasContactSheet = existsSync(contactSheetOut) || existsSync(join(absDir, 'snapshot-3x3.png'))
+  checks.push({
+    name: '成片抽帧 3×3 视觉质检墙',
+    passed: hasContactSheet,
+    value: hasContactSheet ? '已生成 3×3 成片抽帧对比图' : '未生成抽帧图',
+  })
+
   const passed = checks.every((c) => c.passed)
   const report = {
     ok: true,
     passed,
     mp4Path: targetMp4,
     qaReportPath: qaOutPath,
+    frameWallPath: existsSync(contactSheetOut) ? contactSheetOut : join(absDir, 'snapshot-3x3.png'),
+    safeZonePreflight,
     videoMeta: {
       width: actualW,
       height: actualH,

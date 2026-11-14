@@ -25,8 +25,9 @@ import {
   useVideoConfig,
 } from 'remotion'
 
-export const FONT_SANS = '"Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif'
-export const FONT_MONO = '"Consolas", "Courier New", monospace'
+export const FONT_SANS = "'Noto Sans SC', 'Source Han Sans SC', 'PingFang SC', 'HarmonyOS Sans SC', sans-serif"
+export const FONT_SERIF = "'Source Han Serif SC Heavy', 'Noto Serif SC', 'Noto Sans SC', serif"
+export const FONT_MONO = "'JetBrains Mono', 'Cascadia Mono', 'Liberation Mono', ui-monospace, monospace"
 
 export interface PageCamProps {
   children: React.ReactNode
@@ -261,6 +262,7 @@ export interface ShotCaptionProps {
   frameOffset?: number
   accentColor?: string
   isPortrait?: boolean
+  bottomPx?: number
 }
 
 export const ShotCaption: React.FC<ShotCaptionProps> = ({
@@ -268,8 +270,10 @@ export const ShotCaption: React.FC<ShotCaptionProps> = ({
   frameOffset = 0,
   accentColor = '#38BDF8',
   isPortrait = false,
+  bottomPx,
 }) => {
   const frame = useCurrentFrame()
+  const { height } = useVideoConfig()
   const globalFrame = frame + frameOffset
   const active = subtitles.find((s) => globalFrame >= s.startFrame && globalFrame <= s.endFrame)
   if (!active || !active.text) return null
@@ -278,6 +282,12 @@ export const ShotCaption: React.FC<ShotCaptionProps> = ({
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   })
+  const resolvedBottom =
+    typeof bottomPx === 'number' && bottomPx > 0
+      ? bottomPx
+      : isPortrait
+        ? Math.round(height * 0.22)
+        : Math.round(height * 0.13)
 
   return (
     <div
@@ -285,7 +295,7 @@ export const ShotCaption: React.FC<ShotCaptionProps> = ({
         position: 'absolute',
         left: '6%',
         right: '6%',
-        bottom: isPortrait ? '11%' : '6.5%',
+        bottom: resolvedBottom,
         display: 'flex',
         justifyContent: 'center',
         pointerEvents: 'none',
@@ -324,30 +334,90 @@ export interface AIBadgeProps {
 }
 
 export const AIBadge: React.FC<AIBadgeProps> = ({
-  visible = false,
-  text = 'AI 生成 · 仅供参考',
+  visible = true,
+  text = 'AI 辅助创作',
   accentColor = '#38BDF8',
 }) => {
+  const { width, height } = useVideoConfig()
+  const isPortrait = width < height
   if (!visible) return null
   return (
     <div
       style={{
         position: 'absolute',
-        top: 22,
-        right: 26,
+        top: isPortrait ? Math.round(height * 0.092) : 24,
+        left: 26,
         zIndex: 70,
         padding: '6px 14px',
         borderRadius: 999,
-        background: 'rgba(10, 14, 24, 0.72)',
-        border: \`1px solid \${accentColor}44\`,
-        color: '#CBD5E1',
+        background: 'rgba(10, 14, 24, 0.78)',
+        border: \`1px solid \${accentColor}55\`,
+        color: '#E2E8F0',
         fontFamily: FONT_SANS,
-        fontSize: 16,
+        fontSize: isPortrait ? 15 : 16,
         fontWeight: 600,
         letterSpacing: '0.03em',
+        backdropFilter: 'blur(6px)',
       }}
     >
       {text}
+    </div>
+  )
+}
+
+export interface EndNoticeProps {
+  text?: string
+  accentColor?: string
+  tailSeconds?: number
+}
+
+export const EndNotice: React.FC<EndNoticeProps> = ({
+  text = '本片画面与配乐由 DeepSeek Harness AI 编程辅助生成 · 语音由 IndexTTS-2.5 合成',
+  accentColor = '#38BDF8',
+  tailSeconds = 2.2,
+}) => {
+  const frame = useCurrentFrame()
+  const { fps, durationInFrames, width, height } = useVideoConfig()
+  const tailFrames = Math.max(12, Math.round(fps * tailSeconds))
+  const startF = Math.max(0, durationInFrames - tailFrames)
+  if (frame < startF) return null
+
+  const alpha = interpolate(frame, [startF, startF + 10], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  })
+  const isPortrait = width < height
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: '6%',
+        right: '6%',
+        bottom: isPortrait ? Math.round(height * 0.30) : Math.round(height * 0.21),
+        display: 'flex',
+        justifyContent: 'center',
+        pointerEvents: 'none',
+        opacity: alpha,
+        zIndex: 75,
+      }}
+    >
+      <div
+        style={{
+          padding: '8px 20px',
+          borderRadius: 999,
+          background: 'rgba(6, 10, 18, 0.86)',
+          border: \`1px solid \${accentColor}44\`,
+          color: '#CBD5E1',
+          fontFamily: FONT_SANS,
+          fontSize: isPortrait ? 18 : 16,
+          fontWeight: 600,
+          letterSpacing: '0.02em',
+          textAlign: 'center',
+        }}
+      >
+        {text}
+      </div>
     </div>
   )
 }
@@ -491,14 +561,15 @@ export function buildRemotionCoderSkillsPrompt({
 2. 禁止出现任何 CSS transition 或 CSS @keyframes 语法（即使在注释里也不允许出现 "transition:" 或 "@keyframes" 字样！）。一切动画必须通过 useCurrentFrame() + interpolate(..., { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }) + spring() 逐帧数学计算。
 3. 禁止使用 Math.random()，如需随机数必须从 'remotion' 导入 random(seed)。
 4. 禁止使用 Node 内置模块 (fs/path/child_process)、eval、new Function、外部网络字体/CDN 脚本链接或本地盘符路径。
-5. 字体必须使用系统字体栈："Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif 与 Consolas。
+5. 商业版权字体安全铁律：禁止声明或使用微软雅黑 (Microsoft YaHei)、宋体 (SimSun)、黑体 (SimHei) 等受限商业字体！必须使用系统随包分发的 SIL OFL 开源商用字体栈：\`FONT_SANS\` ('Noto Sans SC', sans-serif) 与 \`FONT_MONO\` ('JetBrains Mono', monospace)。
 6. 可从 '../lib/shotcraft'（在 src/scenes/Scenes.tsx 中）或 './lib/shotcraft'（在 src/VideoComposition.tsx 中）导入已提供的组件：
-   - PageCam, ClipCard, DigitRoll, FlashCut, ShotCaption, AIBadge, FONT_SANS, FONT_MONO
-7. 如需使用本地素材图片/视频（如 public/...），必须使用 staticFile('相对路径')（去掉前导 public/），使用 <Img src={staticFile(...)} />。
-8. 音轨对齐铁律：src/VideoComposition.tsx 必须导出命名组件 VideoComposition，并在最外层挂载：
+   - PageCam, ClipCard, DigitRoll, FlashCut, ShotCaption, AIBadge, EndNotice, FONT_SANS, FONT_MONO, FONT_SERIF
+7. 合规叠层铁律：src/VideoComposition.tsx 必须在合成器最外层强制挂载 <AIBadge visible={true} /> 与末尾 <EndNotice />，不可省略；字幕 <ShotCaption bottomPx={...} /> 必须遵循目标平台安全区留白（竖屏底部至少留白 22%）。
+8. 如需使用本地素材图片/视频（如 public/...），必须使用 staticFile('相对路径')（去掉前导 public/），使用 <Img src={staticFile(...)} />。
+9. 音轨对齐铁律：src/VideoComposition.tsx 必须导出命名组件 VideoComposition，并在最外层挂载：
    <Audio src={staticFile('master-audio.wav')} />
    且每个 <Sequence from={s.startFrame} durationInFrames={s.durationInFrames}> 的起始帧与帧数必须严格使用 timingContract 里的 exact integers！
-9. 画面布局契合当前分辨率 ${width}x${height} (${aspectRatio}, ${isPortrait ? '竖屏移动端构图，字号要大、安全区留白充裕' : '横屏影院构图'})：禁止溢出裁切，前景字幕留有 ShotCaption 安全位置。`
+10. 画面布局契合当前分辨率 ${width}x${height} (${aspectRatio}, ${isPortrait ? '竖屏移动端构图，字号要大、右侧互动栏 16% 与底部 22% 安全区严格避让' : '横屏影院构图'})：禁止溢出裁切，前景字幕留有 ShotCaption 安全位置。`
 
   const user = JSON.stringify(
     {
@@ -541,15 +612,16 @@ export function buildHtmlCoderSkillsPrompt({
 
 === HYPERFRAMES 确定性逐帧铁律 (违背会被拒绝重修!) ===
 1. 输出严格 JSON：{ "files": { "index.html": "<!doctype html>..." } }。
-2. 画布固定为 ${width}x${height} (${aspectRatio})，body/stage margin:0 overflow:hidden，字体采用 "Microsoft YaHei", "PingFang SC", Arial, sans-serif 与 Consolas。
+2. 画布固定为 ${width}x${height} (${aspectRatio})，body/stage margin:0 overflow:hidden；商业字体合规铁律：必须通过 @font-face 加载 'fonts/NotoSansSC-VF.woff2'，使用 'Noto Sans SC', sans-serif 与 'JetBrains Mono', monospace，严禁声明 Microsoft YaHei / SimSun / SimHei 等受限商业字体！
 3. 严禁引用任何外部 http/https CDN (GSAP、字体、图片、SVG 外部链接全部禁止！)，若需使用素材，使用相对路径（如 assets/...）。
 4. 严禁出现无限自主驱动动画（不可用 CSS @keyframes、不可在 requestAnimationFrame 内自行推进主时间轴，不可使用 Math.random() 造成前后帧不一致，请使用确定性伪随机函数）。
 5. 必须内嵌 <script id="dsh-script-data" type="application/json">PLACEHOLDER</script>（注意请保留该 script 标签占位符或完整嵌入数据，系统会自动写回最新脚本）。
-6. 必须向全局暴露确定性 seek 接口：
+6. 必须保留合成器级强制合规叠层：右上/左上 #ai-badge（「AI 辅助创作」）及片尾最后 2 秒展示 #end-notice，且字幕条 bottom 必须避让目标平台安全区（竖屏 ≥ 22% 高度，横屏 ≥ 13% 高度）。
+7. 必须向全局暴露确定性 seek 接口：
    window.__totalFrames = <totalDurationInFrames>;
    window.__seekToFrame = function(frameIndex) { ... };
    调用 window.__seekToFrame(f) 时必须立刻、同步地将整个 DOM + Canvas（含多镜头粒子/光晕/3D透视变换/数字滚动/转场闪白/双语或中文字幕/音频节拍律动条）渲染至精确的第 f 帧状态！
-7. 必须为每个分镜保留对应的 <template id="scene-01">...</template> 或 <section data-scene-id="scene-01"> 元素以配合系统场景覆盖率检测，同时确保多镜头视觉极具大片质感（背景景深光斑、暗角、胶片微噪点、网格/曲线、弹性缩放、清晰字幕条）。`
+8. 必须为每个分镜保留对应的 <template id="scene-01">...</template> 或 <section data-scene-id="scene-01"> 元素以配合系统场景覆盖率检测，同时确保多镜头视觉极具大片质感（背景景深光斑、暗角、胶片微噪点、网格/曲线、弹性缩放、清晰字幕条）。`
 
   const user = JSON.stringify(
     {

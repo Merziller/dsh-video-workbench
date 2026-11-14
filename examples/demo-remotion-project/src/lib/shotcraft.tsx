@@ -12,8 +12,9 @@ import {
   useVideoConfig,
 } from 'remotion'
 
-export const FONT_SANS = '"Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif'
-export const FONT_MONO = '"Consolas", "Courier New", monospace'
+export const FONT_SANS = "'Noto Sans SC', 'Source Han Sans SC', 'PingFang SC', 'HarmonyOS Sans SC', sans-serif"
+export const FONT_SERIF = "'Source Han Serif SC Heavy', 'Noto Serif SC', 'Noto Sans SC', serif"
+export const FONT_MONO = "'JetBrains Mono', 'Cascadia Mono', 'Liberation Mono', ui-monospace, monospace"
 
 export interface PageCamProps {
   children: React.ReactNode
@@ -248,6 +249,7 @@ export interface ShotCaptionProps {
   frameOffset?: number
   accentColor?: string
   isPortrait?: boolean
+  bottomPx?: number
 }
 
 export const ShotCaption: React.FC<ShotCaptionProps> = ({
@@ -255,8 +257,10 @@ export const ShotCaption: React.FC<ShotCaptionProps> = ({
   frameOffset = 0,
   accentColor = '#38BDF8',
   isPortrait = false,
+  bottomPx,
 }) => {
   const frame = useCurrentFrame()
+  const { height } = useVideoConfig()
   const globalFrame = frame + frameOffset
   const active = subtitles.find((s) => globalFrame >= s.startFrame && globalFrame <= s.endFrame)
   if (!active || !active.text) return null
@@ -265,6 +269,12 @@ export const ShotCaption: React.FC<ShotCaptionProps> = ({
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   })
+  const resolvedBottom =
+    typeof bottomPx === 'number' && bottomPx > 0
+      ? bottomPx
+      : isPortrait
+        ? Math.round(height * 0.22)
+        : Math.round(height * 0.13)
 
   return (
     <div
@@ -272,7 +282,7 @@ export const ShotCaption: React.FC<ShotCaptionProps> = ({
         position: 'absolute',
         left: '6%',
         right: '6%',
-        bottom: isPortrait ? '11%' : '6.5%',
+        bottom: resolvedBottom,
         display: 'flex',
         justifyContent: 'center',
         pointerEvents: 'none',
@@ -311,30 +321,90 @@ export interface AIBadgeProps {
 }
 
 export const AIBadge: React.FC<AIBadgeProps> = ({
-  visible = false,
-  text = 'AI 生成 · 仅供参考',
+  visible = true,
+  text = 'AI 辅助创作',
   accentColor = '#38BDF8',
 }) => {
+  const { width, height } = useVideoConfig()
+  const isPortrait = width < height
   if (!visible) return null
   return (
     <div
       style={{
         position: 'absolute',
-        top: 22,
-        right: 26,
+        top: isPortrait ? Math.round(height * 0.092) : 24,
+        left: 26,
         zIndex: 70,
         padding: '6px 14px',
         borderRadius: 999,
-        background: 'rgba(10, 14, 24, 0.72)',
-        border: `1px solid ${accentColor}44`,
-        color: '#CBD5E1',
+        background: 'rgba(10, 14, 24, 0.78)',
+        border: `1px solid ${accentColor}55`,
+        color: '#E2E8F0',
         fontFamily: FONT_SANS,
-        fontSize: 16,
+        fontSize: isPortrait ? 15 : 16,
         fontWeight: 600,
         letterSpacing: '0.03em',
+        backdropFilter: 'blur(6px)',
       }}
     >
       {text}
+    </div>
+  )
+}
+
+export interface EndNoticeProps {
+  text?: string
+  accentColor?: string
+  tailSeconds?: number
+}
+
+export const EndNotice: React.FC<EndNoticeProps> = ({
+  text = '本片画面与配乐由 DeepSeek Harness AI 编程辅助生成 · 语音由 IndexTTS-2.5 合成',
+  accentColor = '#38BDF8',
+  tailSeconds = 2.2,
+}) => {
+  const frame = useCurrentFrame()
+  const { fps, durationInFrames, width, height } = useVideoConfig()
+  const tailFrames = Math.max(12, Math.round(fps * tailSeconds))
+  const startF = Math.max(0, durationInFrames - tailFrames)
+  if (frame < startF) return null
+
+  const alpha = interpolate(frame, [startF, startF + 10], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  })
+  const isPortrait = width < height
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: '6%',
+        right: '6%',
+        bottom: isPortrait ? Math.round(height * 0.30) : Math.round(height * 0.21),
+        display: 'flex',
+        justifyContent: 'center',
+        pointerEvents: 'none',
+        opacity: alpha,
+        zIndex: 75,
+      }}
+    >
+      <div
+        style={{
+          padding: '8px 20px',
+          borderRadius: 999,
+          background: 'rgba(6, 10, 18, 0.86)',
+          border: `1px solid ${accentColor}44`,
+          color: '#CBD5E1',
+          fontFamily: FONT_SANS,
+          fontSize: isPortrait ? 18 : 16,
+          fontWeight: 600,
+          letterSpacing: '0.02em',
+          textAlign: 'center',
+        }}
+      >
+        {text}
+      </div>
     </div>
   )
 }

@@ -75,10 +75,42 @@ export async function ensureProjectAudioAssets(projectDir, script, assetsManifes
 
   const importedMusic = (assetsManifest?.items || []).filter((it) => it.role === 'music')
   const totalSec = Math.max(2, Number(script?.totalDurationSec) || 12)
-  let bgmPath = script?.bgm?.path || ''
-  let bgmSource = script?.bgm?.source || 'generated'
+  const bgmMode = script?.audioSpec?.bgmMode || script?.bgmMode || script?.bgm?.mode || 'auto'
+  let bgmPath = ''
+  let bgmSource = 'generated'
 
-  if (!bgmPath || !existsSync(isAbsolute(bgmPath) ? bgmPath : join(absDir, bgmPath))) {
+  const candidateExists = (p) => Boolean(p && existsSync(isAbsolute(p) ? p : join(absDir, p)))
+
+  if (bgmMode === 'uploaded') {
+    const selected = script?.bgm?.uploadedPath || importedMusic[0]?.path || script?.bgm?.path || ''
+    if (candidateExists(selected)) {
+      bgmPath = selected
+      bgmSource = 'user-imported'
+    }
+  } else if (bgmMode === 'llm-coded') {
+    if (candidateExists('audio/bgm-llm.wav')) {
+      bgmPath = 'audio/bgm-llm.wav'
+      bgmSource = 'llm-coded'
+    } else if (candidateExists(script?.bgm?.path)) {
+      bgmPath = script.bgm.path
+      bgmSource = script?.bgm?.source || 'llm-coded'
+    }
+  } else if (bgmMode === 'tts-engine') {
+    if (candidateExists('audio/bgm-tts.wav')) {
+      bgmPath = 'audio/bgm-tts.wav'
+      bgmSource = 'tts-engine'
+    } else if (candidateExists(script?.bgm?.path)) {
+      bgmPath = script.bgm.path
+      bgmSource = 'tts-engine'
+    }
+  }
+
+  if (!bgmPath && candidateExists(script?.bgm?.path)) {
+    bgmPath = script.bgm.path
+    bgmSource = script?.bgm?.source || 'generated'
+  }
+
+  if (!bgmPath) {
     if (importedMusic.length > 0) {
       bgmPath = importedMusic[0].path
       bgmSource = 'user-imported'
@@ -92,7 +124,7 @@ export async function ensureProjectAudioAssets(projectDir, script, assetsManifes
     }
   }
 
-  return { builtinSfx, bgmPath, bgmSource }
+  return { builtinSfx, bgmPath, bgmSource, bgmMode }
 }
 
 /**

@@ -7,13 +7,16 @@ import {
 } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import {
+  computeSafeZonePreflight,
   ensureWin11ProjectGuards,
   loadEnv,
   readScriptJson,
   REPO_ROOT,
   resolveBinaries,
   resolveEnvPath,
+  RESTRICTED_COMMERCIAL_FONT_PATTERNS,
   runCommandRedirected,
+  syncProjectFonts,
   writeScriptJson,
 } from '@dsh-video/shared'
 import { readAssets } from '@dsh-video/tool-media/asset-manager.js'
@@ -182,18 +185,35 @@ export async function executeVideoLint(args = {}) {
         errors.push(`Duplicate DOM/SVG IDs detected: ${[...duplicateIds].join(', ')}`)
       }
 
-      // Check Windows 11 font stack rule (Microsoft YaHei & Consolas)
-      const hasWin11Fonts =
-        /Microsoft YaHei/i.test(html) && /Consolas/i.test(html)
+      // Commercial Open-Source Font Whitelist check (SIL OFL Noto Sans SC + JetBrains Mono)
+      syncProjectFonts(targetDir)
+      const hasCommercialFont = /Noto Sans SC|Source Han (?:Sans|Serif) SC|Alibaba PuHuiTi|HarmonyOS Sans/i.test(html)
+      const restrictedFontsFound = RESTRICTED_COMMERCIAL_FONT_PATTERNS.filter((rx) => rx.test(html)).map((rx) => rx.source)
+      const fontPolicyPassed = hasCommercialFont && restrictedFontsFound.length === 0
       checks.push({
-        name: 'Windows 11 Local Font Stack (Microsoft YaHei + Consolas)',
-        passed: hasWin11Fonts,
-        value: hasWin11Fonts ? 'Configured' : 'Missing Microsoft YaHei or Consolas declaration',
+        name: 'Commercial Font Whitelist (SIL OFL Noto Sans SC)',
+        passed: fontPolicyPassed,
+        value: fontPolicyPassed
+          ? 'Noto Sans SC (SIL OFL 1.1) Verified'
+          : restrictedFontsFound.length > 0
+            ? `Restricted non-OFL font detected: ${restrictedFontsFound.join(', ')}`
+            : 'Missing bundled Noto Sans SC font stack',
       })
-      if (!hasWin11Fonts) {
-        warnings.push(
-          'Recommend declaring `Microsoft YaHei` and `Consolas` with `@font-face { src: local(...) }` for Windows 11 rendering consistency.',
-        )
+      if (restrictedFontsFound.length > 0) {
+        errors.push(`Restricted commercial font declared (${restrictedFontsFound.join(', ')}); use bundled SIL OFL Noto Sans SC instead.`)
+      } else if (!hasCommercialFont) {
+        warnings.push('Recommend declaring `Noto Sans SC` with `@font-face { src: url("fonts/NotoSansSC-VF.woff2") }` for commercial distribution compliance.')
+      }
+
+      // Mandatory AI synthesis compliance overlay check
+      const hasAiBadgeEl = /id=["']ai-badge["']/i.test(html)
+      checks.push({
+        name: 'AI Synthesis Compliance Overlay (#ai-badge)',
+        passed: hasAiBadgeEl,
+        value: hasAiBadgeEl ? 'Present' : 'Missing mandatory #ai-badge disclosure overlay',
+      })
+      if (!hasAiBadgeEl) {
+        warnings.push('Missing compositor-level `#ai-badge` compliance overlay.')
       }
 
       // Check deterministic timeline seek hook (`window.__seekToFrame`)
@@ -206,9 +226,24 @@ export async function executeVideoLint(args = {}) {
       if (!hasSeekHook) {
         warnings.push('Recommend exposing `window.__seekToFrame(frame)` so video_snapshot and video_render can seek deterministically.')
       }
+
+      // Platform Safe-Zone Geometry Preflight
+      var safeZonePreflight = computeSafeZonePreflight(script, { htmlContent: html })
+      checks.push({
+        name: `Platform Safe-Zone Geometry (${safeZonePreflight.platformLabel})`,
+        passed: safeZonePreflight.passed,
+        value: safeZonePreflight.passed
+          ? `0 collisions (subtitle bottom=${safeZonePreflight.measuredSubtitleBottomPx}px >= ${safeZonePreflight.recommendedSubtitleBottomPx}px)`
+          : safeZonePreflight.collisions.map((c) => c.suggestion).join('; '),
+      })
+      for (const col of safeZonePreflight.collisions) {
+        if (col.severity === 'error') errors.push(col.suggestion)
+        else warnings.push(col.suggestion)
+      }
     }
   } else {
     // Remotion Mode Lint
+    syncProjectFonts(targetDir)
     const srcDir = join(targetDir, 'src')
     const hasSrc = existsSync(srcDir)
     checks.push({
@@ -231,12 +266,20 @@ export async function executeVideoLint(args = {}) {
       walkSrc(srcDir)
 
       let usesCurrentFrame = false
+      let usesCommercialFont = false
+      let hasAiBadgeComp = false
+      const restrictedRemotionFonts = []
       const cssTransitionViolations = []
       const mathRandomViolations = []
 
       for (const f of files) {
         const content = readFileSync(f.full, 'utf8')
         if (/useCurrentFrame\s*\(/.test(content)) usesCurrentFrame = true
+        if (/Noto Sans SC|FONT_SANS|Source Han/i.test(content)) usesCommercialFont = true
+        if (/AIBadge/i.test(content)) hasAiBadgeComp = true
+        for (const rx of RESTRICTED_COMMERCIAL_FONT_PATTERNS) {
+          if (rx.test(content)) restrictedRemotionFonts.push(`${f.rel}:${rx.source}`)
+        }
         if (/transition\s*:/i.test(content) || /@keyframes/i.test(content)) {
           cssTransitionViolations.push(f.rel)
         }
@@ -244,6 +287,23 @@ export async function executeVideoLint(args = {}) {
           mathRandomViolations.push(f.rel)
         }
       }
+      checks.push({
+        name: 'Commercial Font Whitelist (SIL OFL Noto Sans SC)',
+        passed: usesCommercialFont && restrictedRemotionFonts.length === 0,
+        value: restrictedRemotionFonts.length > 0
+          ? `Restricted: ${restrictedRemotionFonts.join(', ')}`
+          : usesCommercialFont
+            ? 'Noto Sans SC Verified'
+            : 'Missing FONT_SANS / Noto Sans SC',
+      })
+      if (restrictedRemotionFonts.length > 0) {
+        errors.push(`Restricted commercial font declared (${restrictedRemotionFonts.join(', ')}); use FONT_SANS (Noto Sans SC).`)
+      }
+      checks.push({
+        name: 'AI Synthesis Compliance Overlay (<AIBadge />)',
+        passed: hasAiBadgeComp,
+        value: hasAiBadgeComp ? 'Present' : 'Missing <AIBadge /> in Remotion composition',
+      })
       checks.push({
         name: 'Remotion Frame-Driven Animation (useCurrentFrame)',
         passed: usesCurrentFrame,
@@ -265,6 +325,14 @@ export async function executeVideoLint(args = {}) {
             ? 'Clean'
             : `Found in: ${mathRandomViolations.join(', ')}`,
       })
+      var safeZonePreflight = computeSafeZonePreflight(script)
+      checks.push({
+        name: `Platform Safe-Zone Geometry (${safeZonePreflight.platformLabel})`,
+        passed: safeZonePreflight.passed,
+        value: safeZonePreflight.passed
+          ? `0 collisions (subtitle bottom=${safeZonePreflight.recommendedSubtitleBottomPx}px)`
+          : safeZonePreflight.collisions.map((c) => c.suggestion).join('; '),
+      })
       if (cssTransitionViolations.length > 0) {
         errors.push(
           `Avoid CSS transitions/@keyframes in Remotion components (${cssTransitionViolations.join(', ')}); use interpolate() or spring() instead.`,
@@ -283,6 +351,7 @@ export async function executeVideoLint(args = {}) {
     engine,
     projectDir: targetDir,
     contrastRatio: ratio,
+    safeZonePreflight: typeof safeZonePreflight !== 'undefined' ? safeZonePreflight : null,
     checks,
     errors,
     warnings,
@@ -532,7 +601,7 @@ export async function executeVideoRender(args = {}) {
     }
     renderW = rW
     renderH = rH
-    await renderHtmlVideoToMp4({
+    var htmlRenderRes = await renderHtmlVideoToMp4({
       projectDir: targetDir,
       browserBin,
       totalFrames,
@@ -543,6 +612,7 @@ export async function executeVideoRender(args = {}) {
       outMp4Path: outPath,
       snapshotFrames: sampleFrames,
       snapshotDir: framesDir,
+      useSegmentCache: args.useSegmentCache !== false,
       onProgress: args.onProgress,
     })
     renderMethod = 'chromium-cdp-full-fps'
@@ -573,6 +643,7 @@ export async function executeVideoRender(args = {}) {
     audioTracksMixed: mixRes.voiceCount,
     sfxCount: mixRes.sfxCount,
     bgmSource: mixRes.bgmSource,
+    segmentCache: typeof htmlRenderRes !== 'undefined' ? (htmlRenderRes?.segmentCache || null) : null,
     qaReportPath: qaReport?.qaReportPath || '',
     qaReport,
   }
