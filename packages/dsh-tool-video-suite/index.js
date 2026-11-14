@@ -4,10 +4,8 @@ import {
   readdirSync,
   readFileSync,
   statSync,
-  writeFileSync,
 } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import {
   ensureWin11ProjectGuards,
   loadEnv,
@@ -18,6 +16,17 @@ import {
   runCommandRedirected,
   writeScriptJson,
 } from '@dsh-video/shared'
+import { readAssets } from '@dsh-video/tool-media/asset-manager.js'
+import { mixVideoAudio } from '@dsh-video/tool-media/audio-synth.js'
+import {
+  syncRemotionPublicAssets,
+  writeRemotionProjectFiles,
+} from '@dsh-video/tool-media/remotion-generator.js'
+import {
+  captureHtmlSnapshots,
+  renderHtmlVideoToMp4,
+  renderRemotionProject,
+} from './frame-renderer.js'
 
 /**
  * Parse hex color (#RRGGBB or #RGB) to relative luminance per WCAG 2.1.
@@ -246,9 +255,45 @@ export async function executeVideoLint(args = {}) {
   }
 }
 
+function computeSampleFrames(script) {
+  const fps = Number(script.fps) || 30
+  const totalFrames = Math.max(9, Number(script.totalDurationInFrames) || 270)
+  const scenes = Array.isArray(script.scenes) ? script.scenes : []
+  if (scenes.length >= 3) {
+    const picked = []
+    for (let i = 0; i < 9; i++) {
+      const s = scenes[Math.floor((i * scenes.length) / 9)]
+      const startF = Number(s.startFrame || 0)
+      const durF = Math.max(3, Number(s.durationInFrames || 90))
+      const slot = (i % Math.max(1, Math.round(9 / scenes.length)))
+      const ratio = Math.min(0.85, 0.25 + slot * 0.28)
+      picked.push(Math.min(totalFrames - 1, startF + Math.floor(ratio * durF)))
+    }
+    return picked
+  }
+  return Array.from({ length: 9 }, (_, i) => {
+    const ratio = (i + 0.5) / 9
+    return Math.min(totalFrames - 1, Math.max(0, Math.floor(ratio * totalFrames)))
+  })
+}
+
+async function stitch3x3Grid(ffmpeg, framesDir, outPath) {
+  const stitchRes = await runCommandRedirected(ffmpeg, [
+    '-y',
+    '-framerate', '1',
+    '-i', join(framesDir, 'shot_%02d.png'),
+    '-vf', 'scale=640:360,tile=3x3:padding=10:margin=10:color=0x0b1020',
+    '-frames:v', '1',
+    outPath,
+  ])
+  if (stitchRes.code !== 0 || !existsSync(outPath)) {
+    throw new Error(`Failed to stitch 3x3 snapshot grid: ${stitchRes.stderr}`)
+  }
+}
+
 /**
- * Capture 9 individual frames and stitch them into a 3x3 contact sheet PNG.
- * Uses headless Chromium (when available for HTML) + FFmpeg `tile=3x3` filter.
+ * Capture 9 frames and stitch into `snapshot-3x3.png`.
+ * Uses Remotion `renderStill` when engine=remotion (and template available), or single-session Chromium CDP over HTTP.
  */
 export async function executeVideoSnapshot(args = {}) {
   loadEnv()
@@ -256,11 +301,11 @@ export async function executeVideoSnapshot(args = {}) {
     ? args.projectDir
     : resolve(REPO_ROOT, args.projectDir || '.')
 
-  // Ensure script.json and embedded `#dsh-script-data` in index.html are 100% synchronized before capture
   const { data: script } = writeScriptJson(targetDir, readScriptJson(targetDir).data)
   const engine = args.engine || script.engine || 'html'
   const fps = Number(script.fps) || 30
   const totalFrames = Math.max(9, Number(script.totalDurationInFrames) || 270)
+  const scenes = Array.isArray(script.scenes) ? script.scenes : []
 
   const outPath = args.outputPath
     ? isAbsolute(args.outputPath)
@@ -272,125 +317,57 @@ export async function executeVideoSnapshot(args = {}) {
   const framesDir = join(dirname(outPath), '.frames-snapshot')
   mkdirSync(framesDir, { recursive: true })
 
-  // Build 9 sample frames: if 3 scenes exist, sample 3 keyframes (20%, 55%, 85%) per scene for exact scene-boundary alignment
-  const scenes = Array.isArray(script.scenes) ? script.scenes : []
-  let sampleFrames = []
-  let frameDurationsSec = []
-  if (scenes.length === 3) {
-    const ratios = [0.2, 0.55, 0.85]
-    for (const s of scenes) {
-      const startF = Number(s.startFrame || 0)
-      const durF = Math.max(3, Number(s.durationInFrames || 90))
-      const durSec = Math.max(0.3, Number(s.durationSec || durF / fps))
-      for (const r of ratios) {
-        sampleFrames.push(Math.min(totalFrames - 1, startF + Math.floor(r * durF)))
-        frameDurationsSec.push(Number((durSec / 3).toFixed(4)))
-      }
-    }
-  } else {
-    const totalSec = Math.max(1, Number(script.totalDurationSec) || totalFrames / fps)
-    sampleFrames = Array.from({ length: 9 }, (_, i) => {
-      const ratio = (i + 0.5) / 9
-      return Math.min(totalFrames - 1, Math.max(0, Math.floor(ratio * totalFrames)))
-    })
-    frameDurationsSec = Array.from({ length: 9 }, () => Number((totalSec / 9).toFixed(4)))
-  }
-
+  const sampleFrames = computeSampleFrames(script)
   const { ffmpeg } = resolveBinaries()
   const browserBin = resolveBrowserExecutable()
   const htmlEntry = join(targetDir, 'index.html')
 
-  const capturedFiles = []
-  let captureMethod = 'ffmpeg-scene-cards'
+  let captureMethod = 'ffmpeg-fallback'
+  let captured = false
 
-  // Attempt headless browser screenshot capture whenever index.html & Chromium/Edge are available
-  if (browserBin && existsSync(htmlEntry)) {
-    let browserSuccess = true
-    for (let i = 0; i < sampleFrames.length; i++) {
-      const f = sampleFrames[i]
-      const sec = (f / fps).toFixed(2)
-      const framePng = join(framesDir, `shot_${String(i).padStart(2, '0')}.png`)
-      const fileUrl = `${pathToFileURL(htmlEntry).href}?frame=${f}&time=${sec}`
-      try {
-        const res = await runCommandRedirected(
-          browserBin,
-          [
-            '--headless',
-            '--disable-gpu',
-            '--no-sandbox',
-            '--hide-scrollbars',
-            '--window-size=1280,720',
-            `--screenshot=${framePng}`,
-            fileUrl,
-          ],
-          { timeoutMs: 25_000 },
-        )
-        if (res.code === 0 && existsSync(framePng) && statSync(framePng).size > 1000) {
-          capturedFiles.push(framePng)
-        } else {
-          browserSuccess = false
-          break
-        }
-      } catch {
-        browserSuccess = false
-        break
+  if (engine === 'remotion' && existsSync(join(targetDir, 'src', 'Root.tsx'))) {
+    try {
+      syncRemotionPublicAssets(targetDir, script)
+      const r = await renderRemotionProject({
+        projectDir: targetDir,
+        snapshotFrames: sampleFrames,
+        snapshotDir: framesDir,
+        onlySnapshots: true,
+      })
+      if (r.ok) {
+        captureMethod = 'remotion-still'
+        captured = true
       }
-    }
-    if (browserSuccess && capturedFiles.length === 9) {
-      captureMethod = 'chromium-headless-dom'
-    } else {
-      capturedFiles.length = 0
-    }
+    } catch {}
   }
 
-  // Fallback fast canvas generator via FFmpeg if browser capture wasn't used
-  if (capturedFiles.length < 9) {
-    const palette = [
-      '0x0f172a', '0x1e1b4b', '0x172554',
-      '0x0c4a6e', '0x134e4a', '0x1e293b',
-      '0x31102f', '0x2e1065', '0x090d16',
-    ]
+  if (!captured && browserBin && existsSync(htmlEntry)) {
+    try {
+      await captureHtmlSnapshots({
+        projectDir: targetDir,
+        browserBin,
+        frames: sampleFrames,
+        outDir: framesDir,
+        width: 1280,
+        height: 720,
+      })
+      captureMethod = 'chromium-cdp-dom'
+      captured = true
+    } catch {}
+  }
+
+  if (!captured) {
     for (let i = 0; i < sampleFrames.length; i++) {
       const framePng = join(framesDir, `shot_${String(i).padStart(2, '0')}.png`)
-      const color = palette[i % palette.length]
       await runCommandRedirected(ffmpeg, [
-        '-y',
-        '-f', 'lavfi',
-        '-i', `color=c=${color}:s=640x360:d=1`,
-        '-vf', `drawgrid=w=80:h=80:t=1:c=white@0.07,drawbox=x=24:y=24:w=592:h=312:color=0x38bdf8@0.5:t=2`,
-        '-frames:v', '1',
-        framePng,
+        '-y', '-f', 'lavfi', '-i', `color=c=0x0f172a:s=640x360:d=1`,
+        '-vf', 'drawgrid=w=80:h=80:t=1:c=white@0.07',
+        '-frames:v', '1', framePng,
       ])
-      capturedFiles.push(framePng)
     }
   }
 
-  // Write FFmpeg concat demuxer manifest for scene-accurate video_render timing
-  const concatLines = []
-  for (let i = 0; i < capturedFiles.length; i++) {
-    const escapedPath = capturedFiles[i].replace(/\\/g, '/').replace(/'/g, "'\\''")
-    concatLines.push(`file '${escapedPath}'`)
-    concatLines.push(`duration ${frameDurationsSec[i] || 1.0}`)
-  }
-  if (capturedFiles.length > 0) {
-    const lastEscaped = capturedFiles[capturedFiles.length - 1].replace(/\\/g, '/').replace(/'/g, "'\\''")
-    concatLines.push(`file '${lastEscaped}'`)
-  }
-  writeFileSync(join(framesDir, 'frames-concat.txt'), concatLines.join('\n') + '\n', 'utf8')
-
-  // Stitch the 9 PNGs into a 3x3 contact sheet (`snapshot-3x3.png`) using FFmpeg `tile=3x3`
-  const stitchRes = await runCommandRedirected(ffmpeg, [
-    '-y',
-    '-framerate', '1',
-    '-i', join(framesDir, 'shot_%02d.png'),
-    '-vf', 'scale=640:360,tile=3x3:padding=10:margin=10:color=0x0b1020',
-    '-frames:v', '1',
-    outPath,
-  ])
-
-  if (stitchRes.code !== 0 || !existsSync(outPath)) {
-    throw new Error(`Failed to stitch 3x3 snapshot grid: ${stitchRes.stderr}`)
-  }
+  await stitch3x3Grid(ffmpeg, framesDir, outPath)
 
   const frameMetadata = sampleFrames.map((frame, idx) => {
     const sec = Number((frame / fps).toFixed(2))
@@ -402,7 +379,6 @@ export async function executeVideoSnapshot(args = {}) {
       gridCell: `R${Math.floor(idx / 3) + 1}C${(idx % 3) + 1}`,
       frame,
       timeSec: sec,
-      durationSec: frameDurationsSec[idx],
       sceneId: scene.id || `scene-0${idx + 1}`,
       sceneTitle: scene.title || '',
       voiceName: scene.voiceName || scene.voiceId || 'auto',
@@ -423,7 +399,7 @@ export async function executeVideoSnapshot(args = {}) {
 }
 
 /**
- * 3. `video_render` implementation (HTML/GSAP & Remotion -> H.264 MP4 with scene-synchronized audio)
+ * 3. `video_render` — True full-FPS Dual-Engine Render + Multi-Track Audio Mix (Voice + SFX + Ducked BGM) -> H.264 MP4
  */
 export async function executeVideoRender(args = {}) {
   loadEnv()
@@ -431,12 +407,13 @@ export async function executeVideoRender(args = {}) {
     ? args.projectDir
     : resolve(REPO_ROOT, args.projectDir || '.')
 
-  const { data: script } = readScriptJson(targetDir)
+  const { data: script } = writeScriptJson(targetDir, readScriptJson(targetDir).data)
   const engine = args.engine || script.engine || 'html'
   const fps = Number(script.fps) || 30
-  const width = Number(script.width) || 1920
-  const height = Number(script.height) || 1080
-  const totalSec = Math.max(1, Number(script.totalDurationSec) || 6)
+  const width = Number(args.width) || 1920
+  const height = Number(args.height) || 1080
+  const totalFrames = Math.max(30, Number(script.totalDurationInFrames) || 300)
+  const totalSec = Number((totalFrames / fps).toFixed(3))
 
   const outPath = args.outputPath
     ? isAbsolute(args.outputPath)
@@ -445,112 +422,85 @@ export async function executeVideoRender(args = {}) {
     : join(targetDir, 'output', 'final.mp4')
 
   mkdirSync(dirname(outPath), { recursive: true })
+  const snapshotOut = join(dirname(outPath), 'snapshot-3x3.png')
+  const framesDir = join(dirname(outPath), '.frames-snapshot')
+  const sampleFrames = computeSampleFrames(script)
   const { ffmpeg } = resolveBinaries()
 
-  // First ensure we have clean, scene-synchronized keyframe visuals to encode from
-  const snapshotInfo = await executeVideoSnapshot({
+  // 1. Mix Voice Narration + SFX + Sidechain-Ducked BGM into `output/master-audio.wav`
+  const assetsManifest = readAssets(targetDir)
+  const mixRes = await mixVideoAudio({
     projectDir: targetDir,
-    engine,
-    outputPath: join(dirname(outPath), 'snapshot-3x3.png'),
+    script,
+    assetsManifest,
+    outputPath: join(dirname(outPath), 'master-audio.wav'),
   })
-  const framesDir = join(dirname(outPath), '.frames-snapshot')
-  const concatManifest = join(framesDir, 'frames-concat.txt')
 
-  // Collect scene audio tracks (using exact-duration silence for any scene without a WAV)
-  const scenes = Array.isArray(script.scenes) ? script.scenes : []
-  const audioSegments = []
-  let realAudioCount = 0
-  for (const scene of scenes) {
-    const durSec = Math.max(0.2, Number(scene.durationSec || 2))
-    let absAudio = ''
-    if (scene.audioFile) {
-      const candidate = isAbsolute(scene.audioFile)
-        ? scene.audioFile
-        : resolve(targetDir, scene.audioFile)
-      if (existsSync(candidate)) {
-        absAudio = candidate
-        realAudioCount++
+  // 2. Render every frame via selected engine
+  let renderMethod = ''
+  if (engine === 'remotion' && existsSync(join(targetDir, 'src', 'Root.tsx'))) {
+    syncRemotionPublicAssets(targetDir, script)
+    const vcPath = join(targetDir, 'src', 'VideoComposition.tsx')
+    if (existsSync(vcPath)) {
+      const vcSrc = readFileSync(vcPath, 'utf8')
+      if (vcSrc.includes('const PALETTE =') && !vcSrc.includes('master-audio.wav')) {
+        writeRemotionProjectFiles(targetDir, script)
       }
     }
-    audioSegments.push({
-      path: absAudio,
-      durationSec: durSec,
+    const r = await renderRemotionProject({
+      projectDir: targetDir,
+      outMp4Path: outPath,
+      snapshotFrames: sampleFrames,
+      snapshotDir: framesDir,
+      onlySnapshots: false,
     })
-  }
-
-  // Build FFmpeg command using concat demuxer for exact scene durations + scene audio tracks
-  const ffmpegArgs = ['-y']
-  if (existsSync(concatManifest)) {
-    ffmpegArgs.push('-f', 'concat', '-safe', '0', '-i', concatManifest)
-  } else {
-    const segDuration = Math.max(0.4, Number((totalSec / 9).toFixed(3)))
-    ffmpegArgs.push('-framerate', (1 / segDuration).toFixed(4), '-i', join(framesDir, 'shot_%02d.png'))
-  }
-
-  if (realAudioCount > 0) {
-    for (const seg of audioSegments) {
-      if (seg.path) {
-        ffmpegArgs.push('-i', seg.path)
-      } else {
-        ffmpegArgs.push(
-          '-f', 'lavfi',
-          '-t', String(seg.durationSec),
-          '-i', 'anullsrc=channel_layout=stereo:sample_rate=24000',
-        )
-      }
+    if (r.ok && existsSync(outPath)) {
+      renderMethod = 'remotion-renderer'
     }
-    if (audioSegments.length === 1) {
-      ffmpegArgs.push('-map', '0:v:0', '-map', '1:a:0')
-    } else {
-      const normChains = audioSegments
-        .map((_, idx) => `[${idx + 1}:a]aresample=24000,aformat=sample_fmts=fltp:channel_layouts=stereo[a${idx}]`)
-        .join(';')
-      const concatInputs = audioSegments.map((_, idx) => `[a${idx}]`).join('')
-      ffmpegArgs.push(
-        '-filter_complex',
-        `${normChains};${concatInputs}concat=n=${audioSegments.length}:v=0:a=1[aout]`,
-        '-map', '0:v:0',
-        '-map', '[aout]',
-      )
+  }
+
+  if (!renderMethod) {
+    const browserBin = resolveBrowserExecutable()
+    const htmlEntry = join(targetDir, 'index.html')
+    if (!browserBin || !existsSync(htmlEntry)) {
+      throw new Error(`Cannot render HTML video: missing browser (${browserBin}) or ${htmlEntry}`)
     }
-  } else {
-    ffmpegArgs.push(
-      '-f', 'lavfi',
-      '-i', 'anullsrc=channel_layout=stereo:sample_rate=24000',
-      '-map', '0:v:0',
-      '-map', '1:a:0',
-    )
+    // Optional draft scale (default 1920x1080; pass renderWidth/renderHeight for faster 720p drafts)
+    const rW = Number(args.renderWidth) || width
+    const rH = Number(args.renderHeight) || height
+    await renderHtmlVideoToMp4({
+      projectDir: targetDir,
+      browserBin,
+      totalFrames,
+      fps,
+      width: rW,
+      height: rH,
+      audioPath: mixRes.outputPath,
+      outMp4Path: outPath,
+      snapshotFrames: sampleFrames,
+      snapshotDir: framesDir,
+    })
+    renderMethod = 'chromium-cdp-full-fps'
   }
 
-  ffmpegArgs.push(
-    '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=0x0b1020,fps=${fps}`,
-    '-c:v', 'libx264',
-    '-preset', 'fast',
-    '-crf', '20',
-    '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac',
-    '-b:a', '192k',
-    '-t', String(totalSec),
-    '-movflags', '+faststart',
-    outPath,
-  )
-
-  const renderRes = await runCommandRedirected(ffmpeg, ffmpegArgs, { timeoutMs: 240_000 })
-  if (renderRes.code !== 0 || !existsSync(outPath)) {
-    throw new Error(`Video render failed: ${renderRes.stderr}`)
-  }
+  await stitch3x3Grid(ffmpeg, framesDir, snapshotOut)
 
   const fileSizeBytes = statSync(outPath).size
   return {
     ok: true,
     engine,
+    renderMethod,
     outputPath: outPath,
-    snapshotPath: snapshotInfo.snapshotPath,
+    snapshotPath: snapshotOut,
+    masterAudioPath: mixRes.outputPath,
     fileSizeBytes,
+    framesRendered: totalFrames,
     durationSec: totalSec,
     fps,
     resolution: `${width}x${height}`,
-    audioTracksMixed: realAudioCount,
+    audioTracksMixed: mixRes.voiceCount,
+    sfxCount: mixRes.sfxCount,
+    bgmSource: mixRes.bgmSource,
   }
 }
 

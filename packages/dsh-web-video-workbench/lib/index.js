@@ -1,8 +1,11 @@
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
@@ -17,6 +20,7 @@ import {
 } from '@dsh-video/shared'
 import {
   executeGenerateSpeech,
+  getTtsServerHealth,
   getVoiceCatalog,
   importVoicePack,
   matchAllScenesInScript,
@@ -27,7 +31,17 @@ import {
   executeVideoSnapshot,
 } from '@dsh-video/tool-video-suite'
 import {
-  buildHtmlSceneTemplate,
+  importAssets,
+  mixVideoAudio,
+  planVideoFromAssets,
+  produceFullVideo,
+  readAssets,
+  removeAsset,
+  saveUploadedAsset,
+  summarizeAssets,
+  syncProjectCodeFromScript,
+} from '@dsh-video/tool-media'
+import {
   scaffoldVideoProject,
   VIDEO_MAKER_SYSTEM_PROMPT,
 } from '@dsh-video/preset-video'
@@ -43,11 +57,17 @@ const MIME_MAP = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
+  '.gif': 'image/gif',
   '.svg': 'image/svg+xml',
   '.wav': 'audio/wav',
   '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac',
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
 }
 
 function jsonResponse(data, status = 200) {
@@ -78,14 +98,14 @@ export function getWorkspaceRoot() {
 }
 
 /**
- * List all video projects in `DSH_VIDEO_WORKSPACE` (ensuring `demo-html-project` exists).
+ * List all video projects in `DSH_VIDEO_WORKSPACE` (ensuring starter demo projects exist).
  */
 export function listVideoProjects() {
   const wsRoot = getWorkspaceRoot()
   const demoDir = join(wsRoot, 'demo-html-project')
   if (!existsSync(join(demoDir, 'script.json'))) {
     scaffoldVideoProject(demoDir, {
-      title: 'DeepSeek Harness 双引擎视频工作台演示 (HTML/GSAP)',
+      title: 'DeepSeek Harness 双引擎视频工作台演示 (HTML5 动效)',
       engine: 'html',
     })
   }
@@ -107,19 +127,24 @@ export function listVideoProjects() {
       const { data } = readScriptJson(fullDir)
       const hasMp4 = existsSync(join(fullDir, 'output', 'final.mp4'))
       const hasSnapshot = existsSync(join(fullDir, 'output', 'snapshot-3x3.png'))
+      const hasMasterAudio = existsSync(join(fullDir, 'output', 'master-audio.wav'))
+      const assets = readAssets(fullDir)
       projects.push({
         id: entry,
         name: data.title || entry,
         projectDir: fullDir,
         engine: data.engine || 'html',
+        style: data.style || 'tech',
         fps: data.fps || 30,
         totalDurationSec: data.totalDurationSec || 0,
         totalDurationInFrames: data.totalDurationInFrames || 0,
         sceneCount: Array.isArray(data.scenes) ? data.scenes.length : 0,
+        assetCount: Array.isArray(assets.items) ? assets.items.length : 0,
         voiceMode: data.voiceMode || 'auto',
         defaultVoiceId: data.defaultVoiceId || 'auto',
         hasMp4,
         hasSnapshot,
+        hasMasterAudio,
         updatedAt: data.updatedAt || null,
       })
     } catch {}
@@ -128,8 +153,61 @@ export function listVideoProjects() {
 }
 
 /**
+ * Stream a file cleanly with HTTP Byte-Range support so HTML5 `<video>` and `<audio>` can seek smoothly.
+ */
+function serveFileWithRange(req, filePath, contentType) {
+  const st = statSync(filePath)
+  const total = st.size
+  const rangeHeader = req.headers?.get?.('range') || req.headers?.range || ''
+
+  if (rangeHeader && typeof rangeHeader === 'string') {
+    const match = rangeHeader.match(/bytes=(\d*)-(\d*)/)
+    if (match) {
+      let start = match[1] ? parseInt(match[1], 10) : 0
+      let end = match[2] ? parseInt(match[2], 10) : total - 1
+      if (!match[1] && match[2]) {
+        start = Math.max(0, total - parseInt(match[2], 10))
+        end = total - 1
+      }
+      start = Math.max(0, Math.min(start, Math.max(0, total - 1)))
+      end = Math.max(start, Math.min(end, Math.max(0, total - 1)))
+      const chunkSize = total === 0 ? 0 : end - start + 1
+      const buf = Buffer.alloc(chunkSize)
+      if (chunkSize > 0) {
+        const fd = openSync(filePath, 'r')
+        try {
+          readSync(fd, buf, 0, chunkSize, start)
+        } finally {
+          closeSync(fd)
+        }
+      }
+      return new Response(buf, {
+        status: 206,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Range': `bytes ${start}-${end}/${total}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(chunkSize),
+          'Cache-Control': 'no-cache',
+        },
+      })
+    }
+  }
+
+  const buf = readFileSync(filePath)
+  return new Response(buf, {
+    status: 200,
+    headers: {
+      'Content-Type': contentType,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': String(total),
+      'Cache-Control': 'no-cache',
+    },
+  })
+}
+
+/**
  * Handle API calls from the frontend Video Workbench UI (`/api/video-workbench/*`).
- * Reuses the `connection.fetch.register` pattern from MIT-licensed `dsh-workbench` and `dsh-ppt`.
  */
 export async function handleWorkbenchApiRequest(req) {
   const url = new URL(req.url, 'http://localhost')
@@ -143,14 +221,20 @@ export async function handleWorkbenchApiRequest(req) {
       let activeProject = null
       if (requestedProject && existsSync(join(requestedProject, 'script.json'))) {
         const { data } = readScriptJson(requestedProject)
+        const manifest = readAssets(requestedProject)
         activeProject = {
           projectDir: requestedProject,
           script: data,
+          assets: manifest.items || [],
+          notes: manifest.notes || [],
+          assetSummary: summarizeAssets(manifest),
           hasMp4: existsSync(join(requestedProject, 'output', 'final.mp4')),
           hasSnapshot: existsSync(join(requestedProject, 'output', 'snapshot-3x3.png')),
+          hasMasterAudio: existsSync(join(requestedProject, 'output', 'master-audio.wav')),
         }
       }
       const catalog = getVoiceCatalog()
+      const ttsStatus = await getTtsServerHealth()
       return jsonResponse({
         ok: true,
         workspaceRoot,
@@ -159,12 +243,13 @@ export async function handleWorkbenchApiRequest(req) {
         voiceCatalog: catalog.voices,
         voiceCategories: catalog.categories,
         availableEmotions: Object.keys(catalog.emotionReferences),
+        ttsStatus,
         presetId: 'video-maker',
         presetName: '视频制作模式',
       })
     }
 
-    // 1b. GET /api/video-workbench/voices/preview?id=... (stream original WAV sample for browser audition)
+    // 1b. GET /api/video-workbench/voices/preview?id=...
     if (pathname === '/api/video-workbench/voices/preview' && req.method === 'GET') {
       const voiceId = url.searchParams.get('id') || ''
       const catalog = getVoiceCatalog()
@@ -174,16 +259,15 @@ export async function handleWorkbenchApiRequest(req) {
       }
       const ext = extname(hit.resolvedRefPath).toLowerCase()
       if (ext === '.pt') {
-        return jsonResponse({ ok: false, error: 'IndexTTS .pt speaker tensor does not have a raw WAV stream; synthesize a scene to preview.' }, 400)
+        return jsonResponse(
+          {
+            ok: false,
+            error: 'IndexTTS .pt 音色向量文件暂无原声直出流，请为分镜配音后试听生成效果。',
+          },
+          400,
+        )
       }
-      const buf = readFileSync(hit.resolvedRefPath)
-      return new Response(buf, {
-        status: 200,
-        headers: {
-          'Content-Type': MIME_MAP[ext] || 'audio/wav',
-          'Cache-Control': 'public, max-age=3600',
-        },
-      })
+      return serveFileWithRange(req, hit.resolvedRefPath, MIME_MAP[ext] || 'audio/wav')
     }
 
     // 2. POST /api/video-workbench/projects (create new project)
@@ -200,14 +284,15 @@ export async function handleWorkbenchApiRequest(req) {
       const created = scaffoldVideoProject(projectDir, {
         title: body.title || '新建双引擎视频项目',
         engine: body.engine || 'html',
+        style: body.style || 'tech',
         audience: body.audience || '通用受众',
-        goal: body.goal || '高质感知识可视化视频',
+        goal: body.goal || '带有文案、配音、音效、动效、音乐与字幕的完整成片',
         voiceMode: body.voiceMode || 'auto',
         defaultVoiceId: body.defaultVoiceId || 'auto',
       })
       matchAllScenesInScript(projectDir, { voiceId: body.defaultVoiceId || 'auto' })
       const reloaded = readScriptJson(projectDir)
-      writeFileSync(join(projectDir, 'index.html'), buildHtmlSceneTemplate(reloaded.data), 'utf8')
+      syncProjectCodeFromScript(projectDir, reloaded.data)
       return jsonResponse({
         ok: true,
         projectDir: created.projectDir,
@@ -215,20 +300,109 @@ export async function handleWorkbenchApiRequest(req) {
       })
     }
 
-    // 3. POST /api/video-workbench/script (save script.json & sync HTML template)
+    // 3. POST /api/video-workbench/script (save script.json & sync HTML/Remotion files)
     if (pathname === '/api/video-workbench/script' && req.method === 'POST') {
       const body = await parseRequestJson(req)
       if (!body.projectDir || !body.script) {
         return jsonResponse({ ok: false, error: 'projectDir and script are required' }, 400)
       }
       const saved = writeScriptJson(body.projectDir, body.script)
-      if ((saved.data.engine || 'html') === 'html' && body.regenerateHtml !== false) {
-        writeFileSync(join(saved.projectDir, 'index.html'), buildHtmlSceneTemplate(saved.data), 'utf8')
+      if (body.regenerateHtml !== false && body.regenerateCode !== false) {
+        syncProjectCodeFromScript(saved.projectDir, saved.data)
       }
       return jsonResponse({
         ok: true,
         projectDir: saved.projectDir,
         script: saved.data,
+      })
+    }
+
+    // 3b. POST /api/video-workbench/assets/import (import local folders/files by path)
+    if (pathname === '/api/video-workbench/assets/import' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir || !body.sources) {
+        return jsonResponse({ ok: false, error: 'projectDir and sources are required' }, 400)
+      }
+      const res = await importAssets({
+        projectDir: body.projectDir,
+        sources: body.sources,
+      })
+      const manifest = readAssets(body.projectDir)
+      return jsonResponse({
+        ok: true,
+        ...res,
+        manifest,
+        summary: summarizeAssets(manifest),
+      })
+    }
+
+    // 3c. POST /api/video-workbench/assets/upload (upload browser-picked files/folders)
+    if (pathname === '/api/video-workbench/assets/upload' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      const { projectDir, files } = body
+      if (!projectDir || !Array.isArray(files) || files.length === 0) {
+        return jsonResponse({ ok: false, error: 'projectDir and files[] are required' }, 400)
+      }
+      const savedPaths = []
+      for (const file of files) {
+        if (!file?.name || typeof file.dataBase64 !== 'string') continue
+        const cleanB64 = file.dataBase64.replace(/^data:[^;]+;base64,/, '')
+        const buf = Buffer.from(cleanB64, 'base64')
+        const savedPath = await saveUploadedAsset(projectDir, file.name, buf)
+        savedPaths.push(savedPath)
+      }
+      const res = await importAssets({
+        projectDir,
+        sources: savedPaths,
+      })
+      const manifest = readAssets(projectDir)
+      return jsonResponse({
+        ok: true,
+        uploadedCount: savedPaths.length,
+        ...res,
+        manifest,
+        summary: summarizeAssets(manifest),
+      })
+    }
+
+    // 3d. POST /api/video-workbench/assets/delete (remove an imported asset)
+    if (pathname === '/api/video-workbench/assets/delete' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir || !body.assetId) {
+        return jsonResponse({ ok: false, error: 'projectDir and assetId are required' }, 400)
+      }
+      removeAsset(body.projectDir, body.assetId)
+      const manifest = readAssets(body.projectDir)
+      return jsonResponse({
+        ok: true,
+        manifest,
+        summary: summarizeAssets(manifest),
+      })
+    }
+
+    // 3e. POST /api/video-workbench/plan (AI plan storyboard from assets + topic)
+    if (pathname === '/api/video-workbench/plan' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir) {
+        return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
+      }
+      const res = await planVideoFromAssets(body)
+      return jsonResponse({
+        ok: true,
+        ...res,
+      })
+    }
+
+    // 3f. POST /api/video-workbench/produce (one-click full pipeline: plan + TTS + SFX/BGM + lint + snapshot + MP4)
+    if (pathname === '/api/video-workbench/produce' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir) {
+        return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
+      }
+      const res = await produceFullVideo(body)
+      return jsonResponse({
+        ok: true,
+        ...res,
       })
     }
 
@@ -256,9 +430,7 @@ export async function handleWorkbenchApiRequest(req) {
         forceAuto: Boolean(body.forceAuto),
       })
       const reloaded = readScriptJson(body.projectDir)
-      if ((reloaded.data.engine || 'html') === 'html') {
-        writeFileSync(join(reloaded.projectDir, 'index.html'), buildHtmlSceneTemplate(reloaded.data), 'utf8')
-      }
+      syncProjectCodeFromScript(reloaded.projectDir, reloaded.data)
       return jsonResponse({
         ok: true,
         ...matchRes,
@@ -266,7 +438,7 @@ export async function handleWorkbenchApiRequest(req) {
       })
     }
 
-    // 6. POST /api/video-workbench/action (tts-scene, tts-all, lint, snapshot, render)
+    // 6. POST /api/video-workbench/action (tts-scene, tts-all, mix, lint, snapshot, render)
     if (pathname === '/api/video-workbench/action' && req.method === 'POST') {
       const body = await parseRequestJson(req)
       const { action, projectDir } = body
@@ -277,6 +449,12 @@ export async function handleWorkbenchApiRequest(req) {
       if (action === 'lint') {
         const result = await executeVideoLint({ projectDir, engine: body.engine })
         return jsonResponse({ ok: true, action, result })
+      }
+
+      if (action === 'mix') {
+        const { data } = readScriptJson(projectDir)
+        const result = await mixVideoAudio({ projectDir, script: data })
+        return jsonResponse({ ok: true, action, result, script: data })
       }
 
       if (action === 'tts-scene') {
@@ -295,12 +473,12 @@ export async function handleWorkbenchApiRequest(req) {
           outputPath: outWav,
           scriptPath: projectDir,
           sceneId: scene.id,
+          allowPlaceholder: Boolean(body.allowPlaceholder),
         })
         const updated = readScriptJson(projectDir)
-        if ((updated.data.engine || 'html') === 'html') {
-          writeFileSync(join(projectDir, 'index.html'), buildHtmlSceneTemplate(updated.data), 'utf8')
-        }
-        return jsonResponse({ ok: true, action, result, script: updated.data })
+        syncProjectCodeFromScript(projectDir, updated.data)
+        const mixResult = await mixVideoAudio({ projectDir, script: updated.data })
+        return jsonResponse({ ok: true, action, result, mixResult, script: updated.data })
       }
 
       if (action === 'tts-all') {
@@ -317,14 +495,14 @@ export async function handleWorkbenchApiRequest(req) {
             outputPath: outWav,
             scriptPath: projectDir,
             sceneId: scene.id,
+            allowPlaceholder: Boolean(body.allowPlaceholder),
           })
           results.push(res)
         }
         const updated = readScriptJson(projectDir)
-        if ((updated.data.engine || 'html') === 'html') {
-          writeFileSync(join(projectDir, 'index.html'), buildHtmlSceneTemplate(updated.data), 'utf8')
-        }
-        return jsonResponse({ ok: true, action, results, script: updated.data })
+        syncProjectCodeFromScript(projectDir, updated.data)
+        const mixResult = await mixVideoAudio({ projectDir, script: updated.data })
+        return jsonResponse({ ok: true, action, results, mixResult, script: updated.data })
       }
 
       if (action === 'snapshot') {
@@ -333,14 +511,19 @@ export async function handleWorkbenchApiRequest(req) {
       }
 
       if (action === 'render') {
-        const result = await executeVideoRender({ projectDir, engine: body.engine })
+        const result = await executeVideoRender({
+          projectDir,
+          engine: body.engine,
+          renderWidth: body.renderWidth,
+          renderHeight: body.renderHeight,
+        })
         return jsonResponse({ ok: true, action, result })
       }
 
       return jsonResponse({ ok: false, error: `Unknown action: ${action}` }, 400)
     }
 
-    // 7. GET /api/video-workbench/asset?projectDir=...&rel=... (stream HTML, WAV, PNG, MP4)
+    // 7. GET /api/video-workbench/asset?projectDir=...&rel=... (stream HTML, images, video, WAV, MP4 with Range support)
     if (pathname === '/api/video-workbench/asset' && req.method === 'GET') {
       const projectDir = url.searchParams.get('projectDir') || ''
       const rel = url.searchParams.get('rel') || 'index.html'
@@ -350,15 +533,21 @@ export async function handleWorkbenchApiRequest(req) {
         return new Response('Asset Not Found', { status: 404 })
       }
       const ext = extname(targetFile).toLowerCase()
+      if (ext === '.html' && url.searchParams.get('preview') === '1') {
+        const assetBase = `/api/video-workbench/asset?projectDir=${encodeURIComponent(absProject)}&rel=`
+        const html = readFileSync(targetFile, 'utf8')
+          .replace(/(src|data-media-src)="assets\//g, `$1="${assetBase}assets/`)
+          .replace(/fetch\('assets\//g, `fetch('${assetBase}assets/`)
+        return new Response(html, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-cache',
+          },
+        })
+      }
       const contentType = MIME_MAP[ext] || 'application/octet-stream'
-      const buf = readFileSync(targetFile)
-      return new Response(buf, {
-        status: 200,
-        headers: {
-          'Content-Type': contentType,
-          'Cache-Control': 'no-cache',
-        },
-      })
+      return serveFileWithRange(req, targetFile, contentType)
     }
 
     return jsonResponse({ ok: false, error: `Route not found: ${pathname}` }, 404)
@@ -370,7 +559,6 @@ export async function handleWorkbenchApiRequest(req) {
 export const name = 'dsh-web-video-workbench'
 
 export function apply(ctx) {
-  // Ensure demo project is initialized on startup
   try {
     listVideoProjects()
   } catch {}
@@ -382,6 +570,11 @@ export function apply(ctx) {
       { path: '/api/video-workbench/voices/preview', methods: ['GET'] },
       { path: '/api/video-workbench/projects', methods: ['POST'] },
       { path: '/api/video-workbench/script', methods: ['POST'] },
+      { path: '/api/video-workbench/assets/import', methods: ['POST'] },
+      { path: '/api/video-workbench/assets/upload', methods: ['POST'] },
+      { path: '/api/video-workbench/assets/delete', methods: ['POST'] },
+      { path: '/api/video-workbench/plan', methods: ['POST'] },
+      { path: '/api/video-workbench/produce', methods: ['POST'] },
       { path: '/api/video-workbench/voices/import', methods: ['POST'] },
       { path: '/api/video-workbench/voices/match', methods: ['POST'] },
       { path: '/api/video-workbench/action', methods: ['POST'] },

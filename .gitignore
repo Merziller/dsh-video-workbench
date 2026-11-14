@@ -26,6 +26,17 @@ frames-concat.txt
 .remotion/
 .tmp/
 tmp/
+.tmp-render/
+examples/*
+!examples/demo-html-project/
+!examples/demo-remotion-project/
+examples/*/assets/
+examples/*/uploads/
+examples/*/public/
+examples/*/audio/
+examples/*/assets.json
+examples/*/.tmp-render/
+examples/*/node_modules/
 
 # Local Imported Voice Packs & User Assets (keep only example template)
 voice-packs/catalog.json

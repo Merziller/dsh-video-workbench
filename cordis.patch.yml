@@ -1,5 +1,6 @@
 plugins:
   - path: ./packages/dsh-tool-local-tts/index.js
   - path: ./packages/dsh-tool-video-suite/index.js
+  - path: ./packages/dsh-tool-media/index.js
   - path: ./packages/dsh-preset-video/index.js
   - path: ./packages/dsh-web-video-workbench/lib/index.js

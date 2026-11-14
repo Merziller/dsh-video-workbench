@@ -127,12 +127,14 @@ def generate_fallback_speech_like_wav(output_path: str, text: str, emotion: str 
 
 
 def try_http_tts(endpoint: str, payload: dict, output_path: str, timeout: float = 15.0) -> bool:
-    """Attempt fast HTTP synthesis against running IndexTTS-2 or GPT-SoVITS server."""
+    """Attempt HTTP synthesis against the persistent IndexTTS-2 server (scripts/tts-server.py) or GPT-SoVITS api."""
     if not endpoint:
         return False
     url = endpoint.rstrip("/")
     req_data = json.dumps(payload).encode("utf-8")
-    for path_suffix in ("/tts", "/api/tts", "/"):
+    # Never route localhost TTS traffic through a system HTTP proxy
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    for path_suffix in ("/tts", "/api/tts"):
         try:
             req = urllib.request.Request(
                 url + path_suffix,
@@ -140,7 +142,7 @@ def try_http_tts(endpoint: str, payload: dict, output_path: str, timeout: float 
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with opener.open(req, timeout=timeout) as resp:
                 body = resp.read()
                 ctype = (resp.headers.get("Content-Type") or "").lower()
                 if "audio" in ctype or body[:4] == b"RIFF":
@@ -152,9 +154,12 @@ def try_http_tts(endpoint: str, payload: dict, output_path: str, timeout: float 
                     parsed = json.loads(body.decode("utf-8", errors="ignore"))
                     audio_path = parsed.get("output_path") or parsed.get("audio_path") or parsed.get("path")
                     if audio_path and os.path.exists(audio_path):
-                        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-                        shutil.copy2(audio_path, output_path)
+                        if os.path.abspath(audio_path) != os.path.abspath(output_path):
+                            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                            shutil.copy2(audio_path, output_path)
                         return True
+                    if parsed.get("ok") is False:
+                        sys.stderr.write(f"[tts-bridge] server error: {parsed.get('error')}\n")
         except Exception:
             continue
     return False
@@ -228,6 +233,9 @@ def main():
     parser.add_argument("--endpoint", default="")
     parser.add_argument("--engine-root", default="")
     parser.add_argument("--allow-direct-python", action="store_true")
+    parser.add_argument("--allow-placeholder", action="store_true")
+    parser.add_argument("--fallback-ref", default="")
+    parser.add_argument("--http-timeout", default="300")
     args = parser.parse_args()
 
     out_abs = os.path.abspath(args.output)
@@ -254,9 +262,10 @@ def main():
                 "emotion": args.emotion,
                 "spk_audio_prompt": staged_ref or args.ref_audio,
                 "emo_audio_prompt": staged_emo or args.emo_audio,
+                "fallback_ref": args.fallback_ref,
                 "output_path": out_abs,
             }
-            if try_http_tts(args.endpoint, payload, out_abs, timeout=8.0):
+            if try_http_tts(args.endpoint, payload, out_abs, timeout=float(args.http_timeout)):
                 print(json.dumps({
                     "ok": True,
                     "provider": f"{args.engine}-http",
@@ -280,10 +289,17 @@ def main():
             except Exception as exc:
                 sys.stderr.write(f"[tts-bridge] direct inference skipped: {exc}\n")
 
-        # 3. Synthesize high-precision acoustic cadence WAV so pipeline + ffprobe always succeed deterministically
-        res = generate_fallback_speech_like_wav(out_abs, args.text, args.emotion, args.voice_id)
-        res["note"] = "Local TTS HTTP server not listening; generated cadence-matched reference WAV."
-        print(json.dumps(res, ensure_ascii=False))
+        # 3. Placeholder tone WAV is ONLY allowed when explicitly requested (CI / offline pipeline tests).
+        #    It is NOT speech, so it must never silently end up in a real video.
+        if args.allow_placeholder:
+            res = generate_fallback_speech_like_wav(out_abs, args.text, args.emotion, args.voice_id)
+            res["note"] = "PLACEHOLDER tone (not real speech): local TTS engine unavailable."
+            res["placeholder"] = True
+            print(json.dumps(res, ensure_ascii=False))
+            return
+        raise RuntimeError(
+            "本地 TTS 引擎不可用：IndexTTS-2 常驻服务未就绪（请稍候模型加载完成或检查 INDEXTTS_ROOT/INDEXTTS_PYTHON）。"
+        )
     finally:
         for p in (staged_ref, staged_emo):
             if p and os.path.exists(p):

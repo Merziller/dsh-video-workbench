@@ -10,6 +10,7 @@ export function ensureWorkspaceLinks() {
     shared: 'packages/shared',
     'tool-local-tts': 'packages/dsh-tool-local-tts',
     'tool-video-suite': 'packages/dsh-tool-video-suite',
+    'tool-media': 'packages/dsh-tool-media',
     'preset-video': 'packages/dsh-preset-video',
     'web-video-workbench': 'packages/dsh-web-video-workbench',
     'video-app': 'packages/dsh-video-app',
@@ -39,6 +40,7 @@ export function setupDshVideoProfile() {
   const pluginPaths = [
     join(REPO_ROOT, 'packages', 'dsh-tool-local-tts', 'index.js').replace(/\\/g, '/'),
     join(REPO_ROOT, 'packages', 'dsh-tool-video-suite', 'index.js').replace(/\\/g, '/'),
+    join(REPO_ROOT, 'packages', 'dsh-tool-media', 'index.js').replace(/\\/g, '/'),
     join(REPO_ROOT, 'packages', 'dsh-preset-video', 'index.js').replace(/\\/g, '/'),
     join(REPO_ROOT, 'packages', 'dsh-web-video-workbench', 'lib', 'index.js').replace(/\\/g, '/'),
   ]
@@ -83,6 +85,7 @@ export function setupDshVideoProfile() {
           (line) =>
             !line.includes('dsh-tool-local-tts') &&
             !line.includes('dsh-tool-video-suite') &&
+            !line.includes('dsh-tool-media') &&
             !line.includes('dsh-preset-video') &&
             !line.includes('dsh-web-video-workbench'),
         )

@@ -16,12 +16,15 @@ import {
   matchAllScenesInScript,
   matchVoiceForScene,
 } from './voice-manager.js'
+import { ensureTtsServer, getTtsServerHealth } from './tts-server-manager.js'
 
 export {
   getVoiceCatalog,
   importVoicePack,
   matchAllScenesInScript,
   matchVoiceForScene,
+  ensureTtsServer,
+  getTtsServerHealth,
 }
 
 /**
@@ -93,6 +96,27 @@ export async function executeGenerateSpeech(args = {}) {
       : resolveEnvPath('INDEXTTS_ROOT', '')
 
   const bridgeScript = join(REPO_ROOT, 'scripts', 'tts-bridge.py')
+  const allowPlaceholder =
+    Boolean(args.allowPlaceholder) || String(process.env.TTS_ALLOW_PLACEHOLDER || '') === '1'
+
+  // Start / reuse the persistent IndexTTS-2 server so we get REAL speech (model loaded once)
+  if (engine !== 'gptvoice' && !allowPlaceholder) {
+    await ensureTtsServer()
+  } else if (engine !== 'gptvoice') {
+    try {
+      const h = await getTtsServerHealth()
+      if (!h.ready) await ensureTtsServer({ waitMs: 5_000 }).catch(() => {})
+    } catch {}
+  }
+
+  // IndexTTS-2 zero-shot needs a WAV reference; `.pt` speaker tensors fall back to DEFAULT_REF_AUDIO
+  let refAudio = selectedVoice.resolvedRefPath || ''
+  const fallbackRef = resolveEnvPath('DEFAULT_REF_AUDIO', '')
+  if (refAudio.toLowerCase().endsWith('.pt')) {
+    const siblingWav = refAudio.replace(/\.pt$/i, '.wav')
+    refAudio = existsSync(siblingWav) ? siblingWav : fallbackRef || refAudio
+  }
+
   const bridgeArgs = [
     bridgeScript,
     '--engine', engine,
@@ -100,19 +124,27 @@ export async function executeGenerateSpeech(args = {}) {
     '--output', absOutputPath,
     '--emotion', emotion,
     '--voice-id', selectedVoice.id,
-    '--ref-audio', selectedVoice.resolvedRefPath || '',
+    '--ref-audio', refAudio,
     '--emo-audio', matched.emotionAudio || '',
     '--prompt-text', selectedVoice.promptText || '',
     '--endpoint', endpoint,
     '--engine-root', engineRoot,
+    '--fallback-ref', fallbackRef || '',
   ]
   if (allowDirectPython) {
     bridgeArgs.push('--allow-direct-python')
   }
+  if (allowPlaceholder) {
+    bridgeArgs.push('--allow-placeholder')
+  }
 
-  const synthResult = await runCommandRedirected(pythonBin, bridgeArgs, { timeoutMs: 120_000 })
-  if (synthResult.code !== 0 && !existsSync(absOutputPath)) {
-    throw new Error(`TTS synthesis failed: ${synthResult.stderr || synthResult.stdout}`)
+  const synthResult = await runCommandRedirected(pythonBin, bridgeArgs, { timeoutMs: 420_000 })
+  if (synthResult.code !== 0 || !existsSync(absOutputPath)) {
+    let msg = synthResult.stderr || synthResult.stdout
+    try {
+      msg = JSON.parse(synthResult.stdout.trim().split(/\r?\n/).pop()).error || msg
+    } catch {}
+    throw new Error(`TTS synthesis failed: ${msg}`)
   }
 
   let providerInfo = {}
@@ -138,6 +170,17 @@ export async function executeGenerateSpeech(args = {}) {
           (!sceneId && scene.audioFile && resolve(projectDir, scene.audioFile) === absOutputPath)
         if (!isTarget) return scene
         updatedAny = true
+        // Scene length = lead-in + MEASURED voice duration + tail (never guessed)
+        const leadSec = Number.isFinite(Number(scene.voiceLeadSec)) ? Number(scene.voiceLeadSec) : 0.35
+        const tailSec = Number.isFinite(Number(scene.tailSec)) ? Number(scene.tailSec) : 0.65
+        const sceneDurationSec = Number((leadSec + probe.durationSec + tailSec).toFixed(4))
+        const subs = buildSentenceSubtitles(text, probe.durationSec, safeFps).map((s) => ({
+          ...s,
+          startSec: Number((s.startSec + leadSec).toFixed(3)),
+          endSec: Number((s.endSec + leadSec).toFixed(3)),
+          startFrame: Math.floor((s.startSec + leadSec) * safeFps),
+          endFrame: Math.ceil((s.endSec + leadSec) * safeFps),
+        }))
         return {
           ...scene,
           narration: String(text).trim(),
@@ -146,9 +189,14 @@ export async function executeGenerateSpeech(args = {}) {
           voiceName: selectedVoice.name,
           voiceMatchReason: matched.reason,
           audioFile: relAudio,
-          durationSec: probe.durationSec,
-          durationInFrames: probe.durationInFrames,
-          subtitles: buildSentenceSubtitles(text, probe.durationSec, safeFps),
+          voiceLeadSec: leadSec,
+          tailSec,
+          voiceDurationSec: probe.durationSec,
+          voiceProvider: providerInfo.provider || engine,
+          voicePlaceholder: Boolean(providerInfo.placeholder),
+          durationSec: sceneDurationSec,
+          durationInFrames: Math.max(1, Math.ceil(sceneDurationSec * safeFps)),
+          subtitles: subs,
         }
       })
       if (updatedAny) {
@@ -162,6 +210,7 @@ export async function executeGenerateSpeech(args = {}) {
     ok: true,
     engine,
     provider: providerInfo.provider || engine,
+    placeholder: Boolean(providerInfo.placeholder),
     outputPath: absOutputPath,
     durationSec: probe.durationSec,
     durationInFrames: probe.durationInFrames,

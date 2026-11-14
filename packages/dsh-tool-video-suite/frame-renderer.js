@@ -1,0 +1,434 @@
+/**
+ * Real Frame-by-Frame Dual-Engine Video Renderer
+ * 1. HTML/GSAP/Canvas Engine: Serves project over localhost HTTP (Range-enabled for <video>)
+ *    + controls headless Chromium via Node 24 native WebSocket CDP to seek & capture EVERY frame.
+ * 2. Remotion Engine: Bundles `src/index.ts` & renders via local `@remotion/bundler` + `@remotion/renderer`.
+ */
+import { createServer } from 'node:http'
+import { spawn } from 'node:child_process'
+import {
+  closeSync,
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  writeSync,
+} from 'node:fs'
+import { extname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import {
+  REPO_ROOT,
+  resolveBinaries,
+  resolveEnvPath,
+  runCommandRedirected,
+} from '@dsh-video/shared'
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+}
+
+function startStaticProjectServer(projectDir) {
+  const absRoot = resolve(projectDir)
+  const server = createServer((req, res) => {
+    const url = new URL(req.url || '/', 'http://127.0.0.1')
+    const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html'
+    const file = resolve(absRoot, rel)
+    if (!file.startsWith(absRoot) || !existsSync(file) || statSync(file).isDirectory()) {
+      res.statusCode = 404
+      res.end('Not found')
+      return
+    }
+    const st = statSync(file)
+    const ext = extname(file).toLowerCase()
+    const ctype = MIME[ext] || 'application/octet-stream'
+    const range = req.headers.range
+    if (range) {
+      const m = /bytes=(\d+)-(\d*)/.exec(range)
+      if (m) {
+        const start = Number(m[1])
+        const end = m[2] ? Math.min(st.size - 1, Number(m[2])) : st.size - 1
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${st.size}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': end - start + 1,
+          'Content-Type': ctype,
+        })
+        createReadStream(file, { start, end }).pipe(res)
+        return
+      }
+    }
+    res.writeHead(200, {
+      'Content-Length': st.size,
+      'Content-Type': ctype,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-store',
+    })
+    createReadStream(file).pipe(res)
+  })
+  return new Promise((resolvePromise) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address()
+      resolvePromise({ server, port: addr.port })
+    })
+  })
+}
+
+class CdpClient {
+  constructor(wsUrl) {
+    this.ws = new WebSocket(wsUrl)
+    this.nextId = 1
+    this.pending = new Map()
+    this.ready = new Promise((res, rej) => {
+      this.ws.addEventListener('open', res, { once: true })
+      this.ws.addEventListener('error', (e) => rej(new Error(`CDP WebSocket error: ${e.message || 'failed'}`)), { once: true })
+    })
+    this.ws.addEventListener('message', (ev) => {
+      try {
+        const msg = JSON.parse(String(ev.data))
+        if (msg.id && this.pending.has(msg.id)) {
+          const { resolve: r, reject: j } = this.pending.get(msg.id)
+          this.pending.delete(msg.id)
+          if (msg.error) j(new Error(msg.error.message || 'CDP error'))
+          else r(msg.result)
+        }
+      } catch {}
+    })
+  }
+  async send(method, params = {}) {
+    await this.ready
+    const id = this.nextId++
+    return new Promise((res, rej) => {
+      this.pending.set(id, { resolve: res, reject: rej })
+      this.ws.send(JSON.stringify({ id, method, params }))
+    })
+  }
+  close() {
+    try { this.ws.close() } catch {}
+  }
+}
+
+async function openCdpSession(browserBin, width, height) {
+  const tmpBase = join(REPO_ROOT, '.tmp')
+  mkdirSync(tmpBase, { recursive: true })
+  const userDataDir = join(tmpBase, `cdp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`)
+  mkdirSync(userDataDir, { recursive: true })
+
+  const child = spawn(
+    browserBin,
+    [
+      '--headless=new',
+      '--remote-debugging-port=0',
+      `--user-data-dir=${userDataDir}`,
+      '--disable-gpu',
+      '--no-sandbox',
+      '--hide-scrollbars',
+      '--mute-audio',
+      '--autoplay-policy=no-user-gesture-required',
+      '--disable-dev-shm-usage',
+      `--window-size=${width},${height}`,
+      'about:blank',
+    ],
+    { stdio: 'ignore', windowsHide: true },
+  )
+
+  const activePortFile = join(userDataDir, 'DevToolsActivePort')
+  const deadline = Date.now() + 20_000
+  let port = ''
+  while (Date.now() < deadline) {
+    if (existsSync(activePortFile)) {
+      const lines = readFileSync(activePortFile, 'utf8').trim().split(/\r?\n/)
+      if (lines[0] && /^\d+$/.test(lines[0])) {
+        port = lines[0]
+        break
+      }
+    }
+    await new Promise((r) => setTimeout(r, 120))
+  }
+  if (!port) {
+    try { child.kill() } catch {}
+    throw new Error('Chromium DevToolsActivePort timed out')
+  }
+
+  // Wait for page target
+  let wsUrl = ''
+  const targetDeadline = Date.now() + 10_000
+  while (Date.now() < targetDeadline) {
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
+      const page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl)
+      if (page) {
+        wsUrl = page.webSocketDebuggerUrl
+        break
+      }
+    } catch {}
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  if (!wsUrl) {
+    try { child.kill() } catch {}
+    throw new Error('No Chromium page target found')
+  }
+
+  const cdp = new CdpClient(wsUrl)
+  await cdp.send('Page.enable')
+  await cdp.send('Runtime.enable')
+  await cdp.send('Emulation.setDeviceMetricsOverride', {
+    width,
+    height,
+    deviceScaleFactor: 1,
+    mobile: false,
+  })
+
+  return {
+    cdp,
+    cleanup() {
+      cdp.close()
+      try { child.kill() } catch {}
+      setTimeout(() => {
+        try { rmSync(userDataDir, { recursive: true, force: true }) } catch {}
+      }, 300)
+    },
+  }
+}
+
+async function waitForPageReady(cdp, url) {
+  await cdp.send('Page.navigate', { url })
+  for (let i = 0; i < 120; i++) {
+    const r = await cdp.send('Runtime.evaluate', {
+      expression: 'document.readyState',
+      returnByValue: true,
+    })
+    if (r?.result?.value === 'complete') break
+    await new Promise((res) => setTimeout(res, 100))
+  }
+  // Wait for fonts, images, and video metadata
+  await cdp.send('Runtime.evaluate', {
+    expression: `(async () => {
+      try { await document.fonts.ready; } catch {}
+      const imgs = Array.from(document.querySelectorAll('img'));
+      await Promise.all(imgs.map(img => img.complete ? null : new Promise(r => { img.onload = r; img.onerror = r; setTimeout(r, 2000); })));
+      const vids = Array.from(document.querySelectorAll('video'));
+      await Promise.all(vids.map(v => v.readyState >= 1 ? null : new Promise(r => { v.onloadedmetadata = r; v.onerror = r; setTimeout(r, 2500); })));
+      return true;
+    })()`,
+    awaitPromise: true,
+    returnByValue: true,
+  })
+}
+
+/**
+ * Capture N specific frame numbers to PNG files in a single warm Chromium CDP session.
+ */
+export async function captureHtmlSnapshots({ projectDir, browserBin, frames, outDir, width = 1280, height = 720 }) {
+  mkdirSync(outDir, { recursive: true })
+  const { server, port } = await startStaticProjectServer(projectDir)
+  const session = await openCdpSession(browserBin, width, height)
+  const files = []
+  try {
+    await waitForPageReady(session.cdp, `http://127.0.0.1:${port}/index.html?render=1`)
+    for (let i = 0; i < frames.length; i++) {
+      const f = frames[i]
+      await session.cdp.send('Runtime.evaluate', {
+        expression: `Promise.resolve(window.__seekToFrame ? window.__seekToFrame(${f}) : ${f}).then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))`,
+        awaitPromise: true,
+      })
+      const shot = await session.cdp.send('Page.captureScreenshot', { format: 'png' })
+      const pngPath = join(outDir, `shot_${String(i).padStart(2, '0')}.png`)
+      const fd = openSync(pngPath, 'w')
+      writeSync(fd, Buffer.from(shot.data, 'base64'))
+      closeSync(fd)
+      files.push(pngPath)
+    }
+    return files
+  } finally {
+    session.cleanup()
+    try { server.close() } catch {}
+  }
+}
+
+/**
+ * Capture EVERY frame (0..totalFrames-1) of HTML5 animation via Chromium CDP
+ * and encode directly with master audio into H.264 yuv420p MP4.
+ */
+export async function renderHtmlVideoToMp4({
+  projectDir,
+  browserBin,
+  totalFrames,
+  fps = 30,
+  width = 1920,
+  height = 1080,
+  audioPath,
+  outMp4Path,
+  snapshotFrames = [],
+  snapshotDir = '',
+}) {
+  const tmpBase = join(REPO_ROOT, '.tmp')
+  mkdirSync(tmpBase, { recursive: true })
+  const mjpegPath = join(tmpBase, `frames-${Date.now()}.mjpeg`)
+  const mjpegFd = openSync(mjpegPath, 'w')
+  const snapMap = new Map(snapshotFrames.map((f, idx) => [f, idx]))
+  if (snapshotDir) mkdirSync(snapshotDir, { recursive: true })
+
+  const { server, port } = await startStaticProjectServer(projectDir)
+  const session = await openCdpSession(browserBin, width, height)
+
+  try {
+    await waitForPageReady(session.cdp, `http://127.0.0.1:${port}/index.html?render=1`)
+    for (let f = 0; f < totalFrames; f++) {
+      await session.cdp.send('Runtime.evaluate', {
+        expression: `Promise.resolve(window.__seekToFrame ? window.__seekToFrame(${f}) : ${f}).then(() => new Promise(r => requestAnimationFrame(r)))`,
+        awaitPromise: true,
+      })
+      const shot = await session.cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 92 })
+      const jpg = Buffer.from(shot.data, 'base64')
+      writeSync(mjpegFd, jpg)
+
+      if (snapshotDir && snapMap.has(f)) {
+        const idx = snapMap.get(f)
+        const sPath = join(snapshotDir, `shot_${String(idx).padStart(2, '0')}.png`)
+        const pShot = await session.cdp.send('Page.captureScreenshot', { format: 'png' })
+        const pFd = openSync(sPath, 'w')
+        writeSync(pFd, Buffer.from(pShot.data, 'base64'))
+        closeSync(pFd)
+      }
+    }
+  } finally {
+    try { closeSync(mjpegFd) } catch {}
+    session.cleanup()
+    try { server.close() } catch {}
+  }
+
+  const { ffmpeg } = resolveBinaries()
+  const totalSec = Number((totalFrames / fps).toFixed(3))
+  const ffArgs = ['-y', '-f', 'mjpeg', '-framerate', String(fps), '-i', mjpegPath]
+  if (audioPath && existsSync(audioPath)) {
+    ffArgs.push('-i', audioPath, '-map', '0:v:0', '-map', '1:a:0')
+  } else {
+    ffArgs.push('-f', 'lavfi', '-t', String(totalSec), '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000', '-map', '0:v:0', '-map', '1:a:0')
+  }
+  ffArgs.push(
+    '-c:v', 'libx264',
+    '-preset', 'medium',
+    '-crf', '19',
+    '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac',
+    '-b:a', '192k',
+    '-t', String(totalSec),
+    '-movflags', '+faststart',
+    outMp4Path,
+  )
+  try {
+    const enc = await runCommandRedirected(ffmpeg, ffArgs, { timeoutMs: 300_000 })
+    if (enc.code !== 0 || !existsSync(outMp4Path)) {
+      throw new Error(`FFmpeg encode failed: ${enc.stderr}`)
+    }
+  } finally {
+    try { unlinkSync(mjpegPath) } catch {}
+  }
+
+  return { ok: true, framesRendered: totalFrames, outputPath: outMp4Path }
+}
+
+function findRemotionBrowser(templateRoot) {
+  const remotionCache = join(templateRoot, 'node_modules', '.remotion', 'chrome-headless-shell')
+  if (existsSync(remotionCache)) {
+    const win64 = join(remotionCache, 'win64')
+    if (existsSync(win64)) {
+      for (const sub of readdirSync(win64)) {
+        const exe = join(win64, sub, 'chrome-headless-shell.exe')
+        if (existsSync(exe)) return exe
+      }
+    }
+  }
+  return null
+}
+
+function ensureRemotionNodeModules(projectDir, templateRoot) {
+  const projNm = join(projectDir, 'node_modules')
+  const tplNm = join(templateRoot, 'node_modules')
+  if (!existsSync(projNm) && existsSync(tplNm)) {
+    try {
+      symlinkSync(tplNm, projNm, 'junction')
+    } catch {}
+  }
+}
+
+export async function renderRemotionProject({ projectDir, outMp4Path, snapshotFrames = [], snapshotDir = '', onlySnapshots = false }) {
+  const tplRoot = resolveEnvPath('REMOTION_TEMPLATE_ROOT', '')
+  if (!tplRoot || !existsSync(join(tplRoot, 'node_modules', '@remotion', 'renderer'))) {
+    return { ok: false, reason: 'REMOTION_TEMPLATE_ROOT not configured or missing @remotion/renderer' }
+  }
+
+  const absProject = resolve(projectDir)
+  ensureRemotionNodeModules(absProject, tplRoot)
+
+  const bundlerMod = await import(pathToFileURL(join(tplRoot, 'node_modules', '@remotion', 'bundler', 'dist', 'index.js')).href)
+  const rendererMod = await import(pathToFileURL(join(tplRoot, 'node_modules', '@remotion', 'renderer', 'dist', 'index.js')).href)
+
+  const entryPoint = existsSync(join(absProject, 'src', 'index.ts'))
+    ? join(absProject, 'src', 'index.ts')
+    : join(absProject, 'src', 'Root.tsx')
+  const publicDir = join(absProject, 'public')
+  const browserExecutable = findRemotionBrowser(tplRoot) || undefined
+
+  const serveUrl = await bundlerMod.bundle({
+    entryPoint,
+    publicDir: existsSync(publicDir) ? publicDir : undefined,
+    onProgress: () => {},
+  })
+
+  const composition = await rendererMod.selectComposition({
+    serveUrl,
+    id: 'MainVideo',
+    browserExecutable,
+  })
+
+  if (snapshotDir && snapshotFrames.length > 0) {
+    mkdirSync(snapshotDir, { recursive: true })
+    for (let i = 0; i < snapshotFrames.length; i++) {
+      await rendererMod.renderStill({
+        composition,
+        serveUrl,
+        frame: snapshotFrames[i],
+        output: join(snapshotDir, `shot_${String(i).padStart(2, '0')}.png`),
+        imageFormat: 'png',
+        browserExecutable,
+      })
+    }
+  }
+
+  if (!onlySnapshots && outMp4Path) {
+    await rendererMod.renderMedia({
+      composition,
+      serveUrl,
+      codec: 'h264',
+      pixelFormat: 'yuv420p',
+      audioCodec: 'aac',
+      crf: 19,
+      outputLocation: outMp4Path,
+      browserExecutable,
+    })
+  }
+
+  return { ok: true, framesRendered: composition.durationInFrames, outputPath: outMp4Path }
+}

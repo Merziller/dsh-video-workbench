@@ -1,11 +1,11 @@
 # 🎬 DSH Video Workbench (`dsh-video-workbench`)
 
-> **面向 DeepSeek Harness (DSH) 的双引擎（HTML/GSAP & Remotion）多模态视频工作台插件套件**  
-> **Dual-Engine (HTML/GSAP & Remotion) Video Workbench + Custom Voice Pack & AI Voice Matching for DeepSeek Harness**
+> **面向 DeepSeek Harness (DSH) 的双引擎（HTML5/Canvas 动效 & Remotion）AI 全链路视频工作台插件套件**  
+> **Dual-Engine (HTML5 & Remotion) Multimodal AI Video Production Studio for DeepSeek Harness — Import Assets, Generate Copy, SFX, VFX, Motion, BGM & Real Local Voiceover**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Platform: Windows 11](https://img.shields.io/badge/Platform-Windows%2011-0078D6.svg)](#)
-[![Engine: HTML/GSAP & Remotion](https://img.shields.io/badge/Engine-HTML%2FGSAP%20%7C%20Remotion-38bdf8.svg)](#)
+[![Engine: HTML5 & Remotion](https://img.shields.io/badge/Engine-HTML5%20%7C%20Remotion-38bdf8.svg)](#)
 [![TTS: IndexTTS-2 & GPT-SoVITS](https://img.shields.io/badge/TTS-IndexTTS--2%20%7C%20GPT--SoVITS-10b981.svg)](#)
 
 ---
@@ -13,36 +13,35 @@
 ## 📖 目录 / Table of Contents
 - [一、核心特性 (Features)](#-一核心特性-features)
 - [二、系统架构图 (Architecture)](#-二系统架构图-architecture)
-- [三、开源复用说明 (Open-Source Ecosystem & Reuse)](#-三开源复用说明-open-source-ecosystem--reuse)
+- [三、新手快速上手：导入素材并一键生成完整视频](#-三新手快速上手导入素材并一键生成完整视频)
 - [四、Windows 11 安装与启动指南 (Quick Start)](#-四windows-11-安装与启动指南-quick-start)
-- [五、本地 TTS 与自定义音色包指南 (Voice Pack & AI Matching)](#-五本地-tts-与自定义音色包指南-voice-pack--ai-matching)
-- [六、通过 GitHub Desktop 一键发布至 GitHub](#-六通过-github-desktop-一键发布至-github)
+- [五、本地 TTS 与自定义音色包指南](#-五本地-tts-与自定义音色包指南)
+- [六、通过 GitHub Desktop 发布与更新](#-六通过-github-desktop-发布与更新)
 - [七、English Documentation](#-七english-documentation)
 
 ---
 
 ## ✨ 一、核心特性 (Features)
 
-1. **「独立插件仓库 + 软链接/配置挂载」开源架构**：
-   - 无需打包庞大的 DSH 官方源码，全部工具插件、Agent Preset、三栏前端工作台与 Bundle 配置均位于独立的 `dsh-video-workbench/` 仓库中。
-   - **零硬编码路径与密钥**：所有本地路径（`FFMPEG_PATH`、`FFPROBE_PATH`、`INDEXTTS_ROOT`、`GPTVOICE_ROOT` 等）统一由 `.env` 读取，附带脱敏的 [`.env.example`](./.env.example)。
-2. **自定义音色包导入 + AI 智能匹配 + 用户指定音色 (`@dsh-video/tool-local-tts`)**：
-   - **音色包导入 (`import_voice_pack`)**：支持导入单个 `.wav` / `.mp3` / `.flac` / `.pt` 音色文件、文件夹或包含 `manifest.json` / `voices.json` 的 `.zip` 音色包。
-   - **AI 自由匹配 (`voiceId: "auto"`)**：根据每个分镜的台词内容、情绪（`平静`/`高兴`/`伤心`/`生气`/`激昂`）、角色定位（`narrator`/`host`/`storyteller`）及受众目标，从音色库自动计算匹配度并选择最契合的声线。
-   - **用户手动指定 (`voiceId: "<id>"`)**：支持在工作台下拉框或通过对话指令为全局或单幕锁定特定音色。
-   - **帧级精确测长 (`generate_speech`)**：优先对接本地 `IndexTTS-2`（兼容 `GPTvoice-tts / GPT-SoVITS`），生成 WAV 后自动调用 `ffprobe` 实测 `durationSec` 并计算 `durationInFrames = Math.ceil(durationSec * fps)` 回填至 `script.json`，**严禁瞎猜时长**。
-3. **HTML/GSAP 与 Remotion 双引擎工程工具包 (`@dsh-video/tool-video-suite`)**：
-   - **`video_lint`**：HTML 模式校验 `<template>` 标签分镜隔离、DOM/SVG `<defs>` ID 冲突、WCAG AA 对比度（`>= 4.5:1`）与 Windows 11 字体栈；Remotion 模式校验 `useCurrentFrame()` 规范并拦截违规 CSS `transition/@keyframes`。
-   - **`video_snapshot`**：自动均匀抽取 9 帧并拼接生成 **3×3 九宫格视觉自检图 (`snapshot-3x3.png`)**，供主模型调用 `read_image` 执行多模态视觉自检。
-   - **`video_render`**：将双引擎画面与各分镜 WAV 配音通过 `ffmpeg` 混音编码导出标准 H.264 (`yuv420p`) MP4。
-4. **「视频制作模式」Agent Preset (`@dsh-video/preset-video`)**：
-   - 内置**三阶段确认流**（阶段 1：脚本分镜与音色匹配 → 阶段 2：配音测长 + 动画代码 + 3×3 九宫格多模态自检 → 阶段 3：导出 MP4）。
-   - 内置 **Windows 11 避坑规则**：新建项目自动生成 `.npmrc`（`cache=./.npm-cache`）防止沙箱 `EPERM`；CSS 优先使用本地 `Microsoft YaHei` 与 `Consolas`。
-5. **顶栏胶囊一键切换与三栏式视频工作台 (`@dsh-video/web-video-workbench`)**：
-   - 顶栏居中注入 `[ 💬 DeepSeek Harness | 🎬 HTML 视频 ]` 胶囊切换器，共享当前会话 `sessionId` 与实时事件流。
-   - **左栏**：视频工程列表 + 新建项目 + 音色包管理（导入/全局与单幕音色配置）。
-   - **中栏**：右上角 `[ 📝 脚本 | 🖥️ 预览 | 🎞️ MP4 ]` 三视图切换，底部配备**字幕轨、分镜轨、音频波形轨**三轨联动时间轴。
-   - **右栏**：Agent 协同栏与自定义工具折叠卡片（`tool.call.toolview`）。
+1. **用户素材导入与智能目录扫描 (`@dsh-video/tool-media`)**：
+   - 工作台左栏支持 **📂 选择本地文件夹**、**📎 选择多素材文件上传** 以及 **绝对路径批量扫描导入**（图片 `.png/.jpg/.webp`、视频 `.mp4/.mov/.webm`、背景音乐/音效 `.wav/.mp3/.flac` 与文本文档 `.txt/.md`）。
+   - 自动调用 `ffprobe` 检测图片分辨率与视频/音频精确时长，并生成缩略图供前端实时预览。
+2. **AI 导演一站式成片策划 (`plan_video_from_assets` / `produce_video`)**：
+   - 结合用户主题、风格（`科技产品风` / `电影感宣传片` / `人文纪录片` / `高燃短视频` / `温暖治愈风`）与导入素材，自动编排多幕分镜脚本、旁白文案、视觉排版、Ken Burns 推拉摇移运镜、转场特效、粒子/扫光视觉特效 (VFX)、转场音效 (SFX)、BGM 配乐策略与同步字幕。
+   - 同时自动生成可运行、可二次精修的 **HTML5/Canvas** (`index.html`) 与 **Remotion 4.x TSX** (`src/Root.tsx` + `src/VideoComposition.tsx`) 双引擎工程源码。
+3. **音效与配乐合成 + 自动闪避多轨混音 (`generate_sfx_bgm`)**：
+   - 支持用户自定义导入 BGM/SFX，也内置 48kHz 立体声无损 WAV 合成器（`whoosh`/`impact`/`pop`/`chime`/`riser` 音效 + 多种曲风和弦配乐）。
+   - 渲染阶段自动调用 `ffmpeg` `sidechaincompress` 侧链闪避混音：人声旁白出现时 BGM 自动压低让位、停顿期平滑回升，并叠加分镜音效输出 `master-audio.wav`。
+4. **常驻本机 IndexTTS-2 真人配音 + 205 个音色包 (`@dsh-video/tool-local-tts`)**：
+   - 通过 `scripts/tts-server.py` 将 6GB `IndexTTS-2` 模型常驻内存一次加载，逐句生成真实人声 WAV（支持情感参考与 GPT-SoVITS 切换），并严格通过 `ffprobe` 实测时长回填帧数（`durationInFrames = Math.ceil(durationSec * fps)`）。
+5. **真·逐帧双引擎高清视频渲染 (`@dsh-video/tool-video-suite`)**：
+   - **HTML5 引擎**：无头 Chromium 经 WebSocket CDP 逐帧驱动 `window.__seekToFrame(frame)` 与 `<video>` 帧同步抓取全部帧序列，结合 `master-audio.wav` 编码输出 H.264 (`yuv420p`) MP4。
+   - **Remotion 引擎**：直接复用本地 `@remotion/bundler` 与 `@remotion/renderer` 逐帧渲染 React/TSX 组件序列与 `<Audio>`，同步生成 `snapshot-3x3.png` 九宫格视觉自检图。
+6. **三栏一体化工作台 UI + 开源零硬编码**：
+   - **左栏**：视频工程管理、用户素材库（文件夹/文件导入与缩略图预览）、205 音色包搜索/试听/自定义导入。
+   - **中栏**：顶栏快速切换 `HTML5` / `REMOTION` 引擎与 `IndexTTS-2` 常驻状态，下方配有 **「✨ AI 一键制片导演台」**、分镜脚本/素材/特效细粒度编辑、带混音同步播放的 16:9 舞台预览及字幕/分镜/波形三轨时间轴。
+   - **右栏**：DeepSeek Harness Agent 协同对话与工具执行卡片。
+   - **零硬编码路径与密钥**：所有本地路径统一由 `.env` 管理，附带脱敏 [`.env.example`](./.env.example)。
 
 ---
 
@@ -51,43 +50,44 @@
 ```mermaid
 flowchart TB
   subgraph UI["前端层: @dsh-video/web-video-workbench"]
-    TopBar["顶栏胶囊切换器: [ DeepSeek Harness | HTML 视频 ]"]
-    LeftCol["左栏: 项目列表 + 新建项目 + 🎙️ 音色包导入/管理"]
-    CenterCol["中栏: [ 脚本 | 预览 | MP4 ] + 字幕/分镜/波形三轨时间轴"]
-    RightCol["右栏: 原生 Agent 对话流协同 + 工具执行卡片"]
+    LeftCol["左栏: 工程列表 + 🗂️ 用户素材库(选文件夹/文件) + 🎙️ 205 音色库"]
+    Director["中栏顶部: ✨ AI 一键全自动制片导演台 (主题/风格/引擎/一键成片)"]
+    CenterCol["中栏视图: [ 📝 脚本与特效 | 🖥️ 16:9 同步音频预览 | 🎞️ MP4 导出 ] + 三轨时间轴"]
+    RightCol["右栏: DeepSeek Harness Agent 协同 + 快捷指令 + tool.call.toolview"]
   end
 
   subgraph Core["Cordis 插件层 (DSH Host)"]
+    Media["@dsh-video/tool-media (import_assets / generate_sfx_bgm / plan_video_from_assets / produce_video)"]
     Preset["@dsh-video/preset-video (视频制作模式 Preset)"]
-    TTS["@dsh-video/tool-local-tts (list_voices / import_voice_pack / match_scene_voices / generate_speech)"]
+    TTS["@dsh-video/tool-local-tts (list_voices / match_scene_voices / generate_speech)"]
     Suite["@dsh-video/tool-video-suite (video_lint / video_snapshot / video_render)"]
   end
 
-  subgraph Engines["本地引擎与媒体层 (由 .env 配置驱动)"]
-    IndexTTS["IndexTTS-2 / GPTvoice-tts + 本地音色库 (voice-packs/)"]
-    FFmpeg["FFmpeg / ffprobe (文件重定向防沙箱 EPERM)"]
-    Renderers["Playwright Headless Chromium (HTML/GSAP) & @remotion/renderer"]
+  subgraph Engines["本地媒体与 AI 引擎 (由 .env 驱动)"]
+    IndexTTS["常驻 IndexTTS-2 HTTP 服务 (tts-server.py) & GPT-SoVITS"]
+    FFmpeg["FFmpeg / ffprobe (sidechain 混音闪避 + H.264 编码 + 文件重定向防 EPERM)"]
+    Renderers["Chromium WebSocket CDP 逐帧渲染 (HTML5) & @remotion/renderer (TSX)"]
   end
 
-  TopBar --> LeftCol & CenterCol & RightCol
-  LeftCol & CenterCol & RightCol <-->|"/api/video-workbench/*"| Core
-  Preset --> TTS & Suite
+  LeftCol & Director & CenterCol & RightCol <-->|"/api/video-workbench/*"| Core
+  Preset --> Media & TTS & Suite
+  Media --> TTS & Suite & FFmpeg
   TTS --> IndexTTS & FFmpeg
   Suite --> Renderers & FFmpeg
 ```
 
 ---
 
-## 🧩 三、开源复用说明 (Open-Source Ecosystem & Reuse)
+## 🎯 三、新手快速上手：导入素材并一键生成完整视频
 
-本项目遵循“不重复造轮子”原则，直接吸收并复用了以下 MIT 开源组件与成熟模块架构：
-
-| 阶段 / 模块 | 复用的开源项目 / 本地成熟模块 | 复用内容说明 |
-| :--- | :--- | :--- |
-| **Stage 1 & 4 (DSH 前后端挂载与 Slot 扩展)** | `dsh-workbench` (MIT) & `dsh-ppt` (`STARDUSTLC666/dsh-ppt`, MIT) | 复用 `connection.fetch.register` 后端路由、`webui.addStaticModule`、`window.__ModuleLoader__`、`PanelBoundary` 及 `shell.overlay` / `main` / `tool.call.toolview` 插槽机制 |
-| **Stage 2 (`ffprobe` 测长与 `ffmpeg` 混流)** | `dsh-video-studio` (`litao36253/dsh-video-studio`, MIT) | 复用 `resolveBinaries()` 与文件描述符重定向 `spawn` (`stdio: ['ignore', outFd, errFd]`)，彻底规避 Windows 沙箱管道 `EPERM` |
-| **Stage 2 (IndexTTS-2 & GPT-SoVITS 合成)** | `_r27_voice/voice/workers` & `mociyuan-promo-video/scripts` | 复用 `cy_app.tts.infer` 调用约定、ASCII 临时路径转存（防中文路径乱码）以及 `voices.json` 音色清单解析协议 |
-| **Stage 2 & 4 (双引擎渲染与预览)** | `@remotion/player` / `@remotion/renderer` / `gsap` / `playwright` | 复用 Remotion 4.x 组件规范、GSAP 主时间轴跳帧桥接 (`window.__seekToFrame`) 与 Chromium 无头截帧 + FFmpeg `tile=3x3` 九宫格拼图 |
+1. 启动服务：在终端运行 `.\pnpm.cmd dsh video --keep-alive`，浏览器访问 `http://127.0.0.1:4399`（或在已挂载本插件的 DeepSeek Harness 桌面端打开视频工作台）。
+2. **导入你的素材**：
+   - 在左栏 **「🗂️ 用户素材库」** 点击 **「📂 选文件夹」** 或 **「📎 选素材文件」**（也可以直接粘贴本地素材文件夹绝对路径，如 `D:\素材\产品宣传` 点击「导入」）。
+   - 支持图片、视频片段、背景音乐 (`bgm` 命名优先识别为配乐)、音效 (`sfx` 命名优先识别为音效) 以及文本文案参考 (`.txt`/`.md`)。
+3. **一键生成完整视频**：
+   - 在中栏顶部 **「✨ AI 一键制片」** 输入视频主题（例如：`新一代智能手表发布会宣传片`），选择画面风格（如`科技产品风`）与目标引擎（`HTML5 动效引擎` 或 `Remotion 引擎`）。
+   - 点击 **「🚀 一键生成完整视频 (含配音+混音+MP4)」**，系统将自动完成：素材分析 → 文案与分镜规划 → `IndexTTS-2` 真人配音与 `ffprobe` 测长 → SFX 音效与闪避 BGM 混音 → 规范校验 → 逐帧高清 MP4 与九宫格导出。
+   - 若希望人工先微调每一幕文案、运镜、转场或音效，也可先点击 **「📝 仅AI策划分镜」**，在「📝 脚本」视图逐幕调整后再点右上角 **「🎬 导出 MP4」**。
 
 ---
 
@@ -100,63 +100,50 @@ cd dsh-video-workbench
 Copy-Item .env.example .env
 ```
 
-编辑 `.env` 文件，填入你本机的 `DSH_APP_ROOT`、`FFMPEG_PATH`、`FFPROBE_PATH`、`INDEXTTS_ROOT` 等路径（`.env` 已被 `.gitignore` 屏蔽，不会上传至 GitHub）。
+编辑 `.env` 文件，填入你本机的 `DSH_APP_ROOT`、`FFMPEG_PATH`、`FFPROBE_PATH`、`INDEXTTS_ROOT`、`REMOTION_TEMPLATE_ROOT` 等路径（`.env` 已被 `.gitignore` 忽略，不会上传至 GitHub）。
 
-### 2. 一键挂载 Profile 并启动视频工作台
+### 2. 常用命令
 
 ```powershell
-# 使用仓库自带的 pnpm 包装器或全局 pnpm 启动 video Profile
+# 挂载本地 Cordis profile 与软链接，并运行基础服务冒烟检查
 .\pnpm.cmd dsh video
 
-# 查看合并后的 Cordis 插件配置树
-.\pnpm.cmd dsh video --dump-config
-
-# 运行常驻 Web 预览与 API 服务
+# 启动常驻 Web 工作台服务 (http://127.0.0.1:4399)
 .\pnpm.cmd dsh video --keep-alive
 
-# 运行完整端到端自检测试（含音色包导入、AI 匹配、配音测长、Lint、3x3 九宫格截屏、MP4 渲染及开源脱敏扫描）
+# 运行完整端到端自检（素材导入 + AI 策划 + 真人 IndexTTS-2 配音 + 多轨混音 + HTML5 & Remotion 双引擎渲染 + 开源脱敏扫描）
 .\pnpm.cmd test
 ```
 
 ---
 
-## 🎙️ 五、本地 TTS 与自定义音色包指南 (Voice Pack & AI Matching)
+## 🎙️ 五、本地 TTS 与自定义音色包指南
 
-### 1. 导入自定义音色包
-- **方式一（Web UI 可视化导入）**：在工作台左栏点击 **「+ 导入音色包」**，输入本地 `.wav` / `.mp3` / `.pt` 文件路径、文件夹路径或 `.zip` 压缩包路径，设置名称、性别与风格标签（如 `纪录片, 浑厚, 历史`），点击确认即可入库。
-- **方式二（对话指令导入）**：直接在右栏对 AI 说：
-  > “帮我把 `./my_voices/narrator.wav` 导入为‘深沉纪录片男声’，标签设为纪录片、历史。”
-
-### 2. AI 自由匹配 vs 用户指定音色
-- **AI 自由匹配（默认 `voiceId: "auto"`）**：AI 会调用 `match_scene_voices`，综合分镜情绪、角色、台词关键字与受众目标自动挑选最高分音色，并在分镜卡片上显示匹配原因（如 `AI 自动匹配: 知性女主播 [匹配度 92% — 角色契合(host) + 科技/产品解说语境]`）。
-- **用户指定音色**：可在左栏切换全局音色，或在「脚本」视图的任意分镜卡片右上角下拉选择具体音色。
+- **导入音色包**：在左栏点击 **「+ 导入音色包」**，支持 `.wav` / `.mp3` / `.pt` / 音色目录 / `.zip`。
+- **AI 智能匹配 vs 手动锁定**：全局或单幕均支持设为 `🤖 AI 自动匹配`，系统会自动结合分镜台词情绪、受众与角色标签挑选最佳声线；也可直接下拉指定具体音色并点 `▶ 试听`。
 
 ---
 
-## 📦 六、通过 GitHub Desktop 一键发布至 GitHub
+## 📦 六、通过 GitHub Desktop 发布与更新
 
-1. 打开 **GitHub Desktop**，点击左上角 **File → Add local repository...**（或如果是首次初始化，点击 **Create a new repository** 指向 `dsh-video-workbench` 目录）。
-2. 选择本仓库目录：`<你的工作区路径>/dsh-video-workbench`。
-3. 在左侧 **Changes** 列表中确认：
-   - `.env`、`voice-packs/catalog.json`、`voice-packs/imported/`、`*.mp4`、`*.wav`、`*.png` 均已被 `.gitignore` 自动排除，不会出现在待提交列表中。
-   - 仅包含源码（`packages/`、`scripts/`、`.env.example`、`.gitignore`、`README.md`、`LICENSE` 等）。
-4. 在左下角填写 Commit Summary（例如：`feat: initial release of DSH dual-engine video workbench with voice pack AI matching`），点击 **Commit to main**。
-5. 点击顶部栏的 **Publish repository**，填写仓库名称 `dsh-video-workbench`，取消勾选 *Keep this code private*（若希望公开开源），点击 **Publish Repository** 即可完成一键上传！
+1. 打开 **GitHub Desktop**，点击 **File → Add local repository...** 选择本地 `dsh-video-workbench` 目录。
+2. `.env`、`node_modules/`、`output/`、`assets/`、`uploads/`、`*.mp4`、`*.wav` 等运行产物均已由 `.gitignore` 自动过滤，无需担心泄露隐私或占用仓库体积。
+3. 填写提交信息并点击 **Commit to main**，再点击顶部 **Push origin** 即可同步更新到 GitHub。
 
 ---
 
 ## 🌐 七、English Documentation
 
 ### Overview
-**DSH Video Workbench (`dsh-video-workbench`)** is an open-source, modular Cordis plugin suite for **DeepSeek Harness (DSH)** on Windows 11. It provides a seamless dual-engine (**HTML/GSAP** and **Remotion**) video engineering environment with local TTS integration (**IndexTTS-2** & **GPTvoice-tts / GPT-SoVITS**), custom **Voice Pack import**, **AI automatic voice matching**, and **3×3 contact sheet multimodal visual QA**.
+**DSH Video Workbench (`dsh-video-workbench`)** is an open-source, modular Cordis plugin suite for **DeepSeek Harness (DSH)** on Windows 11. It lets users import local images, video clips, background music, sound effects, and text notes, then uses an AI director to produce complete **HTML5/Canvas** and **Remotion 4.x** videos with narration copy, real local speech synthesis (**IndexTTS-2** / **GPT-SoVITS**), procedural/user SFX & sidechain-ducked BGM mixing, visual motion effects, synced subtitles, 3×3 visual QA sheets, and full-FPS H.264 MP4 rendering.
 
 ### Package Structure
-- `packages/shared`: Zero-hardcode `.env` loader, file-redirected `ffmpeg`/`ffprobe` runner (prevents Windows sandbox `EPERM`), and `script.json` protocol utilities.
-- `packages/dsh-tool-local-tts`: Cordis tools `list_voices`, `import_voice_pack`, `match_scene_voices`, and `generate_speech` with exact `ffprobe` frame calculation (`durationInFrames = Math.ceil(durationSec * fps)`).
-- `packages/dsh-tool-video-suite`: Cordis tools `video_lint` (HTML `<template>` isolation, SVG ID collision & WCAG AA contrast checks), `video_snapshot` (3×3 grid PNG), and `video_render` (H.264 `yuv420p` MP4).
-- `packages/dsh-preset-video`: Registers the `视频制作模式` (`video-maker`) Agent Preset with a 3-stage confirmation workflow and Windows 11 safeguards (`.npmrc` local cache + `Microsoft YaHei` / `Consolas` local fonts).
-- `packages/dsh-web-video-workbench`: Injects the centered top-bar `[ DeepSeek Harness | HTML 视频 ]` capsule switcher and the 3-column Video Workbench UI with a 3-track synchronized timeline (Subtitles, Scenes, Audio Waveform).
-- `packages/dsh-video-app`: Declarative `cordis.patch.yml` bundle for the `video` profile.
+- `packages/shared`: Zero-hardcode `.env` loader, file-redirected `ffmpeg`/`ffprobe` runner (prevents Windows sandbox `EPERM`), and `script.json` utilities.
+- `packages/dsh-tool-media`: Asset importer (`import_assets`, `list_assets`), procedural 48kHz WAV SFX/BGM synthesizer & FFmpeg sidechain-ducking mixer (`generate_sfx_bgm`), AI storyboard director (`plan_video_from_assets`), dual-engine HTML5/Canvas + Remotion TSX code generators, and one-click production (`produce_video`).
+- `packages/dsh-tool-local-tts`: Persistent `IndexTTS-2` HTTP server manager (`tts-server.py`), 205+ voice catalog (`list_voices`, `import_voice_pack`, `match_scene_voices`), and exact `ffprobe` duration backfill (`generate_speech`).
+- `packages/dsh-tool-video-suite`: `video_lint`, `video_snapshot` (3×3 contact sheet), and full-FPS Chromium WebSocket CDP / `@remotion/renderer` MP4 exporter (`video_render`).
+- `packages/dsh-preset-video`: Registers the `视频制作模式` (`video-maker`) Agent Preset with Windows 11 safeguards (`.npmrc` local cache + `Microsoft YaHei` / `Consolas` fonts).
+- `packages/dsh-web-video-workbench`: Registers `/api/video-workbench/*` endpoints (with HTTP Byte-Range streaming & file/folder uploads) and the non-duplicated 3-column Video Workbench UI.
 
 ### License
 Released under the [MIT License](./LICENSE).

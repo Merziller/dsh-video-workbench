@@ -176,6 +176,7 @@ async function main() {
     import React from 'https://esm.sh/react@18.3.1';
     import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
 
+    window.__DSH_STANDALONE__ = true;
     const slots = new Map();
     window.__ModuleLoader__ = {
       load: async ({ factory }) => {
@@ -192,17 +193,11 @@ async function main() {
           }
         };
         plugin.apply(ctx);
-        const overlaySlot = slots.get('shell.overlay');
         const mainSlot = slots.get('main');
+        const overlaySlot = slots.get('shell.overlay');
+        const targetSlot = mainSlot || overlaySlot;
         const root = createRoot(document.getElementById('root'));
-        root.render(
-          React.createElement(
-            React.Fragment,
-            null,
-            overlaySlot ? overlaySlot.render() : null,
-            mainSlot ? mainSlot.render() : null
-          )
-        );
+        root.render(targetSlot ? targetSlot.render() : null);
       }
     };
 
