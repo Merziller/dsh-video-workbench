@@ -46,6 +46,16 @@ export function syncRemotionPublicAssets(projectDir, script) {
       const rel = m.path.replace(/^\/+/, '').replace(/\\/g, '/')
       syncFileToPublic(src, join(pubDir, rel))
     }
+    if (scene.avatarClip?.path) {
+      const srcAv = isAbsolute(scene.avatarClip.path) ? scene.avatarClip.path : resolve(absDir, scene.avatarClip.path)
+      const relAv = scene.avatarClip.path.replace(/^\/+/, '').replace(/\\/g, '/')
+      syncFileToPublic(srcAv, join(pubDir, relAv))
+    }
+  }
+  if (script?.avatarClip?.path) {
+    const srcAv = isAbsolute(script.avatarClip.path) ? script.avatarClip.path : resolve(absDir, script.avatarClip.path)
+    const relAv = script.avatarClip.path.replace(/^\/+/, '').replace(/\\/g, '/')
+    syncFileToPublic(srcAv, join(pubDir, relAv))
   }
   const masterWav = join(absDir, 'output', 'master-audio.wav')
   if (existsSync(masterWav)) {
@@ -146,7 +156,7 @@ import {
   useVideoConfig,
 } from 'remotion';
 import scriptData from '../script.json';
-import { AIBadge, EndNotice, FONT_SANS, FONT_MONO } from './lib/shotcraft';
+import { AIBadge, AvatarOverlay, EndNotice, FONT_SANS, FONT_MONO } from './lib/shotcraft';
 
 const PALETTE: any = ${JSON.stringify(theme)};
 const SANS = FONT_SANS;
@@ -1118,6 +1128,8 @@ export const VideoComposition: React.FC = () => {
     return frame >= sf && frame < ef;
   });
   const subText = activeSub?.text || activeScene?.subtitleLine || '';
+  const activeAvatar = activeScene?.avatarClip?.path ? activeScene.avatarClip : (sData?.avatarClip?.path ? sData.avatarClip : null);
+  const avatarLayout = activeScene?.avatarLayout || activeAvatar?.layout || sData?.avatarLayout || 'pip-br';
 
   return (
     <AbsoluteFill style={{ backgroundColor: PALETTE.background }}>
@@ -1130,6 +1142,15 @@ export const VideoComposition: React.FC = () => {
           <SceneStage scene={scene} idx={idx} total={scenes.length} beats={beats} />
         </Sequence>
       ))}
+
+      {activeAvatar?.path && avatarLayout !== 'off' ? (
+        <AvatarOverlay
+          clipPath={activeAvatar.path}
+          layout={avatarLayout}
+          accentColor={PALETTE.accent}
+          muted={true}
+        />
+      ) : null}
 
       <AIBadge
         visible={true}

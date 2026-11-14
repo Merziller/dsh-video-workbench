@@ -24,6 +24,8 @@ import { extname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   REPO_ROOT,
+  createAbortError,
+  killProcessTree,
   readScriptJson,
   resolveBinaries,
   resolveEnvPath,
@@ -209,6 +211,7 @@ async function openCdpSession(browserBin, width, height) {
     cdp,
     cleanup() {
       cdp.close()
+      killProcessTree(child)
       try { child.kill() } catch {}
       setTimeout(() => {
         try { rmSync(userDataDir, { recursive: true, force: true }) } catch {}
@@ -245,14 +248,21 @@ async function waitForPageReady(cdp, url) {
 /**
  * Capture N specific frame numbers to PNG files in a single warm Chromium CDP session.
  */
-export async function captureHtmlSnapshots({ projectDir, browserBin, frames, outDir, width = 1280, height = 720 }) {
+export async function captureHtmlSnapshots({ projectDir, browserBin, frames, outDir, width = 1280, height = 720, signal }) {
+  if (signal?.aborted) throw createAbortError()
   mkdirSync(outDir, { recursive: true })
   const { server, port } = await startStaticProjectServer(projectDir)
   const session = await openCdpSession(browserBin, width, height)
   const files = []
+  const onAbort = () => {
+    try { session.cleanup() } catch {}
+    try { server.close() } catch {}
+  }
+  signal?.addEventListener('abort', onAbort, { once: true })
   try {
     await waitForPageReady(session.cdp, `http://127.0.0.1:${port}/index.html?render=1`)
     for (let i = 0; i < frames.length; i++) {
+      if (signal?.aborted) throw createAbortError()
       const f = frames[i]
       await session.cdp.send('Runtime.evaluate', {
         expression: `Promise.resolve(window.__seekToFrame ? window.__seekToFrame(${f}) : ${f}).then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))`,
@@ -267,6 +277,7 @@ export async function captureHtmlSnapshots({ projectDir, browserBin, frames, out
     }
     return files
   } finally {
+    signal?.removeEventListener('abort', onAbort)
     session.cleanup()
     try { server.close() } catch {}
   }
@@ -288,8 +299,10 @@ export async function renderHtmlVideoToMp4({
   snapshotFrames = [],
   snapshotDir = '',
   useSegmentCache = true,
+  signal,
   onProgress,
 }) {
+  if (signal?.aborted) throw createAbortError()
   const { ffmpeg } = resolveBinaries()
   const snapMap = new Map()
   snapshotFrames.forEach((f, idx) => {
@@ -309,7 +322,13 @@ export async function renderHtmlVideoToMp4({
   if (useSegmentCache && scriptData && Array.isArray(scriptData.scenes) && scriptData.scenes.length >= 2) {
     let serverObj = null
     let cdpSession = null
+    const abortCleanup = () => {
+      try { cdpSession?.cleanup() } catch {}
+      try { serverObj?.server?.close() } catch {}
+    }
+    signal?.addEventListener('abort', abortCleanup, { once: true })
     const ensureBrowser = async () => {
+      if (signal?.aborted) throw createAbortError()
       if (!serverObj) {
         serverObj = await startStaticProjectServer(projectDir)
       }
@@ -330,6 +349,7 @@ export async function renderHtmlVideoToMp4({
         fps,
         renderWidth: width,
         renderHeight: height,
+        signal,
         onProgress,
         captureFrameRangeToSilentMp4: async ({ startFrame, endFrameExclusive, outSilentMp4 }) => {
           const sess = await ensureBrowser()
@@ -339,6 +359,7 @@ export async function renderHtmlVideoToMp4({
           const mjpegFd = openSync(mjpegPath, 'w')
           try {
             for (let f = startFrame; f < endFrameExclusive; f++) {
+              if (signal?.aborted) throw createAbortError()
               await sess.cdp.send('Runtime.evaluate', {
                 expression: `Promise.resolve(window.__seekToFrame ? window.__seekToFrame(${f}) : ${f}).then(() => new Promise(r => requestAnimationFrame(r)))`,
                 awaitPromise: true,
@@ -376,7 +397,7 @@ export async function renderHtmlVideoToMp4({
                 '-g', String(Math.max(15, fps)), '-sc_threshold', '0', '-video_track_timescale', '90000', '-an', '-t', String(segSec),
                 outSilentMp4,
               ],
-              { timeoutMs: 180_000 },
+              { timeoutMs: 180_000, signal },
             )
             if (enc.code !== 0 || !existsSync(outSilentMp4)) {
               throw new Error(`Segment encode failed: ${enc.stderr}`)
@@ -404,6 +425,7 @@ export async function renderHtmlVideoToMp4({
 
       return { ok: true, framesRendered: totalFrames, outputPath: outMp4Path, segmentCache: segRes }
     } finally {
+      signal?.removeEventListener('abort', abortCleanup)
       if (cdpSession) cdpSession.cleanup()
       if (serverObj) try { serverObj.server.close() } catch {}
     }
@@ -512,7 +534,8 @@ function ensureRemotionNodeModules(projectDir, templateRoot) {
   }
 }
 
-export async function renderRemotionProject({ projectDir, outMp4Path, snapshotFrames = [], snapshotDir = '', onlySnapshots = false }) {
+export async function renderRemotionProject({ projectDir, outMp4Path, snapshotFrames = [], snapshotDir = '', onlySnapshots = false, signal }) {
+  if (signal?.aborted) throw createAbortError()
   const tplRoot = resolveEnvPath('REMOTION_TEMPLATE_ROOT', '')
   if (!tplRoot || !existsSync(join(tplRoot, 'node_modules', '@remotion', 'renderer'))) {
     return { ok: false, reason: 'REMOTION_TEMPLATE_ROOT not configured or missing @remotion/renderer' }
@@ -559,7 +582,15 @@ export async function renderRemotionProject({ projectDir, outMp4Path, snapshotFr
   }
 
   if (!onlySnapshots && outMp4Path) {
-    await rendererMod.renderMedia({
+    const { cancelSignal, cancel } = typeof rendererMod.makeCancelSignal === 'function'
+      ? rendererMod.makeCancelSignal()
+      : { cancelSignal: undefined, cancel: () => {} }
+    const onRemotionAbort = () => {
+      try { cancel() } catch {}
+    }
+    signal?.addEventListener('abort', onRemotionAbort, { once: true })
+    try {
+      await rendererMod.renderMedia({
       composition,
       serveUrl,
       codec: 'h264',
@@ -570,7 +601,11 @@ export async function renderRemotionProject({ projectDir, outMp4Path, snapshotFr
       browserExecutable,
       offthreadVideoThreads: 1,
       offthreadVideoCacheSizeInBytes: 512 * 1024 * 1024,
+      cancelSignal,
     })
+    } finally {
+      signal?.removeEventListener('abort', onRemotionAbort)
+    }
   }
 
   return { ok: true, framesRendered: composition.durationInFrames, outputPath: outMp4Path }

@@ -10,6 +10,7 @@ import {
 } from '../packages/shared/index.js'
 import { setupDshVideoProfile } from './install-profile.mjs'
 import LocalTtsPlugin from '../packages/dsh-tool-local-tts/index.js'
+import AvatarPlugin from '../packages/dsh-tool-avatar/index.js'
 import VideoSuitePlugin from '../packages/dsh-tool-video-suite/index.js'
 import PresetVideoPlugin from '../packages/dsh-preset-video/index.js'
 import WebVideoWorkbenchPlugin, {

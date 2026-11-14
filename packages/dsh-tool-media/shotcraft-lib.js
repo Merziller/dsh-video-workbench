@@ -19,8 +19,10 @@ export const SHOTCRAFT_TSX_SOURCE = `/**
 import React from 'react'
 import {
   AbsoluteFill,
+  OffthreadVideo,
   interpolate,
   spring,
+  staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion'
@@ -421,6 +423,70 @@ export const EndNotice: React.FC<EndNoticeProps> = ({
     </div>
   )
 }
+
+export interface AvatarOverlayProps {
+  clipPath?: string
+  layout?: 'fullscreen' | 'pip-bl' | 'pip-br' | 'off' | string
+  accentColor?: string
+  muted?: boolean
+}
+
+export const AvatarOverlay: React.FC<AvatarOverlayProps> = ({
+  clipPath,
+  layout = 'pip-br',
+  accentColor = '#22D3EE',
+  muted = true,
+}) => {
+  const { width, height } = useVideoConfig()
+  if (!clipPath || layout === 'off') return null
+  const isPortrait = width < height
+  const cleanRel = String(clipPath).replace(/^\\.?[\\\\/]+/, '').replace(/\\\\/g, '/')
+
+  if (layout === 'fullscreen') {
+    return (
+      <AbsoluteFill style={{ pointerEvents: 'none', zIndex: 25, justifyContent: 'flex-end', alignItems: 'center' }}>
+        <OffthreadVideo
+          src={staticFile(cleanRel)}
+          transparent
+          muted={muted}
+          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+        />
+      </AbsoluteFill>
+    )
+  }
+
+  const boxWidth = isPortrait ? Math.round(width * 0.34) : Math.round(width * 0.22)
+  const boxHeight = Math.round(boxWidth * 1.125)
+  const sidePx = isPortrait ? 28 : 42
+  const bottomPx = isPortrait ? Math.round(height * 0.25) : 96
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: bottomPx,
+        left: layout === 'pip-bl' ? sidePx : undefined,
+        right: layout === 'pip-bl' ? undefined : sidePx,
+        width: boxWidth,
+        height: boxHeight,
+        borderRadius: 20,
+        overflow: 'hidden',
+        border: \`1.5px solid \${accentColor}55\`,
+        background: 'rgba(6, 10, 18, 0.28)',
+        boxShadow: \`0 18px 46px rgba(0,0,0,0.55), 0 0 24px \${accentColor}22\`,
+        pointerEvents: 'none',
+        zIndex: 35,
+      }}
+    >
+      <OffthreadVideo
+        src={staticFile(cleanRel)}
+        transparent
+        muted={muted}
+        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+      />
+    </div>
+  )
+}
 `
 
 export function writeShotcraftRemotionLib(projectDir) {
@@ -563,8 +629,8 @@ export function buildRemotionCoderSkillsPrompt({
 4. 禁止使用 Node 内置模块 (fs/path/child_process)、eval、new Function、外部网络字体/CDN 脚本链接或本地盘符路径。
 5. 商业版权字体安全铁律：禁止声明或使用微软雅黑 (Microsoft YaHei)、宋体 (SimSun)、黑体 (SimHei) 等受限商业字体！必须使用系统随包分发的 SIL OFL 开源商用字体栈：\`FONT_SANS\` ('Noto Sans SC', sans-serif) 与 \`FONT_MONO\` ('JetBrains Mono', monospace)。
 6. 可从 '../lib/shotcraft'（在 src/scenes/Scenes.tsx 中）或 './lib/shotcraft'（在 src/VideoComposition.tsx 中）导入已提供的组件：
-   - PageCam, ClipCard, DigitRoll, FlashCut, ShotCaption, AIBadge, EndNotice, FONT_SANS, FONT_MONO, FONT_SERIF
-7. 合规叠层铁律：src/VideoComposition.tsx 必须在合成器最外层强制挂载 <AIBadge visible={true} /> 与末尾 <EndNotice />，不可省略；字幕 <ShotCaption bottomPx={...} /> 必须遵循目标平台安全区留白（竖屏底部至少留白 22%）。
+   - PageCam, ClipCard, DigitRoll, FlashCut, ShotCaption, AIBadge, EndNotice, AvatarOverlay, FONT_SANS, FONT_MONO, FONT_SERIF
+7. 合规与数字人叠层铁律：src/VideoComposition.tsx 必须在合成器最外层强制挂载 <AIBadge visible={true} /> 与末尾 <EndNotice />；当 script.json 中存在 avatarClip.path 且 avatarLayout !== 'off' 时，必须渲染 <AvatarOverlay clipPath={scriptData.avatarClip.path} layout={scriptData.avatarLayout || 'pip-br'} />（使用 transparent 透明通道合成）；字幕 <ShotCaption bottomPx={...} /> 必须遵循目标平台安全区留白（竖屏底部至少留白 22%）。
 8. 如需使用本地素材图片/视频（如 public/...），必须使用 staticFile('相对路径')（去掉前导 public/），使用 <Img src={staticFile(...)} />。
 9. 音轨对齐铁律：src/VideoComposition.tsx 必须导出命名组件 VideoComposition，并在最外层挂载：
    <Audio src={staticFile('master-audio.wav')} />
@@ -616,7 +682,7 @@ export function buildHtmlCoderSkillsPrompt({
 3. 严禁引用任何外部 http/https CDN (GSAP、字体、图片、SVG 外部链接全部禁止！)，若需使用素材，使用相对路径（如 assets/...）。
 4. 严禁出现无限自主驱动动画（不可用 CSS @keyframes、不可在 requestAnimationFrame 内自行推进主时间轴，不可使用 Math.random() 造成前后帧不一致，请使用确定性伪随机函数）。
 5. 必须内嵌 <script id="dsh-script-data" type="application/json">PLACEHOLDER</script>（注意请保留该 script 标签占位符或完整嵌入数据，系统会自动写回最新脚本）。
-6. 必须保留合成器级强制合规叠层：右上/左上 #ai-badge（「AI 辅助创作」）及片尾最后 2 秒展示 #end-notice，且字幕条 bottom 必须避让目标平台安全区（竖屏 ≥ 22% 高度，横屏 ≥ 13% 高度）。
+6. 必须保留合成器级强制合规叠层：右上/左上 #ai-badge（「AI 辅助创作」）及片尾最后 2 秒展示 #end-notice，且字幕条 bottom 必须避让目标平台安全区（竖屏 ≥ 22% 高度，横屏 ≥ 13% 高度）；若 script.json 包含 avatarClip.path，需保留 <video id="avatar-overlay-video" muted playsinline> 透明通道画中画/全屏叠层并在 window.__seekToFrame 内按 frame / fps 精确同步 currentTime。
 7. 必须向全局暴露确定性 seek 接口：
    window.__totalFrames = <totalDurationInFrames>;
    window.__seekToFrame = function(frameIndex) { ... };

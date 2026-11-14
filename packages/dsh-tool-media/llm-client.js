@@ -769,6 +769,7 @@ export async function callLlmChat({
   timeoutMs = 150000,
   overrideConfig = {},
   fetchImpl = globalThis.fetch,
+  signal,
 } = {}) {
   const cfg = resolveLlmConfig(overrideConfig)
   if (!cfg.baseUrl) {
@@ -791,6 +792,11 @@ export async function callLlmChat({
   const maxOut = Number(maxTokens) > 0 ? Number(maxTokens) : cfg.maxTokens
 
   const controller = new AbortController()
+  const onExternalAbort = () => controller.abort(signal?.reason || Object.assign(new Error('Request aborted'), { name: 'AbortError' }))
+  if (signal) {
+    if (signal.aborted) onExternalAbort()
+    else signal.addEventListener('abort', onExternalAbort, { once: true })
+  }
   const timer = setTimeout(() => controller.abort(new Error(`LLM 请求超时 (${Math.round(timeoutMs / 1000)}s)`)), timeoutMs)
 
   try {
@@ -905,6 +911,7 @@ export async function callLlmChat({
     }
   } finally {
     clearTimeout(timer)
+    if (signal) signal.removeEventListener('abort', onExternalAbort)
   }
 }
 
@@ -940,6 +947,7 @@ export async function fetchAvailableModels(overrideConfig = {}, fetchImpl = glob
     return []
   } finally {
     clearTimeout(timer)
+    if (signal) signal.removeEventListener('abort', onExternalAbort)
   }
 }
 

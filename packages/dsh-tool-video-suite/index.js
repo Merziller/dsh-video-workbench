@@ -554,6 +554,7 @@ export async function executeVideoRender(args = {}) {
     script,
     assetsManifest,
     outputPath: join(dirname(outPath), 'master-audio.wav'),
+    signal: args.signal,
   })
 
   // 2. Render every frame via selected engine
@@ -577,6 +578,7 @@ export async function executeVideoRender(args = {}) {
       snapshotFrames: sampleFrames,
       snapshotDir: framesDir,
       onlySnapshots: false,
+      signal: args.signal,
     })
     if (r.ok && existsSync(outPath)) {
       renderMethod = 'remotion-renderer'
@@ -613,6 +615,7 @@ export async function executeVideoRender(args = {}) {
       snapshotFrames: sampleFrames,
       snapshotDir: framesDir,
       useSegmentCache: args.useSegmentCache !== false,
+      signal: args.signal,
       onProgress: args.onProgress,
     })
     renderMethod = 'chromium-cdp-full-fps'

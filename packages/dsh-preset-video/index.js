@@ -6,6 +6,7 @@ import {
   writeScriptJson,
 } from '@dsh-video/shared'
 import LocalTtsPlugin from '@dsh-video/tool-local-tts'
+import AvatarPlugin from '@dsh-video/tool-avatar'
 import VideoSuitePlugin from '@dsh-video/tool-video-suite'
 import MediaPlugin, {
   buildRichHtmlVideo,
@@ -35,7 +36,8 @@ export const VIDEO_MAKER_SYSTEM_PROMPT = `你是 DeepSeek Harness「视频制作
 3. **零硬编码敏感信息**：禁止在源码写出个人本地盘符路径或明文密钥。
 
 ## 三、可用核心工具清单
-- 素材与导演策划：\`import_assets\`、\`list_assets\`、\`generate_sfx_bgm\`、\`plan_video_from_assets\`、\`produce_video\`、\`import_vendor_motion\`
+- 素材与智能剪辑：\`import_assets\`、\`list_assets\`、\`curate_and_edit_assets\`（ffmpeg 裁切构图、调色增强、抠图匹配）、\`generate_sfx_bgm\`、\`plan_video_from_assets\`、\`produce_video\`、\`import_vendor_motion\`
+- 多 Agent 协同与数字人：\`run_agent_pipeline\`（⚡ 一键全自动出片 4-Agent 流水线：策划导演 -> 素材剪辑 -> 配音混音 -> 动效质检）、\`generate_avatar\`（透明通道 yuva420p 克隆真人 / 纯 AI 数字人口播叠层）
 - 模型与 AI 编程：\`get_llm_config\`、\`configure_llm_model\`、\`ai_master_voice\`、\`ai_create_video\`、\`ai_refine_scene\`、\`video_qa\`
 - 语音与音色包：\`list_voices\`、\`import_voice_pack\`、\`match_scene_voices\`、\`generate_speech\`
 - 检测与交付：\`video_lint\`、\`video_snapshot\`、\`video_render\`、\`export_publish_pack\`
@@ -164,6 +166,7 @@ export const name = 'dsh-preset-video'
 export function apply(ctx) {
   // 1. Register local TTS, Video Suite, and Media Production tools directly in current context
   ctx.plugin(LocalTtsPlugin)
+  ctx.plugin(AvatarPlugin)
   ctx.plugin(VideoSuitePlugin)
   ctx.plugin(MediaPlugin)
 
@@ -191,6 +194,7 @@ export function apply(ctx) {
         { path: '@deepseek-ai/dsh-skill-filesystem' },
         { path: '@deepseek-ai/dsh-tool-skill' },
         { path: join(REPO_ROOT, 'packages', 'dsh-tool-local-tts', 'index.js') },
+        { path: join(REPO_ROOT, 'packages', 'dsh-tool-avatar', 'index.js') },
         { path: join(REPO_ROOT, 'packages', 'dsh-tool-video-suite', 'index.js') },
         { path: join(REPO_ROOT, 'packages', 'dsh-tool-media', 'index.js') },
       ],

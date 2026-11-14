@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import vm from 'node:vm'
-import { resolveBinaries, runCommandRedirected } from '@dsh-video/shared'
+import { createAbortError, resolveBinaries, runCommandRedirected } from '@dsh-video/shared'
 import { executeGenerateSpeech } from '@dsh-video/tool-local-tts'
 import { DSP_SR, encodeStereoWav } from './audio-dsp.js'
+import { callLlmChat, extractJsonFromLlmText, getSafeLlmConfigSummary } from './llm-client.js'
 
 const FORBIDDEN_AUDIO_CODE_PATTERNS = [
   { rx: /\brequire\s*\(/, reason: '禁止使用 require()' },
@@ -348,5 +349,79 @@ export async function synthesizeTtsEngineAudioCue({
     wavPath: outWav,
     relWavPath: `audio/${outName}`,
     durationSec: targetDur,
+  }
+}
+
+/**
+ * Use the active LLM to author custom WebAudio/DSP transition & impact SFX synthesis code,
+ * validate in sandbox, and render 48kHz stereo `<cue>-ai.wav` cues into `audio/sfx/`.
+ */
+export async function generateAiCodedSfxCues({
+  projectDir,
+  cues = ['whoosh', 'hit', 'riser', 'chime'],
+  style = 'tech',
+  llmOverride = {},
+  fetchImpl,
+  signal,
+} = {}) {
+  if (signal?.aborted) throw createAbortError()
+  const absDir = resolve(projectDir)
+  const sfxDir = join(absDir, 'audio', 'sfx')
+  mkdirSync(sfxDir, { recursive: true })
+
+  const summary = getSafeLlmConfigSummary()
+  if (!llmOverride?.baseUrl && !summary.configured) {
+    return { ok: false, fallback: true, reason: 'LLM not configured, using procedural DSP SFX', files: [] }
+  }
+
+  const targetCues = (Array.isArray(cues) && cues.length > 0 ? cues : ['whoosh', 'hit', 'riser', 'chime']).slice(0, 6)
+  const sys = `你是精通 DSP 物理声学建模与电影转场音效合成的程序员。
+请用纯数学函数编写一条 JavaScript 函数 generateAudioSample(t, totalDurationSec, cueIndex, mood)：
+- 输入参数: t (秒), totalDurationSec (总时长, 这里会以 0..0.85s 传入单条音效), cueIndex (0..N), mood (风格字符串)
+- 必须返回一个双声道振幅数组 [left, right]，范围 [-0.95, 0.95]。
+- 禁止使用 require/import/fs/fetch/process/eval，仅使用 Math.sin/cos/tanh/exp/abs/min/max/pow/PI。
+输出严格 JSON：{ "summary": "音效设计说明", "code": "function generateAudioSample(t, totalDurationSec, cueIndex, mood) { ... }" }。`
+
+  const user = JSON.stringify({
+    task: '为转场与重击节点生成具有电影冲击力的代码合成音效',
+    style,
+    cues: targetCues,
+  })
+
+  try {
+    const res = await callLlmChat({
+      overrideConfig: llmOverride,
+      fetchImpl,
+      system: sys,
+      messages: [{ role: 'user', content: user }],
+      temperature: 0.35,
+      maxTokens: 2048,
+      timeoutMs: 60_000,
+    })
+    const parsed = extractJsonFromLlmText(res.text)
+    let code = String(parsed?.code || '').trim()
+    if (!code) throw new Error('Empty SFX synth code')
+    const check = scanAiAudioCodeSandbox(code)
+    if (!check.safe) throw new Error(`SFX sandbox violation: ${check.violations.join('; ')}`)
+
+    const sanitized = code.replace(/^\s*export\s+(default\s+)?/gm, '')
+    const renderedFiles = []
+    for (let i = 0; i < targetCues.length; i++) {
+      if (signal?.aborted) throw createAbortError()
+      const cue = targetCues[i]
+      const dur = cue === 'riser' ? 0.95 : cue === 'chime' ? 0.72 : 0.48
+      const outPath = join(sfxDir, `${cue}-ai.wav`)
+      const out = executeAiAudioSynthScript({
+        code: `${sanitized}\n`,
+        durationSec: dur,
+        bpm: 120,
+        mood: cue,
+        outWavPath: outPath,
+      })
+      renderedFiles.push({ cue, relPath: `audio/sfx/${cue}-ai.wav`, rmsDb: out.rmsDb })
+    }
+    return { ok: true, mode: 'llm-coded', model: res.model, summary: parsed?.summary || '', files: renderedFiles }
+  } catch (err) {
+    return { ok: false, fallback: true, reason: err.message, files: [] }
   }
 }

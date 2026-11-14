@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -8,6 +9,7 @@ import {
   resolveVideoDimensions,
   runCommandRedirected,
 } from '../packages/shared/index.js'
+import { executeGenerateAvatar } from '../packages/dsh-tool-avatar/index.js'
 import {
   ensureTtsServer,
   executeGenerateSpeech,
@@ -23,11 +25,13 @@ import {
   runTypecheckOnProject,
 } from '../packages/dsh-tool-video-suite/index.js'
 import {
+  executeCurateAndEditAssets,
   importAssets,
   mixVideoAudio,
   planVideoFromAssets,
   readAssets,
   runAiStudioPipeline,
+  taskManager,
 } from '../packages/dsh-tool-media/index.js'
 import { scaffoldVideoProject } from '../packages/dsh-preset-video/index.js'
 import { handleWorkbenchApiRequest } from '../packages/dsh-web-video-workbench/lib/index.js'
@@ -992,10 +996,185 @@ export const VideoComposition: React.FC = () => {
   }
 
   console.log(
-    `[11/12] P0-P2 Fusion Suite OK (OFL fonts + Douyin Safe-Zone + Segment Cache [${cacheFiles.length} clips] + 3-Mode BGM + Voice Clone Audition + Tier 4 Fallback + Isolated Vendor .motion + Publish Pack)!`,
+    `[11/13] P0-P2 Fusion Suite OK (OFL fonts + Douyin Safe-Zone + Segment Cache [${cacheFiles.length} clips] + 3-Mode BGM + Voice Clone Audition + Tier 4 Fallback + Isolated Vendor .motion + Publish Pack)!`,
   )
 
-  // 12. Re-scaffold clean starter demos & validate Lint + Open-Source Hygiene Scan
+  // 12. v5 AI Agent Command Deck Verification: Avatar Tool (Alpha WebM -> HTML & Remotion), Curate/Edit, TaskManager Abort/Pause/Resume/Retry, Recording & Teleprompter & Skin APIs
+  const avHtml = await executeGenerateAvatar({
+    projectDir: tmpHtmlProj,
+    avatarMode: 'ai-human',
+    presetId: 'cyber-anchor',
+    avatarLayout: 'pip-br',
+    voiceId: 'auto',
+    narrationText: '欢迎来到人工智能作战大屏数字人测试。',
+    durationSec: 2,
+  })
+  if (!avHtml.ok || !existsSync(join(tmpHtmlProj, avHtml.relPath))) {
+    throw new Error(`executeGenerateAvatar HTML failed: ${JSON.stringify(avHtml)}`)
+  }
+  const avProbe = await probeMediaStreams(bins.ffprobe, join(tmpHtmlProj, avHtml.relPath))
+  const avVStream = (avProbe.streams || []).find((s) => s.codec_type === 'video')
+  if (!avVStream || (avVStream.pix_fmt !== 'yuva420p' && avVStream.tags?.alpha_mode !== '1' && !avHtml.hasAlpha)) {
+    throw new Error(`Avatar WebM missing alpha stream metadata: ${JSON.stringify(avVStream)}`)
+  }
+  syncProjectCodeFromScript(tmpHtmlProj, readScriptJson(tmpHtmlProj).data, { forceOverwrite: true })
+  if (!readFileSync(join(tmpHtmlProj, 'index.html'), 'utf8').includes('avatar-overlay-video')) {
+    throw new Error('HTML5 generator missing #avatar-overlay-video after avatarClip script update!')
+  }
+
+  const avRem = await executeGenerateAvatar({
+    projectDir: tmpRemotionProj,
+    avatarMode: 'ai-human',
+    presetId: 'warm-mentor',
+    avatarLayout: 'pip-bl',
+    voiceId: 'auto',
+    narrationText: 'Remotion 数字人透明通道合成测试。',
+    durationSec: 2,
+  })
+  if (!avRem.ok || !existsSync(join(tmpRemotionProj, avRem.relPath))) {
+    throw new Error(`executeGenerateAvatar Remotion failed: ${JSON.stringify(avRem)}`)
+  }
+  syncProjectCodeFromScript(tmpRemotionProj, readScriptJson(tmpRemotionProj).data, { forceOverwrite: true })
+  if (
+    !readFileSync(join(tmpRemotionProj, 'src', 'VideoComposition.tsx'), 'utf8').includes('AvatarOverlay') ||
+    !existsSync(join(tmpRemotionProj, 'public', avRem.relPath))
+  ) {
+    throw new Error('Remotion generator missing AvatarOverlay import or public/ avatar WebM sync!')
+  }
+
+  const curateRes = await executeCurateAndEditAssets({
+    projectDir: tmpHtmlProj,
+    aspectRatio: '16:9',
+    quality: '720p',
+    style: 'cinematic',
+    trimSeconds: 1,
+  })
+  if (!curateRes.ok || (curateRes.editedCount || 0) < 1 || !existsSync(join(tmpHtmlProj, 'assets', 'edited'))) {
+    throw new Error(`executeCurateAndEditAssets failed: ${JSON.stringify(curateRes)}`)
+  }
+
+  // TaskManager Start -> Pause -> Resume -> Stop (immediate child process termination) -> Retry
+  let spawnedChildPid = 0
+  const createdRun = taskManager.createRun({
+    projectDir: tmpHtmlProj,
+    title: 'Self-Test TaskManager Lifecycle',
+    mode: 'fast-draft',
+    subtasks: [
+      { id: 't-step1', stage: 'director', name: '步骤一', kind: 'script_plan' },
+      { id: 't-step2', stage: 'motion_qa', name: '步骤二(含阻塞子进程)', kind: 'mp4_render' },
+    ],
+  })
+  let mockPassCount = 0
+  await taskManager.startRun(createdRun.id, async (runObj, helpers) => {
+    mockPassCount++
+    if (mockPassCount >= 2) {
+      helpers.updateTask('t-step1', { status: 'completed', progress: 100 })
+      helpers.updateTask('t-step2', { status: 'completed', progress: 100 })
+      return { retried: true }
+    }
+    helpers.updateTask('t-step1', { status: 'completed', progress: 100 })
+    await helpers.waitIfPaused()
+    helpers.updateTask('t-step2', { status: 'running', progress: 35, message: '等待测试子进程...' })
+    await new Promise((resolvePromise, rejectPromise) => {
+      const ch = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 25000)'], { stdio: 'ignore' })
+      spawnedChildPid = ch.pid || 0
+      helpers.onChild(ch)
+      const onAbort = () => rejectPromise(new Error('Task aborted cleanly'))
+      if (helpers.signal.aborted) return onAbort()
+      helpers.signal.addEventListener('abort', onAbort, { once: true })
+      ch.on('exit', () => resolvePromise())
+    })
+  })
+  await new Promise((r) => setTimeout(r, 150))
+  taskManager.pauseRun(createdRun.id)
+  if (taskManager.getRun(createdRun.id)?.status !== 'paused') {
+    throw new Error('TaskManager pauseRun did not transition status to paused')
+  }
+  await taskManager.resumeRun(createdRun.id)
+  for (let i = 0; i < 20 && !spawnedChildPid; i++) await new Promise((r) => setTimeout(r, 50))
+  if (!spawnedChildPid) throw new Error('TaskManager resumed run did not spawn test child process')
+  taskManager.stopRun(createdRun.id)
+  await new Promise((r) => setTimeout(r, 250))
+  const stoppedRun = taskManager.getRun(createdRun.id)
+  if (stoppedRun?.status !== 'stopped') {
+    throw new Error(`TaskManager stopRun failed: status=${stoppedRun?.status}`)
+  }
+  let childStillAlive = false
+  try {
+    process.kill(spawnedChildPid, 0)
+    childStillAlive = true
+  } catch {}
+  if (childStillAlive) {
+    throw new Error(`TaskManager stopRun left child PID ${spawnedChildPid} alive!`)
+  }
+  await taskManager.retryRun(createdRun.id)
+  for (let i = 0; i < 30 && taskManager.getRun(createdRun.id)?.status !== 'completed'; i++) {
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  if (taskManager.getRun(createdRun.id)?.status !== 'completed') {
+    throw new Error(`TaskManager retryRun did not complete cleanly: ${taskManager.getRun(createdRun.id)?.status}`)
+  }
+
+  // Workbench API checks: /assets/recording + /teleprompter/generate + /tasks + /skin/upload
+  const syntheticRecWebm = join(REPO_ROOT, '.tmp', 'synthetic-cam.webm')
+  await runCommandRedirected(
+    bins.ffmpeg,
+    ['-y', '-f', 'lavfi', '-i', 'color=c=#1e293b:s=320x240:d=1', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:v', 'libvpx', '-c:a', 'libopus', syntheticRecWebm],
+    { timeoutMs: 20_000 },
+  )
+  const recApiRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1:4399/api/video-workbench/assets/recording', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectDir: tmpHtmlProj,
+        fileName: 'webcam-test.webm',
+        role: 'host_video',
+        extractVoiceClone: false,
+        dataBase64: readFileSync(syntheticRecWebm).toString('base64'),
+      }),
+    }),
+  )
+  const recApiJson = await recApiRes.json()
+  if (!recApiJson.ok || !existsSync(join(tmpHtmlProj, recApiJson.relPath)) || recApiJson.asset?.role !== 'host_video') {
+    throw new Error(`Recording save API failed: ${JSON.stringify(recApiJson)}`)
+  }
+  const teleRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1:4399/api/video-workbench/teleprompter/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir: tmpHtmlProj, topic: 'AI Agent 协同作战测试', durationSec: 30 }),
+    }),
+  )
+  const teleJson = await teleRes.json()
+  if (!teleJson.ok || !Array.isArray(teleJson.lines) || teleJson.lines.length < 2) {
+    throw new Error(`Teleprompter generate API failed: ${JSON.stringify(teleJson)}`)
+  }
+  const png1x1 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+    'base64',
+  ).toString('base64')
+  const skinUpRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1:4399/api/video-workbench/skin/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName: 'self-test-skin.png', dataBase64: png1x1 }),
+    }),
+  )
+  const skinUpJson = await skinUpRes.json()
+  const skinGetRes = await handleWorkbenchApiRequest(
+    new Request(`http://127.0.0.1:4399${skinUpJson.url}`, { method: 'GET' }),
+  )
+  rmSync(join(REPO_ROOT, '.skins', skinUpJson.name || 'nonexistent'), { force: true })
+  if (!skinUpJson.ok || skinGetRes.status !== 200) {
+    throw new Error(`Skin upload/get API failed: up=${JSON.stringify(skinUpJson)} get=${skinGetRes.status}`)
+  }
+
+  console.log(
+    `[12/13] v5 AI Agent Command Deck OK (Alpha Avatar WebM [${avVStream.pix_fmt}] -> HTML5 & Remotion + Curate/Edit [${curateRes.editedCount}] + TaskManager Pause/Resume/Kill/Retry + Webcam Recording + Teleprompter + Skin)!`,
+  )
+
+  // 13. Re-scaffold clean starter demos & validate Lint + Open-Source Hygiene Scan
   const demoDir = join(REPO_ROOT, 'examples', 'demo-html-project')
   const demoRemotionDir = join(REPO_ROOT, 'examples', 'demo-remotion-project')
   scaffoldVideoProject(demoDir, {
@@ -1021,7 +1200,7 @@ export const VideoComposition: React.FC = () => {
     throw new Error(`Hardcoded machine paths found in tracked files: ${violations.join(', ')}`)
   }
   console.log(
-    `[12/12] Starter Demos lint-verified & 0 hardcoded personal paths/keys across all tracked files!`,
+    `[13/13] Starter Demos lint-verified & 0 hardcoded personal paths/keys across all tracked files!`,
   )
   console.log('======================================================================')
 }

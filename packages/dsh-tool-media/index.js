@@ -45,6 +45,10 @@ import {
   rollbackAiVersion,
   runAiStudioPipeline,
 } from './ai-coder.js'
+import { executeCurateAndEditAssets } from './media-editor.js'
+import { generateAiCodedSfxCues } from './audio-coder.js'
+import { runMultiAgentPipeline, startPipelineBackground } from './pipeline-orchestrator.js'
+import { taskManager } from './task-manager.js'
 import {
   generateAiCodedBgmTrack,
   synthesizeTtsEngineAudioCue,
@@ -559,6 +563,71 @@ export function apply(ctx) {
       return await renderVendorClipIsolated(args)
     },
   })
+
+  ctx.tools.register({
+    name: 'curate_and_edit_assets',
+    description:
+      'Use FFmpeg to smart-crop, color-grade, speed-scale, trim, and optionally chroma-key matte Step 1 imported images and video clips into assets/edited/, updating script.json references.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectDir: { type: 'string', description: 'Video project directory.' },
+        aspectRatio: { type: 'string', description: 'Target aspect ratio (auto, 16:9, 9:16, 3:4, 1:1).' },
+        quality: { type: 'string', description: 'Quality preset (720p, 1080p, 2k, 4k).' },
+        style: { type: 'string', description: 'Color grading style preset (tech, cinema, documentary, energetic, warm).' },
+        trimSeconds: { type: 'number', description: 'Optional max duration cap per video clip in seconds.' },
+        clipSpeed: { type: 'number', description: 'Optional video playback speed multiplier (0.5 to 2.5).' },
+        chromaKeyColor: { type: 'string', description: 'Optional hex color (e.g. #00FF00) for green-screen alpha matting to yuva420p WebM.' },
+      },
+      required: ['projectDir'],
+      additionalProperties: false,
+    },
+    output: { schema: { type: 'object', additionalProperties: true } },
+    timeoutMs: 180_000,
+    isConcurrencySafe: () => false,
+    async execute(args) {
+      return await executeCurateAndEditAssets(args)
+    },
+  })
+
+  ctx.tools.register({
+    name: 'run_agent_pipeline',
+    description:
+      'Launch the coordinated 4-Agent Video Production Pipeline (策划导演 Agent -> 素材剪辑 Agent -> 配音混音 Agent [+ Digital Human] -> 动效质检 Agent & MP4 render), tracked via Task Center with Pause/Stop/Retry controls.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectDir: { type: 'string', description: 'Video project directory.' },
+        topic: { type: 'string', description: 'Video creative theme or brief.' },
+        mode: { type: 'string', enum: ['ai-coded', 'fast-draft'], description: 'Pipeline mode: ai-coded or fast-draft.' },
+        engine: { type: 'string', enum: ['html', 'remotion'], description: 'Target rendering engine.' },
+        aspectRatio: { type: 'string', description: '16:9, 9:16, 3:4, 1:1, or auto.' },
+        quality: { type: 'string', description: '720p, 1080p, 2k, 4k.' },
+        bgmMode: { type: 'string', enum: ['uploaded', 'llm-coded', 'tts-engine'], description: 'BGM source mode.' },
+        avatarEnabled: { type: 'boolean', description: 'Include transparent digital human presenter overlay.' },
+        avatarMode: { type: 'string', enum: ['ai-human', 'cloned-human'], description: 'Avatar generation mode.' },
+        avatarLayout: { type: 'string', enum: ['pip-br', 'pip-bl', 'fullscreen'], description: 'Avatar compositing layout.' },
+        background: { type: 'boolean', description: 'If true, start asynchronously and return Task Center runId immediately.' },
+      },
+      required: ['projectDir'],
+      additionalProperties: false,
+    },
+    output: { schema: { type: 'object', additionalProperties: true } },
+    timeoutMs: 600_000,
+    isConcurrencySafe: () => false,
+    async execute(args) {
+      if (args.background) return await startPipelineBackground(args)
+      return await runMultiAgentPipeline(args)
+    },
+  })
+}
+
+export {
+  executeCurateAndEditAssets,
+  generateAiCodedSfxCues,
+  runMultiAgentPipeline,
+  startPipelineBackground,
+  taskManager,
 }
 
 export default { name, inject, apply }

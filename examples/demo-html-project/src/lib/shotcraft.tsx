@@ -6,8 +6,10 @@
 import React from 'react'
 import {
   AbsoluteFill,
+  OffthreadVideo,
   interpolate,
   spring,
+  staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion'
@@ -405,6 +407,70 @@ export const EndNotice: React.FC<EndNoticeProps> = ({
       >
         {text}
       </div>
+    </div>
+  )
+}
+
+export interface AvatarOverlayProps {
+  clipPath?: string
+  layout?: 'fullscreen' | 'pip-bl' | 'pip-br' | 'off' | string
+  accentColor?: string
+  muted?: boolean
+}
+
+export const AvatarOverlay: React.FC<AvatarOverlayProps> = ({
+  clipPath,
+  layout = 'pip-br',
+  accentColor = '#22D3EE',
+  muted = true,
+}) => {
+  const { width, height } = useVideoConfig()
+  if (!clipPath || layout === 'off') return null
+  const isPortrait = width < height
+  const cleanRel = String(clipPath).replace(/^\.?[\\/]+/, '').replace(/\\/g, '/')
+
+  if (layout === 'fullscreen') {
+    return (
+      <AbsoluteFill style={{ pointerEvents: 'none', zIndex: 25, justifyContent: 'flex-end', alignItems: 'center' }}>
+        <OffthreadVideo
+          src={staticFile(cleanRel)}
+          transparent
+          muted={muted}
+          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+        />
+      </AbsoluteFill>
+    )
+  }
+
+  const boxWidth = isPortrait ? Math.round(width * 0.34) : Math.round(width * 0.22)
+  const boxHeight = Math.round(boxWidth * 1.125)
+  const sidePx = isPortrait ? 28 : 42
+  const bottomPx = isPortrait ? Math.round(height * 0.25) : 96
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: bottomPx,
+        left: layout === 'pip-bl' ? sidePx : undefined,
+        right: layout === 'pip-bl' ? undefined : sidePx,
+        width: boxWidth,
+        height: boxHeight,
+        borderRadius: 20,
+        overflow: 'hidden',
+        border: `1.5px solid ${accentColor}55`,
+        background: 'rgba(6, 10, 18, 0.28)',
+        boxShadow: `0 18px 46px rgba(0,0,0,0.55), 0 0 24px ${accentColor}22`,
+        pointerEvents: 'none',
+        zIndex: 35,
+      }}
+    >
+      <OffthreadVideo
+        src={staticFile(cleanRel)}
+        transparent
+        muted={muted}
+        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+      />
     </div>
   )
 }

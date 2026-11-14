@@ -6,6 +6,7 @@
   "type": "module",
   "dependencies": {
     "@dsh-video/tool-local-tts": "workspace:*",
+    "@dsh-video/tool-avatar": "workspace:*",
     "@dsh-video/tool-video-suite": "workspace:*",
     "@dsh-video/tool-media": "workspace:*",
     "@dsh-video/preset-video": "workspace:*",

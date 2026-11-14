@@ -13,7 +13,7 @@ import {
   useVideoConfig,
 } from 'remotion';
 import scriptData from '../script.json';
-import { AIBadge, EndNotice, FONT_SANS, FONT_MONO } from './lib/shotcraft';
+import { AIBadge, AvatarOverlay, EndNotice, FONT_SANS, FONT_MONO } from './lib/shotcraft';
 
 const PALETTE: any = {"background":"#070B16","surface":"#111A30","textPrimary":"#F8FAFC","textSecondary":"#CBD5E1","accent":"#38BDF8","accent2":"#7DB2FF","gold":"#F5B92E","rgbAccent":"125,178,255","rgbGold":"245,185,46","titleGrad":"linear-gradient(180deg,#FFFFFF 0%,#E2E8F0 52%,#94A3B8 100%)","accentGrad":"linear-gradient(180deg,#CFE1FF 0%,#4F95FF 55%,#1F5FE0 100%)"};
 const SANS = FONT_SANS;
@@ -985,6 +985,8 @@ export const VideoComposition: React.FC = () => {
     return frame >= sf && frame < ef;
   });
   const subText = activeSub?.text || activeScene?.subtitleLine || '';
+  const activeAvatar = activeScene?.avatarClip?.path ? activeScene.avatarClip : (sData?.avatarClip?.path ? sData.avatarClip : null);
+  const avatarLayout = activeScene?.avatarLayout || activeAvatar?.layout || sData?.avatarLayout || 'pip-br';
 
   return (
     <AbsoluteFill style={{ backgroundColor: PALETTE.background }}>
@@ -997,6 +999,15 @@ export const VideoComposition: React.FC = () => {
           <SceneStage scene={scene} idx={idx} total={scenes.length} beats={beats} />
         </Sequence>
       ))}
+
+      {activeAvatar?.path && avatarLayout !== 'off' ? (
+        <AvatarOverlay
+          clipPath={activeAvatar.path}
+          layout={avatarLayout}
+          accentColor={PALETTE.accent}
+          muted={true}
+        />
+      ) : null}
 
       <AIBadge
         visible={true}

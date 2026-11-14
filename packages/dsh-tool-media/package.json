@@ -7,6 +7,8 @@
   "main": "./index.js",
   "dependencies": {
     "@dsh-video/shared": "workspace:*",
-    "@dsh-video/tool-local-tts": "workspace:*"
+    "@dsh-video/tool-local-tts": "workspace:*",
+    "@dsh-video/tool-avatar": "workspace:*",
+    "@dsh-video/tool-video-suite": "workspace:*"
   }
 }

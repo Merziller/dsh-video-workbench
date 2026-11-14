@@ -88,11 +88,45 @@ export function resolveBinaries() {
 }
 
 /**
+ * Forcefully terminate a spawned child process tree (Windows `taskkill /T /F` fallback `SIGKILL`).
+ */
+export function killProcessTree(child) {
+  if (!child) return
+  try {
+    if (process.platform === 'win32' && child.pid) {
+      const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+      killer.on('error', () => {})
+    }
+  } catch {}
+  try {
+    child.kill('SIGKILL')
+  } catch {
+    try {
+      child.kill()
+    } catch {}
+  }
+}
+
+export function createAbortError(message = '任务已手动停止 (Aborted)') {
+  const err = new Error(message)
+  err.name = 'AbortError'
+  err.code = 'ABORT_ERR'
+  return err
+}
+
+/**
  * Spawn a child process using file-redirected stdio to avoid Windows sandbox pipe `EPERM`.
+ * Supports AbortSignal cancellation and immediate process-tree cleanup.
  * Adapted from MIT-licensed `dsh-video-studio/dsh/ffmpeg.js`.
  */
 export function runCommandRedirected(bin, args = [], options = {}) {
-  const { cwd = REPO_ROOT, env = process.env, timeoutMs = 180_000 } = options
+  const { cwd = REPO_ROOT, env = process.env, timeoutMs = 180_000, signal, onChild } = options
+  if (signal?.aborted) {
+    return Promise.reject(createAbortError())
+  }
   const tempRoot = join(REPO_ROOT, '.tmp')
   if (!existsSync(tempRoot)) {
     try {
@@ -138,12 +172,26 @@ export function runCommandRedirected(bin, args = [], options = {}) {
       stdio: ['ignore', stdoutFd, stderrFd],
       windowsHide: true,
     })
+    if (typeof onChild === 'function') {
+      try { onChild(child) } catch {}
+    }
+
+    const onAbort = () => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      killProcessTree(child)
+      cleanupAndRead()
+      rejectPromise(createAbortError('子进程已响应停止指令并终止'))
+    }
+    signal?.addEventListener?.('abort', onAbort, { once: true })
 
     if (timeoutMs > 0) {
       timer = setTimeout(() => {
         if (settled) return
         settled = true
-        try { child.kill() } catch {}
+        signal?.removeEventListener?.('abort', onAbort)
+        killProcessTree(child)
         const { stdout, stderr } = cleanupAndRead()
         rejectPromise(new Error(`Command timed out after ${timeoutMs}ms: ${bin}\n${stderr || stdout}`))
       }, timeoutMs)
@@ -153,6 +201,7 @@ export function runCommandRedirected(bin, args = [], options = {}) {
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
+      signal?.removeEventListener?.('abort', onAbort)
       cleanupAndRead()
       rejectPromise(err)
     })
@@ -161,6 +210,7 @@ export function runCommandRedirected(bin, args = [], options = {}) {
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
+      signal?.removeEventListener?.('abort', onAbort)
       const { stdout, stderr } = cleanupAndRead()
       resolvePromise({ code: code ?? 0, stdout, stderr })
     })

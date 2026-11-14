@@ -9,6 +9,7 @@ export function ensureWorkspaceLinks() {
   const pkgMap = {
     shared: 'packages/shared',
     'tool-local-tts': 'packages/dsh-tool-local-tts',
+    'tool-avatar': 'packages/dsh-tool-avatar',
     'tool-video-suite': 'packages/dsh-tool-video-suite',
     'tool-media': 'packages/dsh-tool-media',
     'preset-video': 'packages/dsh-preset-video',
@@ -39,6 +40,7 @@ export function setupDshVideoProfile() {
 
   const pluginPaths = [
     join(REPO_ROOT, 'packages', 'dsh-tool-local-tts', 'index.js').replace(/\\/g, '/'),
+    join(REPO_ROOT, 'packages', 'dsh-tool-avatar', 'index.js').replace(/\\/g, '/'),
     join(REPO_ROOT, 'packages', 'dsh-tool-video-suite', 'index.js').replace(/\\/g, '/'),
     join(REPO_ROOT, 'packages', 'dsh-tool-media', 'index.js').replace(/\\/g, '/'),
     join(REPO_ROOT, 'packages', 'dsh-preset-video', 'index.js').replace(/\\/g, '/'),
@@ -108,7 +110,7 @@ export function setupDshVideoProfile() {
           (line) =>
             !(
               /^\s*-\s+path:/.test(line) &&
-              /dsh-tool-local-tts|dsh-tool-video-suite|dsh-tool-media|dsh-preset-video|dsh-web-video-workbench/.test(line)
+              /dsh-tool-local-tts|dsh-tool-avatar|dsh-tool-video-suite|dsh-tool-media|dsh-preset-video|dsh-web-video-workbench/.test(line)
             ),
         )
         .join('\n')

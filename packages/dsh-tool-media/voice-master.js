@@ -149,7 +149,7 @@ async function applyFfmpegVocalChain(ffmpeg, srcWav, dstWav, spec) {
   const baseFilters = [
     'aresample=48000',
     'aformat=sample_fmts=fltp:channel_layouts=stereo',
-    ...(spec.trimLeadingSilence ? ['silenceremove=start_periods=1:start_duration=0.04:start_threshold=-42dB'] : []),
+    ...(spec.trimLeadingSilence ? ['silenceremove=start_periods=1:start_duration=0.04:start_threshold=-42dB:stop_periods=-1:stop_duration=0.35:stop_threshold=-42dB'] : []),
     `highpass=f=${spec.highpassHz}`,
     `equalizer=f=${spec.lowWarmthFreq}:t=q:w=1.1:g=${spec.lowWarmthGainDb}`,
     `equalizer=f=360:t=q:w=1.4:g=${spec.mudCutDb}`,
@@ -160,17 +160,23 @@ async function applyFfmpegVocalChain(ffmpeg, srcWav, dstWav, spec) {
   ]
 
   let filterComplex = ''
+  const safeTempo = Number(spec.tempo || 1.0)
+  const tempoChain = []
+  if (Math.abs(safeTempo - 1.0) > 0.02 && safeTempo >= 0.5 && safeTempo <= 2.0) {
+    tempoChain.push(`atempo=${safeTempo.toFixed(3)}`)
+  }
+  const fullChain = [...baseFilters, ...tempoChain]
   if (spec.reverbWet > 0.005) {
     const dryWeight = Math.max(0.75, Number((1 - spec.reverbWet).toFixed(3)))
     const wet2 = Number((spec.reverbWet * 0.55).toFixed(3))
     filterComplex =
-      `[0:a]${baseFilters.join(',')},asplit=2[vd][vr];` +
+      `[0:a]${fullChain.join(',')},asplit=2[vd][vr];` +
       `[vr]aecho=0.8:0.72:26|46:${spec.reverbWet}|${wet2}[vr_wet];` +
       `[vd][vr_wet]amix=inputs=2:normalize=0:weights=${dryWeight}|1,` +
       `loudnorm=I=${spec.targetLufs}:TP=-1.5:LRA=7,alimiter=limit=0.92[v_master]`
   } else {
     filterComplex =
-      `[0:a]${baseFilters.join(',')},loudnorm=I=${spec.targetLufs}:TP=-1.5:LRA=7,alimiter=limit=0.92[v_master]`
+      `[0:a]${fullChain.join(',')},loudnorm=I=${spec.targetLufs}:TP=-1.5:LRA=7,alimiter=limit=0.92[v_master]`
   }
 
   const res = await runCommandRedirected(
@@ -191,7 +197,7 @@ async function applyFfmpegVocalChain(ffmpeg, srcWav, dstWav, spec) {
       '2',
       dstWav,
     ],
-    { timeoutMs: 90_000 },
+    { timeoutMs: 90_000, signal: spec.signal, onChild: spec.onChild },
   )
   if (res.code !== 0 || !existsSync(dstWav)) {
     throw new Error(`FFmpeg 修音链路失败: ${res.stderr || res.stdout}`)
@@ -205,8 +211,12 @@ export async function masterVoiceTracks({
   projectDir,
   sceneIds = [],
   useLlm = true,
+  speechTempo = 1.0,
+  trimSilence = false,
   llmOverride = {},
   fetchImpl,
+  signal,
+  onChild,
   onProgress,
 } = {}) {
   if (!projectDir) throw new Error('projectDir is required')
@@ -324,9 +334,16 @@ export async function masterVoiceTracks({
 
   const results = []
   for (const sc of targets) {
+    if (signal?.aborted) break
     const rawWav = isAbsolute(sc.audioFile) ? sc.audioFile : resolve(absDir, sc.audioFile)
     const before = telemetryByScene[sc.id]
     const spec = clampSpec(rawAiSpecsById.get(sc.id), sc, before, script.style)
+    if (Math.abs(Number(speechTempo || 1) - 1.0) > 0.02) {
+      spec.tempo = Math.max(0.75, Math.min(1.65, Number(speechTempo)))
+    }
+    if (trimSilence) spec.trimLeadingSilence = true
+    spec.signal = signal
+    spec.onChild = onChild
     const dstRel = `audio/mastered/${sc.id}.wav`
     const dstAbs = join(absDir, dstRel)
 

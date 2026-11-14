@@ -356,6 +356,8 @@ export function buildRichHtmlVideo(script) {
       narration: s.narration || '',
       subtitles: Array.isArray(s.subtitles) ? s.subtitles : [],
       counterTarget: Number(s.counterTarget) || 96,
+      avatarClip: s.avatarClip || null,
+      avatarLayout: s.avatarLayout || '',
     }
   })
 
@@ -374,6 +376,8 @@ export function buildRichHtmlVideo(script) {
     accent2: theme.accent2,
     gold: theme.gold,
     beats,
+    avatarClip: script?.avatarClip || null,
+    avatarLayout: script?.avatarLayout || 'pip-br',
     timeline,
   })
 
@@ -707,6 +711,21 @@ export function buildRichHtmlVideo(script) {
       background: rgba(8,12,20,0.76); border: 1px solid rgba(255,255,255,0.18);
       font: 600 15px var(--font-sans); color: #E2E8F0; letter-spacing: 0.03em;
     }
+    #avatar-overlay-wrap {
+      position: absolute; pointer-events: none; z-index: 27; display: none; overflow: hidden;
+      border-radius: 20px; border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
+      background: rgba(6,10,18,0.28);
+      box-shadow: 0 18px 46px rgba(0,0,0,0.55);
+    }
+    #avatar-overlay-wrap.is-fullscreen {
+      inset: 0; border-radius: 0; border: none; background: transparent; box-shadow: none; z-index: 24;
+    }
+    #avatar-overlay-video {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+    }
+    #avatar-overlay-wrap.is-fullscreen #avatar-overlay-video {
+      object-fit: contain;
+    }
     #end-notice-wrap {
       position: absolute; left: ${safeZone.safePaddingPx.left}px; right: ${safeZone.safePaddingPx.right}px; bottom: ${Math.round((Number(script?.subtitleBottomPx) || safeZone.subtitleBottomPx) + (width < height ? 88 : 72))}px;
       display: flex; justify-content: center; pointer-events: none; z-index: 29; opacity: 0;
@@ -779,6 +798,7 @@ export function buildRichHtmlVideo(script) {
       <div id="c-br" class="k-corner"></div>
     </div>
     <div id="ai-badge">${escapeHtml(typeof script?.aiBadge === 'string' && script.aiBadge.trim() ? script.aiBadge : complianceNotice.badgeText)}</div>
+    <div id="avatar-overlay-wrap"><video id="avatar-overlay-video" muted playsinline preload="auto"></video></div>
     <div id="end-notice-wrap"><div id="end-notice">${escapeHtml(complianceNotice.endNoticeBody)}</div></div>
     <div id="sub-wrap"><div id="sub-pill"></div></div>
     <div id="progress-line"><div id="progress-fill"></div></div>
@@ -1288,6 +1308,71 @@ export function buildRichHtmlVideo(script) {
       }
     }
 
+    const avatarWrap = document.getElementById('avatar-overlay-wrap');
+    const avatarVideo = document.getElementById('avatar-overlay-video');
+    let loadedAvatarSrc = '';
+
+    async function syncAvatarOverlay(frameNum) {
+      if (!avatarWrap || !avatarVideo) return;
+      const item = (CFG.timeline || []).find((s) => frameNum >= s.startFrame && frameNum < s.endFrame) || (CFG.timeline || [])[0];
+      const clip = item?.avatarClip?.path ? item.avatarClip : (CFG.avatarClip?.path ? CFG.avatarClip : null);
+      const layout = item?.avatarLayout || clip?.layout || CFG.avatarLayout || 'pip-br';
+      if (!clip?.path || layout === 'off') {
+        avatarWrap.style.display = 'none';
+        return;
+      }
+      const cleanRel = String(clip.path).replace(/^\\.?[\\\\/]+/, '').replace(/\\\\/g, '/');
+      if (loadedAvatarSrc !== cleanRel) {
+        loadedAvatarSrc = cleanRel;
+        avatarVideo.src = cleanRel;
+        if (avatarVideo.readyState < 1) {
+          await new Promise((res) => {
+            avatarVideo.onloadedmetadata = res;
+            avatarVideo.onerror = res;
+            setTimeout(res, 1500);
+          });
+        }
+      }
+      const isPortrait = CFG.width < CFG.height;
+      avatarWrap.style.display = 'block';
+      if (layout === 'fullscreen') {
+        avatarWrap.className = 'is-fullscreen';
+        avatarWrap.style.left = '0px';
+        avatarWrap.style.right = '0px';
+        avatarWrap.style.top = '0px';
+        avatarWrap.style.bottom = '0px';
+        avatarWrap.style.width = '100%';
+        avatarWrap.style.height = '100%';
+      } else {
+        avatarWrap.className = '';
+        const boxW = isPortrait ? Math.round(CFG.width * 0.34) : Math.round(CFG.width * 0.22);
+        const boxH = Math.round(boxW * 1.125);
+        const sidePx = isPortrait ? 28 : 42;
+        const bottomPx = isPortrait ? Math.round(CFG.height * 0.25) : 96;
+        avatarWrap.style.top = 'auto';
+        avatarWrap.style.bottom = bottomPx + 'px';
+        avatarWrap.style.width = boxW + 'px';
+        avatarWrap.style.height = boxH + 'px';
+        avatarWrap.style.left = layout === 'pip-bl' ? sidePx + 'px' : 'auto';
+        avatarWrap.style.right = layout === 'pip-bl' ? 'auto' : sidePx + 'px';
+      }
+      if (avatarVideo.readyState >= 1) {
+        const dur = Number.isFinite(avatarVideo.duration) && avatarVideo.duration > 0.2 ? avatarVideo.duration : 10;
+        const targetSec = (frameNum / Math.max(1, CFG.fps)) % dur;
+        if (Math.abs((avatarVideo.currentTime || 0) - targetSec) > 0.015) {
+          await new Promise((resolveSeek) => {
+            const done = () => {
+              avatarVideo.removeEventListener('seeked', done);
+              resolveSeek();
+            };
+            avatarVideo.addEventListener('seeked', done, { once: true });
+            try { avatarVideo.currentTime = Math.max(0, Math.min(dur - 0.04, targetSec)); } catch { done(); }
+            setTimeout(done, 120);
+          });
+        }
+      }
+    }
+
     async function seekVideosForActiveScene(frameNum) {
       const f = Math.max(0, Math.min(CFG.totalFrames - 1, Math.round(frameNum)));
       const t = f / CFG.fps;
@@ -1321,6 +1406,7 @@ export function buildRichHtmlVideo(script) {
 
     window.__seekToFrame = async (frame) => {
       await seekVideosForActiveScene(frame);
+      await syncAvatarOverlay(frame);
       renderFrameSync(frame);
       return frame;
     };

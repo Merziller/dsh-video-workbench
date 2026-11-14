@@ -309,8 +309,21 @@ export async function saveUploadedAsset(projectDir, relName, buffer) {
 }
 
 export function summarizeAssets(manifest) {
-  const s = { image: 0, video: 0, music: 0, sfx: 0, notes: manifest.notes?.length || 0, totalVideoSec: 0 }
+  const s = {
+    image: 0,
+    video: 0,
+    music: 0,
+    sfx: 0,
+    hostVideo: 0,
+    avatarBase: 0,
+    voiceClone: 0,
+    notes: manifest.notes?.length || 0,
+    totalVideoSec: 0,
+  }
   for (const it of manifest.items || []) {
+    if (it.role === 'host_video') s.hostVideo++
+    if (it.role === 'avatar_base') s.avatarBase++
+    if (it.role === 'voice_clone') s.voiceClone++
     if (it.type === 'image') s.image++
     else if (it.type === 'video') {
       s.video++

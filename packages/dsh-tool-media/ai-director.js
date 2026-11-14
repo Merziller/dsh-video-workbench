@@ -171,7 +171,9 @@ export async function planVideoFromAssets(options = {}) {
   }
 
   const assets = readAssets(absDir)
-  const visuals = (assets.items || []).filter((it) => it.type === 'image' || it.type === 'video')
+  const allVisuals = (assets.items || []).filter((it) => it.type === 'image' || it.type === 'video')
+  const nonAvatarVisuals = allVisuals.filter((it) => it.role !== 'avatar_base')
+  const visuals = nonAvatarVisuals.length > 0 ? nonAvatarVisuals : allVisuals
   const importedMusic = (assets.items || []).filter((it) => it.role === 'music')
   const importedSfx = (assets.items || []).filter((it) => it.role === 'sfx')
   const notesText = (assets.notes || []).map((n) => n.text).join('\n').trim()
@@ -221,8 +223,9 @@ export async function planVideoFromAssets(options = {}) {
     // Assign primary+secondary media from bucket, plus pool fallback for collage stages
     const mediaArr = bucket.slice(0, 4).map((m, mi) => ({
       assetId: m.id,
-      path: m.path,
-      webPath: m.webPath || '',
+      path: m.editedPath || m.path,
+      originalPath: m.path,
+      webPath: m.editedWebPath || m.webPath || '',
       type: m.type,
       motion: MOTIONS[(i + mi) % MOTIONS.length],
       trimStartSec: 0,
@@ -335,6 +338,7 @@ export async function planVideoFromAssets(options = {}) {
       bpm: st.bpm,
       volume: 0.28,
       path: importedMusic[0]?.path || '',
+      uploadedPath: importedMusic[0]?.path || existing?.bgm?.uploadedPath || '',
       source: importedMusic.length > 0 ? 'user-imported' : 'generated',
     },
     scenes,

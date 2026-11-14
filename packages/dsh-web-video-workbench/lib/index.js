@@ -15,12 +15,21 @@ import { fileURLToPath } from 'node:url'
 import {
   computeSafeZonePreflight,
   loadEnv,
+  probeAudioDuration,
   readScriptJson,
   REPO_ROOT,
+  resolveBinaries,
   resolveEnvPath,
   resolveVideoDimensions,
+  runCommandRedirected,
   writeScriptJson,
 } from '@dsh-video/shared'
+import {
+  AVATAR_TEMPLATES,
+  executeGenerateAvatar,
+  getAvatarProviderSummary,
+  probeVideoStream,
+} from '@dsh-video/tool-avatar'
 import {
   cloneRecordedVoice,
   executeGenerateSpeech,
@@ -59,6 +68,9 @@ import {
   synthesizeTtsEngineAudioCue,
   testLlmConnection,
   updateAsset,
+  executeCurateAndEditAssets,
+  startPipelineBackground,
+  taskManager,
 } from '@dsh-video/tool-media'
 import {
   scaffoldVideoProject,
@@ -344,6 +356,7 @@ export async function handleWorkbenchApiRequest(req) {
           hasMp4: existsSync(join(requestedProject, 'output', 'final.mp4')),
           hasSnapshot: existsSync(join(requestedProject, 'output', 'snapshot-3x3.png')),
           hasMasterAudio: existsSync(join(requestedProject, 'output', 'master-audio.wav')),
+          hasAvatarClip: Boolean(data?.avatarClip?.path),
           qaReport: readOptionalJson(join(requestedProject, 'output', 'qa_report.json')),
           buildLog: readOptionalJson(join(requestedProject, 'output', 'ai_build_log.json')),
           historyCount: getAiCodingHistory(requestedProject).length,
@@ -361,6 +374,9 @@ export async function handleWorkbenchApiRequest(req) {
         voiceCategories: catalog.categories,
         availableEmotions: Object.keys(catalog.emotionReferences),
         ttsStatus,
+        avatarTemplates: AVATAR_TEMPLATES,
+        avatarProvider: getAvatarProviderSummary(),
+        taskRuns: requestedProject ? taskManager.listRuns(requestedProject) : [],
         presetId: 'video-maker',
         presetName: '视频制作模式',
       })
@@ -505,6 +521,11 @@ export async function handleWorkbenchApiRequest(req) {
         projectDir: body.projectDir,
         sources: body.sources,
       })
+      if (body.role && Array.isArray(res.added)) {
+        for (const item of res.added) {
+          updateAsset(body.projectDir, item.id, { role: String(body.role) })
+        }
+      }
       const manifest = readAssets(body.projectDir)
       return jsonResponse({
         ok: true,
@@ -533,6 +554,11 @@ export async function handleWorkbenchApiRequest(req) {
         projectDir,
         sources: savedPaths,
       })
+      if (body.role && Array.isArray(res.added)) {
+        for (const item of res.added) {
+          updateAsset(projectDir, item.id, { role: String(body.role) })
+        }
+      }
       const manifest = readAssets(projectDir)
       return jsonResponse({
         ok: true,
@@ -1089,6 +1115,303 @@ export async function handleWorkbenchApiRequest(req) {
       return jsonResponse({ ok: false, error: `Unknown action: ${action}` }, 400)
     }
 
+    // 6a. GET /api/video-workbench/tasks (list real-time & historical Task Center runs)
+    if (pathname === '/api/video-workbench/tasks' && req.method === 'GET') {
+      const projectDir = url.searchParams.get('projectDir') || ''
+      const runId = url.searchParams.get('runId') || ''
+      const runs = taskManager.listRuns(projectDir)
+      const activeRun = runId ? taskManager.getRun(runId) : (runs.find((r) => r.status === 'running' || r.status === 'paused') || runs[0] || null)
+      return jsonResponse({
+        ok: true,
+        runs,
+        activeRun,
+      })
+    }
+
+    // 6b. POST /api/video-workbench/tasks/control (pause, resume, stop, retry, pause-all, stop-all)
+    if (pathname === '/api/video-workbench/tasks/control' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      const action = String(body.action || '').trim().toLowerCase()
+      const projectDir = body.projectDir || ''
+      const runId = body.runId || ''
+
+      if (action === 'stop-all') {
+        const stopped = taskManager.stopAll(projectDir)
+        return jsonResponse({ ok: true, action, stoppedCount: stopped.length, runs: taskManager.listRuns(projectDir) })
+      }
+      if (action === 'pause-all') {
+        const paused = taskManager.pauseAll(projectDir)
+        return jsonResponse({ ok: true, action, pausedCount: paused.length, runs: taskManager.listRuns(projectDir) })
+      }
+      if (!runId) return jsonResponse({ ok: false, error: 'runId is required for single-run control' }, 400)
+
+      let updated = null
+      if (action === 'pause') updated = taskManager.pauseRun(runId)
+      else if (action === 'resume' || action === 'start') updated = await taskManager.resumeRun(runId)
+      else if (action === 'stop') updated = taskManager.stopRun(runId)
+      else if (action === 'retry') updated = await taskManager.retryRun(runId, { taskId: body.taskId || '' })
+      else return jsonResponse({ ok: false, error: `Unsupported task action: ${action}` }, 400)
+
+      return jsonResponse({
+        ok: true,
+        action,
+        run: updated,
+        runs: taskManager.listRuns(projectDir || updated?.projectDir || ''),
+      })
+    }
+
+    // 6c. POST /api/video-workbench/pipeline/start (Launch 4-Agent Command Pipeline)
+    if (pathname === '/api/video-workbench/pipeline/start' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir) return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
+      const run = await startPipelineBackground(body)
+      return jsonResponse({
+        ok: true,
+        runId: run.id,
+        run,
+        runs: taskManager.listRuns(body.projectDir),
+      })
+    }
+
+    // 6d. POST /api/video-workbench/assets/recording (Save webcam capture to assets/recordings/, ffprobe & optional clone)
+    if (pathname === '/api/video-workbench/assets/recording' && req.method === 'POST') {
+      const ct = String(req.headers.get('content-type') || '').toLowerCase()
+      let projectDir = ''
+      let fileName = ''
+      let role = 'host_video'
+      let extractVoiceClone = false
+      let cloneName = ''
+      let binBuf = null
+
+      if (ct.includes('application/json')) {
+        const body = await parseRequestJson(req)
+        projectDir = body.projectDir || ''
+        fileName = body.fileName || `camera-${Date.now()}.webm`
+        role = body.role || 'host_video'
+        extractVoiceClone = Boolean(body.extractVoiceClone)
+        cloneName = body.cloneName || ''
+        if (typeof body.dataBase64 === 'string') {
+          binBuf = Buffer.from(body.dataBase64.replace(/^data:[^;]+;base64,/, ''), 'base64')
+        }
+      } else {
+        projectDir = url.searchParams.get('projectDir') || ''
+        fileName = url.searchParams.get('fileName') || `camera-${Date.now()}.webm`
+        role = url.searchParams.get('role') || 'host_video'
+        extractVoiceClone = ['1', 'true', 'yes'].includes(String(url.searchParams.get('extractVoiceClone') || '').toLowerCase())
+        cloneName = url.searchParams.get('cloneName') || ''
+        binBuf = Buffer.from(await req.arrayBuffer())
+      }
+
+      if (!projectDir || !binBuf || binBuf.length === 0) {
+        return jsonResponse({ ok: false, error: 'projectDir and recording payload are required' }, 400)
+      }
+
+      const absDir = resolve(projectDir)
+      const recDir = join(absDir, 'assets', 'recordings')
+      mkdirSync(recDir, { recursive: true })
+      const safeName = `${Date.now().toString(36)}-${basename(fileName).replace(/[^a-zA-Z0-9._\u4e00-\u9fa5-]/g, '_')}`
+      const destAbs = join(recDir, safeName)
+      writeFileSync(destAbs, binBuf)
+
+      const probe = await probeVideoStream(destAbs).catch(() => ({ durationSec: 0, width: 0, height: 0 }))
+      const audioProbe = await probeAudioDuration(destAbs, 30).catch(() => ({ durationSec: 0 }))
+      const imp = await importAssets({ projectDir: absDir, sources: [destAbs] })
+
+      let addedItem = (imp.added && imp.added[0]) || null
+      if (!addedItem) {
+        const curManifest = readAssets(absDir)
+        addedItem = curManifest.items.find((x) => x.path.endsWith(safeName)) || null
+      }
+      if (addedItem) {
+        updateAsset(absDir, addedItem.id, { role })
+      }
+
+      let clonedVoice = null
+      if (extractVoiceClone) {
+        try {
+          const { ffmpeg } = resolveBinaries()
+          const dryWav = join(recDir, `${safeName.replace(/\.[^.]+$/, '')}-vocal24k.wav`)
+          const ffRes = await runCommandRedirected(
+            ffmpeg,
+            ['-y', '-i', destAbs, '-vn', '-af', 'highpass=f=80', '-ac', '1', '-ar', '24000', '-c:a', 'pcm_s16le', dryWav],
+            { timeoutMs: 30_000 },
+          )
+          const refSrc = ffRes.code === 0 && existsSync(dryWav) ? dryWav : destAbs
+          const cloned = await cloneRecordedVoice({
+            sourcePath: refSrc,
+            name: cloneName || `出镜录制声纹-${new Date().toLocaleTimeString('zh-CN', { hour12: false }).replace(/:/g, '')}`,
+            gender: 'neutral',
+          })
+          clonedVoice = cloned?.voice || null
+        } catch {}
+      }
+
+      const manifest = readAssets(absDir)
+      return jsonResponse({
+        ok: true,
+        relPath: `assets/recordings/${safeName}`,
+        durationSec: probe.durationSec || audioProbe.durationSec || 0,
+        probe,
+        asset: addedItem ? { ...addedItem, role } : null,
+        clonedVoice,
+        manifest,
+        summary: summarizeAssets(manifest),
+      })
+    }
+
+    // 6e. POST /api/video-workbench/assets/role (Reclassify uploaded asset role in Step 1)
+    if (pathname === '/api/video-workbench/assets/role' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir || !body.assetId || !body.role) {
+        return jsonResponse({ ok: false, error: 'projectDir, assetId, and role are required' }, 400)
+      }
+      const patched = updateAsset(body.projectDir, body.assetId, { role: String(body.role) })
+      const manifest = readAssets(body.projectDir)
+      return jsonResponse({
+        ok: true,
+        asset: patched,
+        manifest,
+        summary: summarizeAssets(manifest),
+      })
+    }
+
+    // 6f. POST /api/video-workbench/assets/curate (Manual invoke of FFmpeg Media Editor Agent)
+    if (pathname === '/api/video-workbench/assets/curate' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir) return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
+      const res = await executeCurateAndEditAssets(body)
+      const manifest = readAssets(body.projectDir)
+      const script = existsSync(join(resolve(body.projectDir), 'script.json')) ? readScriptJson(body.projectDir).data : null
+      return jsonResponse({
+        ok: true,
+        ...res,
+        manifest,
+        summary: summarizeAssets(manifest),
+        script,
+      })
+    }
+
+    // 6g. POST /api/video-workbench/teleprompter/generate (AI Teleprompter script lines)
+    if (pathname === '/api/video-workbench/teleprompter/generate' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      const projectDir = body.projectDir || ''
+      const existingScript = projectDir && existsSync(join(resolve(projectDir), 'script.json'))
+        ? readScriptJson(projectDir).data
+        : null
+      const topic = String(body.topic || existingScript?.topic || existingScript?.title || 'AI 智能视觉产品发布').trim()
+      const durationSec = Math.max(15, Math.min(180, Number(body.durationSec) || 45))
+      const tone = String(body.tone || '口语自然、开场抓人、节奏利落').trim()
+      const llmSummary = getSafeLlmConfigSummary()
+
+      let spokenText = ''
+      let modelUsed = 'local-script-template'
+
+      if (llmSummary.configured && !body.forceLocal) {
+        try {
+          const reply = await callLlmChat({
+            system: `你是顶级短视频真人口播与黄金三秒编剧。请根据主题撰写可直接放在提词器上朗读的口播文稿：
+- 总时长约 ${durationSec} 秒（每句 12~24 字自动换行，适合相机直视朗读）。
+- 语气风格：${tone}。
+- 纯口播台词，不要加“【镜头1】”、“（微笑）”等括号或场记符号，只输出分句换行文本。`,
+            messages: [
+              {
+                role: 'user',
+                content: JSON.stringify({
+                  topic,
+                  existingScenes: (existingScript?.scenes || []).map((s) => s.narration || s.title).filter(Boolean),
+                }),
+              },
+            ],
+            temperature: 0.45,
+            maxTokens: 1200,
+            timeoutMs: 45_000,
+          })
+          spokenText = String(reply.text || '').trim()
+          modelUsed = reply.model || llmSummary.model
+        } catch {}
+      }
+
+      if (!spokenText) {
+        const fromScenes = (existingScript?.scenes || []).map((s) => String(s.narration || '').trim()).filter(Boolean)
+        if (fromScenes.length > 0) {
+          spokenText = fromScenes.join('\n\n')
+        } else {
+          spokenText = [
+            `大家好，今天我们用不到一分钟时间，带你沉浸体验「${topic}」。`,
+            `以前做一条电影级质感短片，需要反复找素材、剪辑调色、配音修音还要对字幕。`,
+            `现在只需要在第一步导入你的素材、背景音乐或者现场录一段口播，`,
+            `AI 导演、素材剪辑、配音混音与动效质检四位智能体就会协同完成全部制作。`,
+            `点击下方开始录制或一键出片，立刻看到你的电影级成品！`,
+          ].join('\n\n')
+        }
+      }
+
+      const lines = spokenText.split(/\r?\n+/).map((l) => l.trim()).filter(Boolean)
+      return jsonResponse({
+        ok: true,
+        model: modelUsed,
+        text: lines.join('\n\n'),
+        lines,
+      })
+    }
+
+    // 6h. POST /api/video-workbench/avatar/generate (Generate transparent alpha WebM avatar)
+    if (pathname === '/api/video-workbench/avatar/generate' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir) return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
+      const res = await executeGenerateAvatar(body)
+      const updatedScript = existsSync(join(resolve(body.projectDir), 'script.json'))
+        ? readScriptJson(body.projectDir).data
+        : null
+      return jsonResponse({
+        ok: true,
+        ...res,
+        previewUrl: res.relPath
+          ? `/api/video-workbench/asset?projectDir=${encodeURIComponent(body.projectDir)}&rel=${encodeURIComponent(res.relPath)}&t=${Date.now()}`
+          : '',
+        script: updatedScript,
+      })
+    }
+
+    // 6i. POST /api/video-workbench/skin/upload & GET /api/video-workbench/skin (Custom background skin)
+    if (pathname === '/api/video-workbench/skin/upload' && req.method === 'POST') {
+      const ct = String(req.headers.get('content-type') || '').toLowerCase()
+      let fileName = `skin-${Date.now()}.jpg`
+      let buf = null
+      if (ct.includes('application/json')) {
+        const body = await parseRequestJson(req)
+        fileName = body.fileName || fileName
+        if (typeof body.dataBase64 === 'string') {
+          buf = Buffer.from(body.dataBase64.replace(/^data:[^;]+;base64,/, ''), 'base64')
+        }
+      } else {
+        fileName = url.searchParams.get('fileName') || fileName
+        buf = Buffer.from(await req.arrayBuffer())
+      }
+      if (!buf || buf.length === 0) return jsonResponse({ ok: false, error: 'Image payload required' }, 400)
+      const skinsDir = join(getWorkspaceRoot(), '.skins')
+      mkdirSync(skinsDir, { recursive: true })
+      const safeSkin = `${Date.now().toString(36)}-${basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_')}`
+      writeFileSync(join(skinsDir, safeSkin), buf)
+      return jsonResponse({
+        ok: true,
+        name: safeSkin,
+        url: `/api/video-workbench/skin?name=${encodeURIComponent(safeSkin)}`,
+      })
+    }
+
+    if (pathname === '/api/video-workbench/skin' && req.method === 'GET') {
+      const nameParam = basename(url.searchParams.get('name') || '')
+      if (!nameParam) return new Response('Not found', { status: 404 })
+      const skinFile = join(getWorkspaceRoot(), '.skins', nameParam)
+      if (!existsSync(skinFile)) return new Response('Not found', { status: 404 })
+      const ext = extname(skinFile).toLowerCase()
+      return new Response(readFileSync(skinFile), {
+        status: 200,
+        headers: { 'Content-Type': MIME_MAP[ext] || 'image/png', 'Cache-Control': 'public, max-age=86400' },
+      })
+    }
+
     // 7. GET /api/video-workbench/asset?projectDir=...&rel=... (stream HTML, images, video, WAV, MP4 with Range support)
     if (pathname === '/api/video-workbench/asset' && req.method === 'GET') {
       const projectDir = url.searchParams.get('projectDir') || ''
@@ -1102,8 +1425,9 @@ export async function handleWorkbenchApiRequest(req) {
       if (ext === '.html' && url.searchParams.get('preview') === '1') {
         const assetBase = `/api/video-workbench/asset?projectDir=${encodeURIComponent(absProject)}&rel=`
         const html = readFileSync(targetFile, 'utf8')
-          .replace(/(src|data-media-src)="assets\//g, `$1="${assetBase}assets/`)
-          .replace(/fetch\('assets\//g, `fetch('${assetBase}assets/`)
+          .replace(/(src|data-media-src)="(assets|output)\//g, `$1="${assetBase}$2/`)
+          .replace(/"output\/avatar\//g, `"${assetBase}output/avatar/`)
+          .replace(/fetch\('(assets|output)\//g, `fetch('${assetBase}$1/`)
           .replace(/url\((['"]?)fonts\//g, `url($1${assetBase}fonts/`)
         return new Response(html, {
           status: 200,
@@ -1161,6 +1485,16 @@ export function apply(ctx) {
       { path: '/api/video-workbench/vendor/import', methods: ['POST'] },
       { path: '/api/video-workbench/safe-zone', methods: ['GET'] },
       { path: '/api/video-workbench/action', methods: ['POST'] },
+      { path: '/api/video-workbench/tasks', methods: ['GET'] },
+      { path: '/api/video-workbench/tasks/control', methods: ['POST'] },
+      { path: '/api/video-workbench/pipeline/start', methods: ['POST'] },
+      { path: '/api/video-workbench/assets/recording', methods: ['POST'] },
+      { path: '/api/video-workbench/assets/role', methods: ['POST'] },
+      { path: '/api/video-workbench/assets/curate', methods: ['POST'] },
+      { path: '/api/video-workbench/teleprompter/generate', methods: ['POST'] },
+      { path: '/api/video-workbench/avatar/generate', methods: ['POST'] },
+      { path: '/api/video-workbench/skin/upload', methods: ['POST'] },
+      { path: '/api/video-workbench/skin', methods: ['GET'] },
       { path: '/api/video-workbench/asset', methods: ['GET'] },
     ]
     for (const r of routes) {
@@ -1172,6 +1506,16 @@ export function apply(ctx) {
       })
     }
   })
+
+  // Optional native DSH Jobs bridge (never listed in mandatory `inject` so standalone/self-test works cleanly)
+  try {
+    if (ctx.jobs) taskManager.attachDshJobs(ctx.jobs)
+    else if (typeof ctx.inject === 'function') {
+      ctx.inject(['jobs'], (innerCtx) => {
+        if (innerCtx?.jobs) taskManager.attachDshJobs(innerCtx.jobs)
+      })
+    }
+  } catch {}
 
   // 2. Inject Frontend Module (`lib/client.js`) into DSH Web UI (`webui.addStaticModule`)
   ctx.inject(['webui'], (innerCtx) => {

@@ -23,6 +23,7 @@ output/
 .frames-snapshot/
 frames-concat.txt
 .dsh-home/
+.skins/
 .remotion/
 .tmp/
 tmp/

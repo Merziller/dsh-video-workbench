@@ -16,5 +16,6 @@ plugins:
         - path: '@deepseek-ai/dsh-skill-filesystem'
         - path: '@deepseek-ai/dsh-tool-skill'
         - path: ../dsh-tool-local-tts/index.js
+        - path: ../dsh-tool-avatar/index.js
         - path: ../dsh-tool-video-suite/index.js
         - path: ../dsh-tool-media/index.js

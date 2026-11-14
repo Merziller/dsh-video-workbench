@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
-import { runCommandRedirected } from '@dsh-video/shared'
+import { createAbortError, runCommandRedirected } from '@dsh-video/shared'
 
 export function sha256Hex(input) {
   return createHash('sha256').update(input).digest('hex')
@@ -43,6 +43,11 @@ export function computeSceneSegmentKey({ projectDir, script, scene, sceneIndex =
     const abs = isAbsolute(p) ? p : resolve(absDir, p)
     return `${p}:${computeFileDigest(abs)}`
   })
+  const activeAvatar = scene?.avatarClip?.path ? scene.avatarClip : (script?.avatarClip?.path ? script.avatarClip : null)
+  const avatarLayout = scene?.avatarLayout || activeAvatar?.layout || script?.avatarLayout || ''
+  const avatarDigest = activeAvatar?.path
+    ? `${activeAvatar.path}:${avatarLayout}:${computeFileDigest(isAbsolute(activeAvatar.path) ? activeAvatar.path : resolve(absDir, activeAvatar.path))}`
+    : `none:${avatarLayout}`
 
   const payload = {
     canvas: {
@@ -54,6 +59,7 @@ export function computeSceneSegmentKey({ projectDir, script, scene, sceneIndex =
       theme: script?.theme || null,
       aiBadge: script?.aiBadge ?? true,
       bgmBeatsCount: Array.isArray(script?.bgm?.beats) ? script.bgm.beats.length : 0,
+      avatarDigest,
     },
     codeDigest: computeHtmlVisualCodeDigest(htmlPath),
     fontDigest: computeFileDigest(join(absDir, 'fonts', 'NotoSansSC-VF.woff2')),
@@ -92,8 +98,10 @@ export async function renderHtmlSegmentsWithCache({
   renderWidth = 0,
   renderHeight = 0,
   captureFrameRangeToSilentMp4,
+  signal,
   onProgress,
 }) {
+  if (signal?.aborted) throw createAbortError()
   const absDir = resolve(projectDir)
   const cacheDir = join(absDir, 'cache', 'segments')
   mkdirSync(cacheDir, { recursive: true })
@@ -105,6 +113,7 @@ export async function renderHtmlSegmentsWithCache({
   let cacheMisses = 0
 
   for (let i = 0; i < scenes.length; i++) {
+    if (signal?.aborted) throw createAbortError()
     const sc = scenes[i]
     const key = computeSceneSegmentKey({
       projectDir: absDir,
@@ -155,7 +164,7 @@ export async function renderHtmlSegmentsWithCache({
   const concatRes = await runCommandRedirected(
     ffmpeg,
     ['-y', '-f', 'concat', '-safe', '0', '-i', concatListPath, '-c', 'copy', silentMerged],
-    { timeoutMs: 60_000 },
+    { timeoutMs: 60_000, signal },
   )
   if (concatRes.code !== 0 || !existsSync(silentMerged)) {
     throw new Error(`片段拼接失败: ${concatRes.stderr}`)
@@ -170,7 +179,7 @@ export async function renderHtmlSegmentsWithCache({
   }
   muxArgs.push('-movflags', '+faststart', outMp4)
 
-  const muxRes = await runCommandRedirected(ffmpeg, muxArgs, { timeoutMs: 60_000 })
+  const muxRes = await runCommandRedirected(ffmpeg, muxArgs, { timeoutMs: 60_000, signal })
   if (muxRes.code !== 0 || !existsSync(outMp4)) {
     throw new Error(`片段音频混流失败: ${muxRes.stderr}`)
   }

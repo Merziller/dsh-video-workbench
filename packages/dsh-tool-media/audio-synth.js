@@ -68,6 +68,12 @@ export async function ensureProjectAudioAssets(projectDir, script, assetsManifes
 
   const builtinSfx = {}
   for (const kind of CORE_SFX_KINDS) {
+    const aiRel = `audio/sfx/${kind}-ai.wav`
+    const aiAbs = join(absDir, aiRel)
+    if (existsSync(aiAbs)) {
+      builtinSfx[kind] = aiRel
+      continue
+    }
     const p = join(sfxDir, `${kind}.wav`)
     if (!existsSync(p)) generateSfxWav(kind, p)
     builtinSfx[kind] = `audio/sfx/${kind}.wav`
@@ -130,7 +136,8 @@ export async function ensureProjectAudioAssets(projectDir, script, assetsManifes
 /**
  * Mix Voice Narration + Procedural Reverb SFX Bus + User Custom SFX + Sidechain-Ducked BGM into `output/master-audio.wav`.
  */
-export async function mixVideoAudio({ projectDir, script, assetsManifest, outputPath }) {
+export async function mixVideoAudio({ projectDir, script, assetsManifest, outputPath, signal, onChild }) {
+  if (signal?.aborted) throw new Error('Audio mix aborted')
   const absDir = resolve(projectDir)
   const outWav = outputPath ? resolve(absDir, outputPath) : join(absDir, 'output', 'master-audio.wav')
   mkdirSync(dirname(outWav), { recursive: true })
@@ -285,7 +292,7 @@ export async function mixVideoAudio({ projectDir, script, assetsManifest, output
   filters.push(`${mixInputs.join('')}amix=inputs=${mixInputs.length}:normalize=0:duration=first,alimiter=limit=0.92[master]`)
   args.push('-filter_complex', filters.join(';'), '-map', '[master]', '-c:a', 'pcm_s16le', '-ar', String(SR), '-t', String(totalSec), outWav)
 
-  const res = await runCommandRedirected(ffmpeg, args, { timeoutMs: 120_000 })
+  const res = await runCommandRedirected(ffmpeg, args, { timeoutMs: 120_000, signal, onChild })
   if (res.code !== 0 || !existsSync(outWav)) {
     throw new Error(`Multi-track audio mix failed: ${res.stderr}`)
   }
