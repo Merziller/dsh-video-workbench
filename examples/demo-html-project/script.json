@@ -25,14 +25,14 @@
     {
       "id": "scene-01",
       "index": 1,
-      "title": "双引擎视频工作台：从素材到成片",
-      "narration": "欢迎体验 DeepSeek Harness 视频工作台。导入你的图片、视频与音乐素材，AI 自动完成文案编排、动效设计、音效配乐与真人配音。",
+      "title": "双引擎动效：从素材到成片",
+      "narration": "欢迎体验 DeepSeek Harness 视频工作台。导入你的图片、视频与音乐素材，AI 自动完成文案编排、3D 动效、节拍音效与真人配音。",
       "emotion": "平静",
       "role": "host",
       "voiceId": "builtin-female-anchor",
       "voiceLocked": false,
       "voiceMatchReason": "AI 自动匹配: [IndexTTS-2 内置] 知性女主播 [匹配度 92% — 角色契合(host) + 情绪支持(平静) + 科技/专业解说语境]",
-      "visualPrompt": "深空流光粒子背景，呈现双引擎动效标题与核心指标卡片。",
+      "visualPrompt": "3D 透视浮动卡片环绕聚拢，配合逐字弹性冲击标题与光束扫过。",
       "audioFile": "",
       "durationSec": 4.5,
       "durationInFrames": 135,
@@ -41,7 +41,7 @@
       "subtitles": [
         {
           "index": 1,
-          "text": "欢迎体验 DeepSeek Harness 视频工作台。",
+          "text": "欢迎体验 DeepSeek Harness 视频工作台",
           "startSec": 0,
           "endSec": 1.8,
           "startFrame": 0,
@@ -49,36 +49,69 @@
         },
         {
           "index": 2,
-          "text": "导入你的图片、视频与音乐素材，AI 自动完成文案编排、动效设计、音效配乐与真人配音。",
+          "text": "导入你的图片",
           "startSec": 1.8,
-          "endSec": 4.5,
+          "endSec": 2.25,
           "startFrame": 54,
+          "endFrame": 68
+        },
+        {
+          "index": 3,
+          "text": "视频与音乐素材",
+          "startSec": 2.25,
+          "endSec": 2.775,
+          "startFrame": 67,
+          "endFrame": 84
+        },
+        {
+          "index": 4,
+          "text": "AI 自动完成文案编排",
+          "startSec": 2.775,
+          "endSec": 3.525,
+          "startFrame": 83,
+          "endFrame": 106
+        },
+        {
+          "index": 5,
+          "text": "3D 动效",
+          "startSec": 3.525,
+          "endSec": 3.825,
+          "startFrame": 105,
+          "endFrame": 115
+        },
+        {
+          "index": 6,
+          "text": "节拍音效与真人配音",
+          "startSec": 3.825,
+          "endSec": 4.5,
+          "startFrame": 114,
           "endFrame": 135
         }
       ],
-      "layout": "kinetic-title",
+      "layout": "3d-stage-opener",
       "camera": "zoom-in",
-      "transition": "crossfade",
-      "vfx": "bokeh-particles",
-      "sfxCue": "riser",
-      "badge": "SCENE 01 // WORKBENCH",
-      "kicker": "AI MULTIMODAL STUDIO",
-      "metricValue": "2x Engines",
-      "metricLabel": "HTML5 + REMOTION",
+      "transition": "iris-circle",
+      "vfx": "3d-depth+sweep",
+      "sfxCue": "hit",
+      "highlights": [
+        "3D 透视舞台",
+        "双引擎动效",
+        "一键成片"
+      ],
       "voiceName": "知性女主播",
       "voiceCategory": "IndexTTS-2 内置"
     },
     {
       "id": "scene-02",
       "index": 2,
-      "title": "本地音色匹配 + 转场音效与配乐闪避混音",
-      "narration": "内置两百零五个本地音色并支持自定义音色包，配合转场音效与智能背景音乐闪避技术，让人声清晰突出、节奏紧凑自然。",
+      "title": "本地音色匹配：立体声混音",
+      "narration": "内置两百零五个本地音色并支持自定义音色包，配合节拍锁定的立体声转场音效与背景音乐闪避技术，让人声清晰突出、节奏紧凑自然。",
       "emotion": "高兴",
       "role": "storyteller",
       "voiceId": "imported-custom-narrator",
       "voiceLocked": false,
       "voiceMatchReason": "AI 自动匹配: [自定义导入] 用户导入测试音色包 (Custom Narrator) [匹配度 92% — 情绪支持(高兴) + 标签命中(自定义/清晰/自定义音色)]",
-      "visualPrompt": "动态光斑扫描与音色匹配频谱，演示多轨混音与逐句字幕同步。",
+      "visualPrompt": "块状擦除接强力逐字排版，冲击波光环与微粒火花随重拍脉冲跃动。",
       "audioFile": "",
       "durationSec": 5,
       "durationInFrames": 150,
@@ -87,36 +120,69 @@
       "subtitles": [
         {
           "index": 1,
-          "text": "内置两百零五个本地音色并支持自定义音色包，配合转场音效与智能背景音乐闪避技术，让人声清晰突出、节奏紧凑自然。",
+          "text": "内置两百零五个本地音色并支持自定义音色包",
           "startSec": 0,
-          "endSec": 5,
+          "endSec": 1.786,
           "startFrame": 0,
+          "endFrame": 54
+        },
+        {
+          "index": 2,
+          "text": "配合节拍锁定的立体声转场音效与背",
+          "startSec": 1.786,
+          "endSec": 3.215,
+          "startFrame": 53,
+          "endFrame": 97
+        },
+        {
+          "index": 3,
+          "text": "景音乐闪避技术",
+          "startSec": 3.215,
+          "endSec": 3.84,
+          "startFrame": 96,
+          "endFrame": 116
+        },
+        {
+          "index": 4,
+          "text": "让人声清晰突出",
+          "startSec": 3.84,
+          "endSec": 4.465,
+          "startFrame": 115,
+          "endFrame": 134
+        },
+        {
+          "index": 5,
+          "text": "节奏紧凑自然",
+          "startSec": 4.465,
+          "endSec": 5,
+          "startFrame": 133,
           "endFrame": 150
         }
       ],
-      "layout": "kinetic-title",
+      "layout": "kinetic-impact",
       "camera": "pan-left",
-      "transition": "wipe-left",
-      "vfx": "light-sweep",
+      "transition": "block-wipe",
+      "vfx": "sparks+shockwave",
       "sfxCue": "whoosh",
-      "badge": "SCENE 02 // AUDIO MIX",
-      "kicker": "205 LOCAL VOICES",
-      "metricValue": "48 kHz",
-      "metricLabel": "DUCKING AUDIO MIX",
+      "highlights": [
+        "205 本地音色",
+        "48kHz 立体声",
+        "节拍自动闪避"
+      ],
       "voiceName": "用户导入测试音色包 (Custom Narrator)",
       "voiceCategory": "自定义导入"
     },
     {
       "id": "scene-03",
       "index": 3,
-      "title": "九宫格视觉自检与逐帧高清 MP4 导出",
-      "narration": "在成片前自动抽取三乘三九宫格快照排查构图隐患，随后逐帧捕获与多轨合成，一键输出标准高清视频。",
-      "emotion": "平静",
+      "title": "全帧率高清渲染：即刻交付",
+      "narration": "双引擎均支持确定性逐帧捕获与多轨合成，一键输出色彩精准的 1080p 高清成片视频。",
+      "emotion": "激昂",
       "role": "narrator",
-      "voiceId": "builtin-female-anchor",
+      "voiceId": "builtin-clean-studio",
       "voiceLocked": false,
-      "voiceMatchReason": "AI 自动匹配: [IndexTTS-2 内置] 知性女主播 [匹配度 99% — 角色契合(narrator) + 情绪支持(平静) + 标签命中(科技) + 科技/专业解说语境]",
-      "visualPrompt": "科技网格微光配合 1080p 高清导出徽章与字幕节奏收尾。",
+      "voiceMatchReason": "AI 自动匹配: [IndexTTS-2 内置] 纯净无底噪旁白 [匹配度 93% — 角色契合(narrator) + 标签命中(演示) + 科技/专业解说语境]",
+      "visualPrompt": "放射状速度线爆裂展开，盖章特技与流光长条收尾。",
       "audioFile": "",
       "durationSec": 4.5,
       "durationInFrames": 135,
@@ -125,27 +191,36 @@
       "subtitles": [
         {
           "index": 1,
-          "text": "在成片前自动抽取三乘三九宫格快照排查构图隐患，随后逐帧捕获与多轨合成，一键输出标准高清视频。",
+          "text": "双引擎均支持确定性逐帧捕获与多轨合成",
           "startSec": 0,
-          "endSec": 4.5,
+          "endSec": 2.132,
           "startFrame": 0,
+          "endFrame": 64
+        },
+        {
+          "index": 2,
+          "text": "一键输出色彩精准的 1080p 高清成片视频",
+          "startSec": 2.132,
+          "endSec": 4.5,
+          "startFrame": 63,
           "endFrame": 135
         }
       ],
-      "layout": "kinetic-title",
+      "layout": "radial-climax",
       "camera": "zoom-out",
-      "transition": "slide-up",
-      "vfx": "grid-glow",
+      "transition": "zoom-punch",
+      "vfx": "radial-speedlines",
       "sfxCue": "chime",
-      "badge": "SCENE 03 // FRAME RENDER",
-      "kicker": "QUALITY VERIFIED",
-      "metricValue": "1080p",
-      "metricLabel": "FULL FPS EXPORT",
-      "voiceName": "知性女主播",
+      "highlights": [
+        "1080p 60fps",
+        "BT.709 色彩",
+        "即刻成片"
+      ],
+      "voiceName": "纯净无底噪旁白",
       "voiceCategory": "IndexTTS-2 内置"
     }
   ],
   "totalDurationSec": 14,
   "totalDurationInFrames": 420,
-  "updatedAt": "2026-11-14T11:43:54.236Z"
+  "updatedAt": "2026-11-14T17:39:23.951Z"
 }

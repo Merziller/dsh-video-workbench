@@ -343,10 +343,15 @@ export async function renderHtmlVideoToMp4({
     ffArgs.push('-f', 'lavfi', '-t', String(totalSec), '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000', '-map', '0:v:0', '-map', '1:a:0')
   }
   ffArgs.push(
+    '-vf', 'scale=in_range=full:out_color_matrix=bt709:out_range=tv,format=yuv420p',
     '-c:v', 'libx264',
     '-preset', 'medium',
     '-crf', '19',
     '-pix_fmt', 'yuv420p',
+    '-colorspace', 'bt709',
+    '-color_primaries', 'bt709',
+    '-color_trc', 'bt709',
+    '-color_range', 'tv',
     '-c:a', 'aac',
     '-b:a', '192k',
     '-t', String(totalSec),

@@ -64,6 +64,7 @@ export async function produceFullVideo(options = {}) {
     voiceId = 'auto',
     ttsEngine,
     allowPlaceholder = false,
+    fps,
     renderWidth,
     renderHeight,
     onProgress,
@@ -81,6 +82,7 @@ export async function produceFullVideo(options = {}) {
     style,
     engine,
     voiceId,
+    ...(fps ? { fps: Number(fps) } : {}),
   })
 
   onProgress?.('2/5 正在启动本地配音引擎并逐幕生成真人配音...')
@@ -235,6 +237,7 @@ export function apply(ctx) {
           description: 'Visual and musical style.',
         },
         engine: { type: 'string', enum: ['html', 'remotion'], description: 'Target render engine.' },
+        fps: { type: 'number', description: 'Target frame rate (e.g. 30 or 60).' },
         voiceId: { type: 'string', description: 'Voice ID or "auto" for AI voice matching.' },
       },
       required: ['projectDir'],
@@ -261,6 +264,7 @@ export function apply(ctx) {
         topic: { type: 'string', description: 'Topic / prompt.' },
         style: { type: 'string', enum: ['tech', 'cinematic', 'documentary', 'energetic', 'warm'] },
         engine: { type: 'string', enum: ['html', 'remotion'] },
+        fps: { type: 'number', description: 'Target frame rate (e.g. 30 or 60).' },
         voiceId: { type: 'string', description: 'Voice ID or "auto".' },
       },
       required: ['projectDir'],

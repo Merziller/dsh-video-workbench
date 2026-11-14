@@ -392,6 +392,7 @@ window.__ModuleLoader__.load({
         topic: '',
         style: 'tech',
         engine: 'html',
+        fps: 30,
         voiceId: 'auto',
       })
 
@@ -509,6 +510,7 @@ window.__ModuleLoader__.load({
                 topic: ap.script?.topic || prev.topic || '',
                 style: ap.script?.style || prev.style || 'tech',
                 engine: ap.script?.engine || prev.engine || 'html',
+                fps: Number(ap.script?.fps) || prev.fps || 30,
                 voiceId: ap.script?.defaultVoiceId || prev.voiceId || 'auto',
               }))
               if (!initialLoadedRef.current || opts.autoStep) {
@@ -863,6 +865,7 @@ window.__ModuleLoader__.load({
               topic: directorForm.topic.trim() || script?.title || '',
               style: directorForm.style,
               engine: directorForm.engine,
+              fps: directorForm.fps,
               voiceId: directorForm.voiceId,
             }),
           })
@@ -912,6 +915,7 @@ window.__ModuleLoader__.load({
               topic: directorForm.topic.trim() || script?.title || '',
               style: directorForm.style,
               engine: directorForm.engine,
+              fps: directorForm.fps,
               voiceId: directorForm.voiceId,
             }),
           })
@@ -2128,6 +2132,37 @@ window.__ModuleLoader__.load({
                   h('div', { style: { fontSize: '11px', color: '#9CA3AF', marginTop: '3px' } }, eng.desc),
                 )
               }),
+              h(
+                'div',
+                { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px', gap: '8px' } },
+                h('span', { style: { fontSize: '12px', color: '#9CA3AF' } }, '成片帧率'),
+                h(
+                  'div',
+                  { style: { display: 'flex', gap: '6px' } },
+                  [30, 60].map((fpsVal) => {
+                    const active = Number(directorForm.fps || 30) === fpsVal
+                    return h(
+                      'button',
+                      {
+                        key: fpsVal,
+                        className: 'dsh-vw-btn',
+                        onClick: () => setDirectorForm((prev) => ({ ...prev, fps: fpsVal })),
+                        style: {
+                          padding: '5px 12px',
+                          borderRadius: '6px',
+                          fontSize: '11.5px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          background: active ? 'rgba(59, 130, 246, 0.16)' : '#0F1115',
+                          border: active ? '1px solid #3B82F6' : '1px solid rgba(255,255,255,0.08)',
+                          color: active ? '#60A5FA' : '#D1D5DB',
+                        },
+                      },
+                      `${fpsVal} FPS${fpsVal === 60 ? ' · 丝滑' : ' · 标准'}`,
+                    )
+                  }),
+                ),
+              ),
             ),
 
             // Voice Card
@@ -2907,7 +2942,7 @@ window.__ModuleLoader__.load({
             h(
               'summary',
               { style: { cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#9CA3AF', userSelect: 'none' } },
-              '高级检查工具（九宫格关键帧预览 / 规范检查 / 重新混音）',
+              '高级检查工具（画面规范体检 / 重新混音）',
             ),
             h(
               'div',
@@ -2915,11 +2950,6 @@ window.__ModuleLoader__.load({
               h(
                 'div',
                 { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } },
-                h(
-                  'button',
-                  { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => runWorkbenchAction('snapshot'), style: secondaryBtnStyle },
-                  '生成 3×3 九宫格预览图',
-                ),
                 h(
                   'button',
                   { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => runWorkbenchAction('lint'), style: secondaryBtnStyle },
@@ -2931,18 +2961,6 @@ window.__ModuleLoader__.load({
                   '仅重新混音人声与配乐',
                 ),
               ),
-              hasSnapshot
-                ? h(
-                    'div',
-                    null,
-                    h('div', { style: { fontSize: '12px', color: '#9CA3AF', marginBottom: '8px' } }, '关键帧九宫格抽检预览：'),
-                    h('img', {
-                      src: snapshotUrl,
-                      alt: '3x3 关键帧预览图',
-                      style: { width: '100%', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)' },
-                    }),
-                  )
-                : null,
               lintReport
                 ? h(
                     'div',

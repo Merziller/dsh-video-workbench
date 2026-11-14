@@ -12,9 +12,9 @@ import MediaPlugin, {
   writeRemotionProjectFiles,
 } from '@dsh-video/tool-media'
 
-export const VIDEO_MAKER_SYSTEM_PROMPT = `你是 DeepSeek Harness「视频制作模式」(DSH Video Workbench) 的首席多模态视频导演与全栈动画工程师，同时精通 **HTML5/Canvas/动效** 与 **Remotion** 双引擎视频工程。
+export const VIDEO_MAKER_SYSTEM_PROMPT = `你是 DeepSeek Harness「视频制作模式」(DSH Video Workbench) 的首席多模态视频导演与全栈动效工程师，同时精通 **HTML5/Canvas2D 动效** 与 **Remotion** 双引擎视频工程。
 
-你不仅会写脚本，还能把用户提供的**真实素材（图片、视频片段、背景音乐、音效、文案笔记）**编排成具有**旁白文案、真人配音、转场音效 (SFX)、视觉特效 (VFX)、镜头推拉摇移 (Ken Burns)、背景配乐 (BGM + 自动闪避混音) 与同步字幕**的完整商业级成片。
+你不仅会写脚本，还能把用户提供的**真实素材（图片、视频片段、背景音乐、音效、文案笔记）**编排成具有**节奏型动态排版 (Kinetic Typography)、3D 透视景深、转场粒子特效 (VFX)、节拍立体音效 (DSP SFX)、镜头推拉摇移 (Ken Burns)、自动闪避配乐 (BPM-synced BGM) 与单行同步字幕**的广播级动态视听成片。
 
 ## 一、核心制片工作流
 
@@ -22,24 +22,24 @@ export const VIDEO_MAKER_SYSTEM_PROMPT = `你是 DeepSeek Harness「视频制作
 1. **分析用户素材**：若用户提供了图片/视频/音频文件夹或路径，先调用 \`import_assets\` 扫描并自动通过 \`ffprobe\` 测算分辨率与时长；已有素材可调用 \`list_assets\` 查看。
 2. **智能策划分镜（或一键全链路制片）**：
    - 调用 \`plan_video_from_assets\` 根据主题、风格 (\`tech\` / \`cinematic\` / \`documentary\` / \`energetic\` / \`warm\`) 与导入素材生成完整的 \`script.json\`，包含：
-     - \`title\`、\`engine\` (\`"html"\` 或 \`"remotion"\`)、\`fps\` (默认 30)、\`width\` (1920)、\`height\` (1080)、\`bgm\` 配乐策略
+     - \`title\`、\`engine\` (\`"html"\` 或 \`"remotion"\`)、\`fps\` (30 或 60)、\`width\` (1920)、\`height\` (1080)、节拍锁定的 \`bgm\` 策略
      - \`theme\` 配色板（确保 WCAG AA 对比度 >= 4.5:1）
-     - \`scenes[]\` 分镜列表（含 \`narration\`、\`emotion\`、\`role\`、\`voiceId\`、\`mediaAssetId\`/\`mediaPath\`、\`camera\`、\`transition\`、\`vfx\`、\`sfxCue\`、\`subtitles[]\`）。
-   - 若用户要求“全自动一键生成完整视频”，也可直接调用 \`produce_video\` 串联素材导入、策划、真人配音、代码生成、混音与 MP4 导出。
+     - \`scenes[]\` 分镜列表（自动轮换 6 套高张力版式：\`3d-stage-opener\` / \`media-split-motion\` / \`kinetic-impact\` / \`mosaic-pulse-wall\` / \`compare-dual\` / \`radial-climax\`，含 \`highlights\`、\`transition\`、\`vfx\`、\`sfxCues[]\`、\`subtitles[]\`）。
+   - 若用户要求“全自动一键生成完整视频”，也可直接调用 \`produce_video\` 串联素材导入、策划、真人配音、双引擎动效生成、混音与 MP4 导出。
 3. **音色包管理与匹配**：若用户指定音色则锁定，否则使用 \`list_voices\` / \`match_scene_voices\` 自由匹配最贴合角色与情绪的本地音色；支持通过 \`import_voice_pack\` 导入自定义音色。
 4. 向用户展示分镜脚本、素材映射与音色分配表，**等待用户确认后再进入阶段 2**（若用户明确要求一键全自动生成则直接推进）。
 
-### 阶段 2：真人配音实测时长 + 音效配乐 + 动效生成 + 九宫格自检（需用户确认）
+### 阶段 2：真人配音实测时长 + 节拍音效混音 + 双引擎动效生成
 1. **真人语音合成与 ffprobe 实测（严禁瞎猜时长）**：
    - 逐幕调用 \`generate_speech\` 启动并调用本机 \`IndexTTS-2\`（或 \`GPTvoice-tts\`）合成真实人声 WAV，自动通过 \`ffprobe\` 测得精确 \`durationSec\` 并按 \`durationInFrames = Math.ceil((0.28 + durationSec + 0.42) * fps)\` 回填 \`script.json\`。
-2. **音效与配乐生成**：调用 \`generate_sfx_bgm\` 准备转场音效（\`whoosh\`/\`impact\`/\`pop\`/\`chime\`/\`riser\`）与自动闪避（sidechain ducking）BGM；如用户已导入 BGM/SFX 则优先采用用户音频。
-3. **双引擎代码更新与视觉自检**：
-   - **HTML 引擎**：使用 \`<template>\` 隔离分镜、Canvas2D 粒子/光斑特效、用户视频/图片 Ken Burns 运镜，暴露异步 \`window.__seekToFrame(frame)\`。
-   - **Remotion 引擎**：使用 \`src/Root.tsx\` + \`src/VideoComposition.tsx\` 的 \`<Img>\`、\`<OffthreadVideo>\`、\`useCurrentFrame()\`、\`spring()\`、\`interpolate()\` 驱动逐帧动画，严禁 CSS \`transition\` / \`@keyframes\`。
-   - 依次调用 \`video_lint\` 与 \`video_snapshot\` 生成 \`snapshot-3x3.png\`，并调用 \`read_image\` 进行多模态视觉自检。
+2. **节拍音效与多轨配乐**：调用 \`generate_sfx_bgm\` 生成节拍对齐的立体声 SFX 干声轨道（\`hit\`/\`whoosh\`/\`riser\`/\`counter\`/\`chime\`/\`sub_drop\`）与含鼓组、贝斯、铺底与琶音的多乐器 BGM；如用户已导入 BGM/SFX 则优先采用用户音频。
+3. **双引擎代码生成与工程规范体检**：
+   - **HTML 引擎**：使用 \`<template>\` 隔离分镜、#world 节拍摄像机震动与缩放、双 Canvas2D（星空/粒子/冲击波/高光扫光/虹膜擦除转场）与逐字弹性排版，暴露 \`window.__seekToFrame(frame)\`。
+   - **Remotion 引擎**：使用 \`src/Root.tsx\` + \`src/VideoComposition.tsx\` 的 \`<Img>\`、\`<OffthreadVideo>\`、\`useCurrentFrame()\`、\`spring()\`、\`interpolate()\` 实现同等 6 套动效版式与转场，严禁 CSS \`transition\` / \`@keyframes\`。
+   - 调用 \`video_lint\` 核验规范；如需内部逐帧排查构图问题可按需调用 \`video_snapshot\` + \`read_image\`（勿在用户界面强推静态拼图）。
 
-### 阶段 3：多轨混音与全帧率成片 MP4 导出
-- 调用 \`video_render\` 将配音、SFX、BGM 经 \`ffmpeg\` 多轨闪避混音输出 \`master-audio.wav\`，再通过无头浏览器 CDP 逐帧渲染或 Remotion 引擎渲染出完整帧率 H.264 (\`yuv420p\`) MP4 成品。
+### 阶段 3：多轨闪避混音与全帧率成片 MP4 导出
+- 调用 \`video_render\` 将配音、立体声混响 SFX、BPM 配乐经 \`ffmpeg\` 侧链闪避混音输出 \`master-audio.wav\`，再通过无头浏览器 CDP 逐帧渲染或 Remotion 引擎渲染出 BT.709 标准全帧率 H.264 (\`yuv420p\`) MP4 成品。
 
 ---
 
@@ -103,62 +103,53 @@ export function scaffoldVideoProject(projectDir, options = {}) {
     scenes: options.scenes || [
       {
         id: 'scene-01',
-        title: '双引擎视频工作台：从素材到成片',
+        title: '双引擎动效：从素材到成片',
         narration:
-          '欢迎体验 DeepSeek Harness 视频工作台。导入你的图片、视频与音乐素材，AI 自动完成文案编排、动效设计、音效配乐与真人配音。',
+          '欢迎体验 DeepSeek Harness 视频工作台。导入你的图片、视频与音乐素材，AI 自动完成文案编排、3D 动效、节拍音效与真人配音。',
         emotion: '平静',
         role: 'host',
         voiceId: 'auto',
-        layout: 'kinetic-title',
+        layout: '3d-stage-opener',
         camera: 'zoom-in',
-        transition: 'crossfade',
-        vfx: 'bokeh-particles',
-        sfxCue: 'riser',
-        badge: 'SCENE 01 // WORKBENCH',
-        kicker: 'AI MULTIMODAL STUDIO',
-        metricValue: '2x Engines',
-        metricLabel: 'HTML5 + REMOTION',
-        visualPrompt: '深空流光粒子背景，呈现双引擎动效标题与核心指标卡片。',
+        transition: 'iris-circle',
+        vfx: '3d-depth+sweep',
+        sfxCue: 'hit',
+        highlights: ['3D 透视舞台', '双引擎动效', '一键成片'],
+        visualPrompt: '3D 透视浮动卡片环绕聚拢，配合逐字弹性冲击标题与光束扫过。',
         durationSec: 4.5,
       },
       {
         id: 'scene-02',
-        title: '本地音色匹配 + 转场音效与配乐闪避混音',
+        title: '本地音色匹配：立体声混音',
         narration:
-          '内置两百零五个本地音色并支持自定义音色包，配合转场音效与智能背景音乐闪避技术，让人声清晰突出、节奏紧凑自然。',
+          '内置两百零五个本地音色并支持自定义音色包，配合节拍锁定的立体声转场音效与背景音乐闪避技术，让人声清晰突出、节奏紧凑自然。',
         emotion: '高兴',
         role: 'storyteller',
         voiceId: 'auto',
-        layout: 'kinetic-title',
+        layout: 'kinetic-impact',
         camera: 'pan-left',
-        transition: 'wipe-left',
-        vfx: 'light-sweep',
+        transition: 'block-wipe',
+        vfx: 'sparks+shockwave',
         sfxCue: 'whoosh',
-        badge: 'SCENE 02 // AUDIO MIX',
-        kicker: '205 LOCAL VOICES',
-        metricValue: '48 kHz',
-        metricLabel: 'DUCKING AUDIO MIX',
-        visualPrompt: '动态光斑扫描与音色匹配频谱，演示多轨混音与逐句字幕同步。',
+        highlights: ['205 本地音色', '48kHz 立体声', '节拍自动闪避'],
+        visualPrompt: '块状擦除接强力逐字排版，冲击波光环与微粒火花随重拍脉冲跃动。',
         durationSec: 5.0,
       },
       {
         id: 'scene-03',
-        title: '九宫格视觉自检与逐帧高清 MP4 导出',
+        title: '全帧率高清渲染：即刻交付',
         narration:
-          '在成片前自动抽取三乘三九宫格快照排查构图隐患，随后逐帧捕获与多轨合成，一键输出标准高清视频。',
-        emotion: '平静',
+          '双引擎均支持确定性逐帧捕获与多轨合成，一键输出色彩精准的 1080p 高清成片视频。',
+        emotion: '激昂',
         role: 'narrator',
         voiceId: 'auto',
-        layout: 'kinetic-title',
+        layout: 'radial-climax',
         camera: 'zoom-out',
-        transition: 'slide-up',
-        vfx: 'grid-glow',
+        transition: 'zoom-punch',
+        vfx: 'radial-speedlines',
         sfxCue: 'chime',
-        badge: 'SCENE 03 // FRAME RENDER',
-        kicker: 'QUALITY VERIFIED',
-        metricValue: '1080p',
-        metricLabel: 'FULL FPS EXPORT',
-        visualPrompt: '科技网格微光配合 1080p 高清导出徽章与字幕节奏收尾。',
+        highlights: ['1080p 60fps', 'BT.709 色彩', '即刻成片'],
+        visualPrompt: '放射状速度线爆裂展开，盖章特技与流光长条收尾。',
         durationSec: 4.5,
       },
     ],

@@ -268,12 +268,35 @@ export function buildSentenceSubtitles(narration, durationSec, fps = 30) {
     .map((s) => s.trim())
     .filter(Boolean)
 
+  const displayWidth = (s) =>
+    [...s].reduce((acc, ch) => acc + (/[\u0000-\u00ff]/.test(ch) ? 0.58 : 1), 0)
+
+  const wrapClauseRespectingWords = (c, maxW = 16) => {
+    const out = []
+    let cur = ''
+    // Split keeping spaces & CJK chars atomic while keeping ASCII words unbroken
+    const tokens = c.match(/[A-Za-z0-9_.\-+]+|[\u4e00-\u9fff]|[^\sA-Za-z0-9_.\-+\u4e00-\u9fff]|\s+/g) || [c]
+    for (const tok of tokens) {
+      if (!cur) {
+        if (!/^\s+$/.test(tok)) cur = tok
+        continue
+      }
+      if (displayWidth(cur + tok) > maxW && !/^\s+$/.test(tok)) {
+        out.push(cur.trim())
+        cur = tok
+      } else {
+        cur += tok
+      }
+    }
+    if (cur.trim()) out.push(cur.trim())
+    return out
+  }
+
   const parts = []
   for (const sent of rawSentences.length > 0 ? rawSentences : [clean]) {
-    const cleanLen = stripTailPunct(sent).length
-    if (cleanLen <= 18) {
-      const t = stripTailPunct(sent)
-      if (t) parts.push(t)
+    const cleanSent = stripTailPunct(sent)
+    if (displayWidth(cleanSent) <= 18) {
+      if (cleanSent) parts.push(cleanSent)
       continue
     }
     const subChunks = sent
@@ -281,13 +304,10 @@ export function buildSentenceSubtitles(narration, durationSec, fps = 30) {
       .map((c) => stripTailPunct(c))
       .filter(Boolean)
     for (const c of subChunks) {
-      if (parts.length > 0 && c.length <= 4 && (parts[parts.length - 1] + ' ' + c).length <= 20) {
+      if (parts.length > 0 && c.length <= 4 && displayWidth(`${parts[parts.length - 1]} ${c}`) <= 19) {
         parts[parts.length - 1] = `${parts[parts.length - 1]} ${c}`
-      } else if (c.length > 22) {
-        // Wrap ultra-long unpunctuated clause into ~16-char lines
-        for (let i = 0; i < c.length; i += 16) {
-          parts.push(c.slice(i, i + 16))
-        }
+      } else if (displayWidth(c) > 20) {
+        parts.push(...wrapClauseRespectingWords(c, 16))
       } else {
         parts.push(c)
       }
