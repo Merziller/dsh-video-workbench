@@ -253,14 +253,133 @@ export async function probeAudioDuration(audioPath, fps = 30) {
   }
 }
 
+export const ASPECT_RATIO_PRESETS = {
+  '16:9': { label: '16:9 横屏大片 (B站 / YouTube / 官网发布)', wRatio: 16, hRatio: 9 },
+  '9:16': { label: '9:16 竖屏短视频 (抖音 / 快手 / 视频号)', wRatio: 9, hRatio: 16 },
+  '3:4': { label: '3:4 图文封面比例 (小红书)', wRatio: 3, hRatio: 4 },
+  '1:1': { label: '1:1 正方形 (朋友圈 / 信息流)', wRatio: 1, hRatio: 1 },
+}
+
+export const QUALITY_PRESETS = {
+  '720p': { label: '720P 高清草稿 (快速预览)', shortEdge: 720 },
+  '1080p': { label: '1080P 全高清 (成片推荐)', shortEdge: 1080 },
+  '2k': { label: '2K 超清影院', shortEdge: 1440 },
+  '4k': { label: '4K 极致画质', shortEdge: 2160 },
+}
+
+function makeEven(n, min = 320) {
+  const v = Math.max(min, Math.round(Number(n) || min))
+  return v % 2 === 0 ? v : v + 1
+}
+
+/**
+ * Resolve exact H.264-safe (even) pixel dimensions from user preset, custom values, or AI-auto topic/asset inference.
+ */
+export function resolveVideoDimensions({
+  aspectRatio = 'auto',
+  quality = '1080p',
+  width,
+  height,
+  topic = '',
+  assets = [],
+} = {}) {
+  const rawQuality = String(quality || '1080p').toLowerCase()
+  const resolvedQuality = QUALITY_PRESETS[rawQuality] ? rawQuality : rawQuality === 'custom' ? 'custom' : '1080p'
+  const rawRatio = String(aspectRatio || 'auto').toLowerCase()
+
+  if ((rawRatio === 'custom' || resolvedQuality === 'custom') && Number(width) >= 320 && Number(height) >= 320) {
+    const w = makeEven(width)
+    const h = makeEven(height)
+    const g = (a, b) => (b === 0 ? a : g(b, a % b))
+    const d = g(w, h)
+    return {
+      width: w,
+      height: h,
+      aspectRatio: rawRatio === 'custom' ? `${w / d}:${h / d}` : rawRatio,
+      requestedAspectRatio: rawRatio,
+      quality: 'custom',
+      reason: `自定义尺寸 ${w}×${h}`,
+    }
+  }
+
+  let pickedRatio = ASPECT_RATIO_PRESETS[rawRatio] ? rawRatio : 'auto'
+  let reason = ''
+
+  if (pickedRatio === 'auto') {
+    const text = String(topic || '').toLowerCase()
+    if (/小红书|种草|图文笔记|3:4/.test(text)) {
+      pickedRatio = '3:4'
+      reason = 'AI 根据主题识别为小红书/种草场景，自动选择 3:4 比例'
+    } else if (/抖音|快手|视频号|reels|shorts|竖屏|9:16|手机短视频/.test(text)) {
+      pickedRatio = '9:16'
+      reason = 'AI 根据主题识别为移动端竖屏短视频，自动选择 9:16 比例'
+    } else if (/方屏|朋友圈卡片|1:1|正方形/.test(text)) {
+      pickedRatio = '1:1'
+      reason = 'AI 根据主题识别为信息流方屏场景，自动选择 1:1 比例'
+    } else if (Array.isArray(assets) && assets.length > 0) {
+      let portraitCount = 0
+      let squareCount = 0
+      let landscapeCount = 0
+      for (const a of assets) {
+        const aw = Number(a?.width || 0)
+        const ah = Number(a?.height || 0)
+        if (aw > 0 && ah > 0) {
+          const r = aw / ah
+          if (r < 0.85) portraitCount++
+          else if (r > 1.18) landscapeCount++
+          else squareCount++
+        }
+      }
+      if (portraitCount > landscapeCount && portraitCount >= squareCount) {
+        pickedRatio = '9:16'
+        reason = `AI 分析导入素材多为竖构图 (${portraitCount} 竖 vs ${landscapeCount} 横)，自动匹配 9:16`
+      } else if (squareCount > landscapeCount && squareCount > portraitCount) {
+        pickedRatio = '1:1'
+        reason = 'AI 分析导入素材以方形为主，自动匹配 1:1'
+      } else {
+        pickedRatio = '16:9'
+        reason = 'AI 综合主题与素材横纵比，选用 16:9 影院横屏'
+      }
+    } else {
+      pickedRatio = '16:9'
+      reason = 'AI 判定为通用宣传/演示叙事，默认采用 16:9 电影横屏'
+    }
+  } else {
+    reason = `用户指定 ${pickedRatio} · ${resolvedQuality.toUpperCase()}`
+  }
+
+  const ratioSpec = ASPECT_RATIO_PRESETS[pickedRatio] || ASPECT_RATIO_PRESETS['16:9']
+  const shortEdge = (QUALITY_PRESETS[resolvedQuality] || QUALITY_PRESETS['1080p']).shortEdge
+
+  let outW
+  let outH
+  if (ratioSpec.wRatio >= ratioSpec.hRatio) {
+    outH = makeEven(shortEdge)
+    outW = makeEven((outH * ratioSpec.wRatio) / ratioSpec.hRatio)
+  } else {
+    outW = makeEven(shortEdge)
+    outH = makeEven((outW * ratioSpec.hRatio) / ratioSpec.wRatio)
+  }
+
+  return {
+    width: outW,
+    height: outH,
+    aspectRatio: pickedRatio,
+    requestedAspectRatio: rawRatio,
+    quality: resolvedQuality,
+    reason,
+  }
+}
+
 /**
  * Split narration text into clean single-line subtitle cues proportional to character count.
- * Splits long sentences cleanly at commas/pauses (~16 CJK chars max) and strips trailing punctuation.
+ * Adapts line width automatically for portrait (11 CJK chars), square (13), or landscape (16).
  */
-export function buildSentenceSubtitles(narration, durationSec, fps = 30) {
+export function buildSentenceSubtitles(narration, durationSec, fps = 30, opts = {}) {
   const clean = String(narration || '').trim()
   if (!clean || durationSec <= 0) return []
 
+  const maxW = Math.max(8, Math.min(20, Number(opts?.maxLineWidth) || 16))
   const stripTailPunct = (s) => s.replace(/[，。！？；,!;、]+$/g, '').trim()
 
   const rawSentences = clean
@@ -295,7 +414,7 @@ export function buildSentenceSubtitles(narration, durationSec, fps = 30) {
   const parts = []
   for (const sent of rawSentences.length > 0 ? rawSentences : [clean]) {
     const cleanSent = stripTailPunct(sent)
-    if (displayWidth(cleanSent) <= 18) {
+    if (displayWidth(cleanSent) <= maxW + 2) {
       if (cleanSent) parts.push(cleanSent)
       continue
     }
@@ -304,10 +423,10 @@ export function buildSentenceSubtitles(narration, durationSec, fps = 30) {
       .map((c) => stripTailPunct(c))
       .filter(Boolean)
     for (const c of subChunks) {
-      if (parts.length > 0 && c.length <= 4 && displayWidth(`${parts[parts.length - 1]} ${c}`) <= 19) {
+      if (parts.length > 0 && c.length <= 4 && displayWidth(`${parts[parts.length - 1]} ${c}`) <= maxW + 3) {
         parts[parts.length - 1] = `${parts[parts.length - 1]} ${c}`
-      } else if (displayWidth(c) > 20) {
-        parts.push(...wrapClauseRespectingWords(c, 16))
+      } else if (displayWidth(c) > maxW + 4) {
+        parts.push(...wrapClauseRespectingWords(c, maxW))
       } else {
         parts.push(c)
       }
@@ -396,6 +515,9 @@ export function writeScriptJson(projectOrFile, scriptData) {
   ensureWin11ProjectGuards(projectDir)
 
   const fps = Number(scriptData.fps) > 0 ? Number(scriptData.fps) : 30
+  const resolvedWidth = Number(scriptData.width) || 1920
+  const resolvedHeight = Number(scriptData.height) || 1080
+  const subtitleMaxW = resolvedWidth < resolvedHeight ? 11 : resolvedWidth === resolvedHeight ? 13 : 16
   let currentFrame = 0
   let currentSec = 0
 
@@ -414,7 +536,9 @@ export function writeScriptJson(projectOrFile, scriptData) {
       const subtitles =
         Array.isArray(scene.subtitles) && scene.subtitles.length > 0
           ? scene.subtitles
-          : buildSentenceSubtitles(scene.narration || scene.text || '', durationSec, fps)
+          : buildSentenceSubtitles(scene.narration || scene.text || '', durationSec, fps, {
+              maxLineWidth: subtitleMaxW,
+            })
 
       return {
         id: scene.id || `scene-${String(idx + 1).padStart(2, '0')}`,
@@ -444,8 +568,19 @@ export function writeScriptJson(projectOrFile, scriptData) {
   }
 
   scriptData.fps = fps
-  scriptData.width = Number(scriptData.width) || 1920
-  scriptData.height = Number(scriptData.height) || 1080
+  scriptData.width = resolvedWidth
+  scriptData.height = resolvedHeight
+  if (!scriptData.aspectRatio) {
+    scriptData.aspectRatio =
+      resolvedWidth < resolvedHeight
+        ? Math.abs(resolvedWidth / resolvedHeight - 0.75) < 0.05
+          ? '3:4'
+          : '9:16'
+        : resolvedWidth === resolvedHeight
+          ? '1:1'
+          : '16:9'
+  }
+  scriptData.quality = scriptData.quality || (Math.min(resolvedWidth, resolvedHeight) <= 720 ? '720p' : '1080p')
   scriptData.engine = scriptData.engine === 'remotion' ? 'remotion' : 'html'
   scriptData.voiceMode = scriptData.voiceMode === 'manual' ? 'manual' : 'auto'
   scriptData.defaultVoiceId = scriptData.defaultVoiceId || 'auto'

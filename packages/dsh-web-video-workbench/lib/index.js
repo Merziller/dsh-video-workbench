@@ -17,6 +17,7 @@ import {
   readScriptJson,
   REPO_ROOT,
   resolveEnvPath,
+  resolveVideoDimensions,
   writeScriptJson,
 } from '@dsh-video/shared'
 import {
@@ -30,17 +31,25 @@ import {
   executeVideoLint,
   executeVideoRender,
   executeVideoSnapshot,
+  runPostRenderQa,
 } from '@dsh-video/tool-video-suite'
 import {
+  getAiCodingHistory,
+  getSafeLlmConfigSummary,
   importAssets,
   mixVideoAudio,
   planVideoFromAssets,
   produceFullVideo,
   readAssets,
+  refineAiScene,
   removeAsset,
+  rollbackAiVersion,
+  runAiStudioPipeline,
+  saveLlmConfig,
   saveUploadedAsset,
   summarizeAssets,
   syncProjectCodeFromScript,
+  testLlmConnection,
 } from '@dsh-video/tool-media'
 import {
   scaffoldVideoProject,
@@ -211,16 +220,32 @@ const ASYNC_JOBS = new Map()
 
 function createBackgroundJob(initialMessage, runner) {
   const id = `job-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-  const job = { id, status: 'running', message: initialMessage, result: null, error: '' }
+  const job = { id, status: 'running', stage: 'init', progress: 4, message: initialMessage, result: null, error: '' }
   ASYNC_JOBS.set(id, job)
   if (ASYNC_JOBS.size > 40) {
     const firstKey = ASYNC_JOBS.keys().next().value
     if (firstKey) ASYNC_JOBS.delete(firstKey)
   }
+  const handleProgress = (payload) => {
+    if (!payload) return
+    if (typeof payload === 'string') {
+      job.message = payload
+      const m = /(\d+)%/.exec(payload)
+      if (m) job.progress = Math.max(job.progress, Math.min(99, Number(m[1])))
+      return
+    }
+    if (typeof payload === 'object') {
+      if (payload.stage) job.stage = payload.stage
+      if (Number.isFinite(Number(payload.progress))) job.progress = Number(payload.progress)
+      if (payload.message) job.message = String(payload.message)
+    }
+  }
   Promise.resolve()
-    .then(() => runner((msg) => { if (msg) job.message = String(msg) }))
+    .then(() => runner(handleProgress))
     .then((res) => {
       job.status = 'done'
+      job.stage = 'done'
+      job.progress = 100
       job.result = res
       job.message = '处理完成'
     })
@@ -230,6 +255,43 @@ function createBackgroundJob(initialMessage, runner) {
       job.message = job.error
     })
   return job
+}
+
+function readOptionalJson(filePath) {
+  try {
+    if (existsSync(filePath)) return JSON.parse(readFileSync(filePath, 'utf8'))
+  } catch {}
+  return null
+}
+
+function collectProjectSourceFiles(projectDir) {
+  const absDir = resolve(projectDir)
+  const files = []
+  const pushFile = (relPath) => {
+    const full = join(absDir, relPath)
+    if (!existsSync(full)) return
+    try {
+      const content = readFileSync(full, 'utf8')
+      files.push({ path: relPath.replace(/\\/g, '/'), size: content.length, content: content.slice(0, 80_000) })
+    } catch {}
+  }
+  const srcDir = join(absDir, 'src')
+  if (existsSync(srcDir)) {
+    const walk = (dir, prefix = 'src') => {
+      for (const ent of readdirSync(dir, { withFileTypes: true })) {
+        if (ent.name === 'node_modules') continue
+        const rel = `${prefix}/${ent.name}`
+        if (ent.isDirectory()) walk(join(dir, ent.name), rel)
+        else if (/\.(tsx|ts|jsx|js|json)$/i.test(ent.name)) pushFile(rel)
+      }
+    }
+    walk(srcDir)
+  }
+  pushFile('index.html')
+  pushFile('output/timing-contract.json')
+  pushFile('output/ai_build_log.json')
+  pushFile('output/qa_report.json')
+  return files
 }
 
 /**
@@ -266,6 +328,9 @@ export async function handleWorkbenchApiRequest(req) {
           hasMp4: existsSync(join(requestedProject, 'output', 'final.mp4')),
           hasSnapshot: existsSync(join(requestedProject, 'output', 'snapshot-3x3.png')),
           hasMasterAudio: existsSync(join(requestedProject, 'output', 'master-audio.wav')),
+          qaReport: readOptionalJson(join(requestedProject, 'output', 'qa_report.json')),
+          buildLog: readOptionalJson(join(requestedProject, 'output', 'ai_build_log.json')),
+          historyCount: getAiCodingHistory(requestedProject).length,
         }
       }
       const catalog = getVoiceCatalog()
@@ -275,6 +340,7 @@ export async function handleWorkbenchApiRequest(req) {
         workspaceRoot,
         projects,
         activeProject,
+        llmConfig: getSafeLlmConfigSummary(),
         voiceCatalog: catalog.voices,
         voiceCategories: catalog.categories,
         availableEmotions: Object.keys(catalog.emotionReferences),
@@ -282,6 +348,21 @@ export async function handleWorkbenchApiRequest(req) {
         presetId: 'video-maker',
         presetName: '视频制作模式',
       })
+    }
+
+    // 1c. GET / POST /api/video-workbench/llm-config & POST /llm-test
+    if (pathname === '/api/video-workbench/llm-config' && req.method === 'GET') {
+      return jsonResponse({ ok: true, config: getSafeLlmConfigSummary() })
+    }
+    if (pathname === '/api/video-workbench/llm-config' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      const saved = saveLlmConfig(body)
+      return jsonResponse({ ok: true, config: saved })
+    }
+    if (pathname === '/api/video-workbench/llm-test' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      const testRes = await testLlmConnection(body)
+      return jsonResponse({ ok: true, ...testRes })
     }
 
     // 1b. GET /api/video-workbench/voices/preview?id=...
@@ -316,6 +397,13 @@ export async function handleWorkbenchApiRequest(req) {
           .replace(/[^a-z0-9\u4e00-\u9fa5_-]+/g, '-')
           .replace(/^-+|-+$/g, '') || `video-${Date.now()}`
       const projectDir = join(wsRoot, slug)
+      const dims = resolveVideoDimensions({
+        aspectRatio: body.aspectRatio || 'auto',
+        quality: body.quality || '1080p',
+        width: body.width,
+        height: body.height,
+        topic: body.title || body.goal || '',
+      })
       const created = scaffoldVideoProject(projectDir, {
         title: body.title || '新建双引擎视频项目',
         engine: body.engine || 'html',
@@ -325,9 +413,19 @@ export async function handleWorkbenchApiRequest(req) {
         voiceMode: body.voiceMode || 'auto',
         defaultVoiceId: body.defaultVoiceId || 'auto',
       })
+      const patched = writeScriptJson(projectDir, {
+        ...created.script,
+        width: dims.width,
+        height: dims.height,
+        aspectRatio: dims.aspectRatio,
+        requestedAspectRatio: dims.requestedAspectRatio,
+        quality: dims.quality,
+        dimensionReason: dims.reason,
+        aiBadge: Boolean(body.aiBadge),
+      })
       matchAllScenesInScript(projectDir, { voiceId: body.defaultVoiceId || 'auto' })
       const reloaded = readScriptJson(projectDir)
-      syncProjectCodeFromScript(projectDir, reloaded.data)
+      syncProjectCodeFromScript(projectDir, reloaded.data, { forceOverwrite: true })
       return jsonResponse({
         ok: true,
         projectDir: created.projectDir,
@@ -454,14 +552,14 @@ export async function handleWorkbenchApiRequest(req) {
       })
     }
 
-    // 3f. POST /api/video-workbench/produce (one-click full pipeline: plan + TTS + SFX/BGM + lint + snapshot + MP4)
+    // 3f. POST /api/video-workbench/produce (Local Draft 0-token pipeline)
     if (pathname === '/api/video-workbench/produce' && req.method === 'POST') {
       const body = await parseRequestJson(req)
       if (!body.projectDir) {
         return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
       }
       if (body.async) {
-        const job = createBackgroundJob('正在准备素材与分析分镜...', (onProgress) =>
+        const job = createBackgroundJob('正在生成本地演练草稿...', (onProgress) =>
           produceFullVideo({ ...body, onProgress }),
         )
         return jsonResponse({ ok: true, jobId: job.id })
@@ -471,6 +569,58 @@ export async function handleWorkbenchApiRequest(req) {
         ok: true,
         ...res,
       })
+    }
+
+    // 3g. POST /api/video-workbench/ai-produce (Model-Agnostic LLM Coding Studio pipeline)
+    if (pathname === '/api/video-workbench/ai-produce' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir) {
+        return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
+      }
+      if (body.async) {
+        const job = createBackgroundJob('正在启动大模型创意编程工作流...', (onProgress) =>
+          runAiStudioPipeline({ ...body, onProgress }),
+        )
+        return jsonResponse({ ok: true, jobId: job.id })
+      }
+      const res = await runAiStudioPipeline(body)
+      return jsonResponse({ ok: true, ...res })
+    }
+
+    // 3h. POST /api/video-workbench/ai-refine (natural language refine OR rollback snapshot)
+    if (pathname === '/api/video-workbench/ai-refine' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir) {
+        return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
+      }
+      if (body.rollback) {
+        return jsonResponse(rollbackAiVersion(body.projectDir))
+      }
+      if (body.async) {
+        const job = createBackgroundJob('正在按您的反馈让大模型精修分镜代码...', (onProgress) =>
+          refineAiScene({ ...body, onProgress }),
+        )
+        return jsonResponse({ ok: true, jobId: job.id })
+      }
+      return jsonResponse(await refineAiScene(body))
+    }
+
+    // 3i. GET /api/video-workbench/code & POST /qa
+    if (pathname === '/api/video-workbench/code' && req.method === 'GET') {
+      const projectDir = url.searchParams.get('projectDir') || ''
+      if (!projectDir) return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
+      return jsonResponse({
+        ok: true,
+        files: collectProjectSourceFiles(projectDir),
+        history: getAiCodingHistory(projectDir),
+      })
+    }
+    if (pathname === '/api/video-workbench/qa' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir) return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
+      const { data } = readScriptJson(body.projectDir)
+      const qa = await runPostRenderQa({ projectDir: body.projectDir, mp4Path: body.mp4Path, script: data })
+      return jsonResponse({ ok: true, qa })
     }
 
     // 4. POST /api/video-workbench/voices/import (import custom voice pack via path or uploaded file)
@@ -601,16 +751,57 @@ export async function handleWorkbenchApiRequest(req) {
         return jsonResponse({ ok: true, action, result })
       }
 
+      if (action === 'update-format') {
+        const { data } = readScriptJson(projectDir)
+        const manifest = readAssets(projectDir)
+        const visuals = (manifest.items || []).filter((i) => i.type === 'image' || i.type === 'video')
+        const dims = resolveVideoDimensions({
+          aspectRatio: body.aspectRatio || data.requestedAspectRatio || 'auto',
+          quality: body.quality || data.quality || '1080p',
+          width: body.width,
+          height: body.height,
+          topic: data.topic || data.title || '',
+          assets: visuals,
+        })
+        const updated = writeScriptJson(projectDir, {
+          ...data,
+          width: dims.width,
+          height: dims.height,
+          aspectRatio: dims.aspectRatio,
+          requestedAspectRatio: dims.requestedAspectRatio,
+          quality: dims.quality,
+          dimensionReason: dims.reason,
+          ...(body.aiBadge !== undefined ? { aiBadge: Boolean(body.aiBadge) } : {}),
+          ...(body.engine ? { engine: body.engine } : {}),
+        })
+        syncProjectCodeFromScript(projectDir, updated.data)
+        return jsonResponse({ ok: true, action, dimensions: dims, script: updated.data })
+      }
+
       if (action === 'render') {
         const runRender = async (onProgress) => {
           onProgress?.('正在混音与启动逐帧渲染...')
+          const { data: sc } = readScriptJson(projectDir)
+          let rW = body.renderWidth
+          let rH = body.renderHeight
+          let draftScale = body.draftScale
+          // Keep portrait / square ratios intact when draft720p is requested
+          if (body.draft720p && !rW && !rH) {
+            const curW = Number(sc.width) || 1920
+            const curH = Number(sc.height) || 1080
+            const shortEdge = Math.min(curW, curH)
+            if (shortEdge > 720) {
+              draftScale = 720 / shortEdge
+            }
+          }
           const result = await executeVideoRender({
             projectDir,
             engine: body.engine,
-            renderWidth: body.renderWidth,
-            renderHeight: body.renderHeight,
+            renderWidth: rW,
+            renderHeight: rH,
+            draftScale,
             onProgress: ({ frame, totalFrames, pct }) =>
-              onProgress?.(`正在逐帧合成 MP4 (${frame}/${totalFrames} 帧 · ${pct}%)...`),
+              onProgress?.({ stage: 'render', progress: pct, message: `正在逐帧合成 MP4 (${frame}/${totalFrames} 帧 · ${pct}%)...` }),
           })
           return { ok: true, action, result }
         }

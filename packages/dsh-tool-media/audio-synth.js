@@ -28,9 +28,9 @@ export function generateSfxWav(type, outPath, opts = {}) {
   return outPath
 }
 
-export function generateBgmWav({ durationSec = 20, mood = 'tech', bpm, outPath }) {
+export function generateBgmWav({ durationSec = 20, mood = 'tech', bpm, audioSpec = null, outPath }) {
   mkdirSync(dirname(outPath), { recursive: true })
-  const buf = renderBgmWavBuffer({ durationSec, mood, bpm })
+  const buf = renderBgmWavBuffer({ durationSec, mood, bpm, audioSpec })
   writeFileSync(outPath, buf)
   return outPath
 }
@@ -83,12 +83,12 @@ export async function ensureProjectAudioAssets(projectDir, script, assetsManifes
       bgmPath = importedMusic[0].path
       bgmSource = 'user-imported'
     } else {
-      const mood = script?.bgm?.mood || script?.style || 'tech'
-      const bpm = script?.bgm?.bpm
+      const mood = script?.audioSpec?.mood || script?.bgm?.mood || script?.style || 'tech'
+      const bpm = script?.audioSpec?.bpm || script?.bgm?.bpm
       const genPath = join(absDir, 'audio', 'bgm-generated.wav')
-      generateBgmWav({ durationSec: totalSec + 1.2, mood, bpm, outPath: genPath })
+      generateBgmWav({ durationSec: totalSec + 1.2, mood, bpm, audioSpec: script?.audioSpec || null, outPath: genPath })
       bgmPath = 'audio/bgm-generated.wav'
-      bgmSource = 'generated'
+      bgmSource = script?.audioSpec ? 'ai-audio-spec' : 'generated'
     }
   }
 
@@ -148,6 +148,12 @@ export async function mixVideoAudio({ projectDir, script, assetsManifest, output
           volume,
           pan,
           d: cue.d,
+          freqStart: cue.freqStart,
+          freqEnd: cue.freqEnd,
+          durationMs: cue.durationMs,
+          q: cue.q,
+          wave: cue.wave,
+          noiseMix: cue.noiseMix,
         })
       }
     }

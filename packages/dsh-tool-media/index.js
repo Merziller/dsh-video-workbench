@@ -26,6 +26,19 @@ import {
 } from './ai-director.js'
 import { buildRichHtmlVideo } from './html-generator.js'
 import { syncRemotionPublicAssets, writeRemotionProjectFiles } from './remotion-generator.js'
+import {
+  getSafeLlmConfigSummary,
+  saveLlmConfig,
+  testLlmConnection,
+  fetchAvailableModels,
+  callLlmChat,
+} from './llm-client.js'
+import {
+  getAiCodingHistory,
+  refineAiScene,
+  rollbackAiVersion,
+  runAiStudioPipeline,
+} from './ai-coder.js'
 
 export {
   importAssets,
@@ -43,6 +56,15 @@ export {
   buildRichHtmlVideo,
   syncRemotionPublicAssets,
   writeRemotionProjectFiles,
+  getSafeLlmConfigSummary,
+  saveLlmConfig,
+  testLlmConnection,
+  fetchAvailableModels,
+  callLlmChat,
+  runAiStudioPipeline,
+  refineAiScene,
+  rollbackAiVersion,
+  getAiCodingHistory,
 }
 
 /**
@@ -61,6 +83,11 @@ export async function produceFullVideo(options = {}) {
     topic,
     style = 'tech',
     engine = 'html',
+    aspectRatio = 'auto',
+    quality = '1080p',
+    width,
+    height,
+    aiBadge = false,
     voiceId = 'auto',
     ttsEngine,
     allowPlaceholder = false,
@@ -73,7 +100,7 @@ export async function produceFullVideo(options = {}) {
   if (!projectDir) throw new Error('projectDir is required')
   const absDir = resolve(projectDir)
 
-  onProgress?.('1/5 正在导入并分析素材...')
+  onProgress?.('1/5 正在导入并分析素材（本地草稿快速生成）...')
   const planned = await planVideoFromAssets({
     projectDir: absDir,
     sources,
@@ -81,6 +108,11 @@ export async function produceFullVideo(options = {}) {
     topic,
     style,
     engine,
+    aspectRatio,
+    quality,
+    width,
+    height,
+    aiBadge,
     voiceId,
     ...(fps ? { fps: Number(fps) } : {}),
   })
@@ -237,6 +269,11 @@ export function apply(ctx) {
           description: 'Visual and musical style.',
         },
         engine: { type: 'string', enum: ['html', 'remotion'], description: 'Target render engine.' },
+        aspectRatio: { type: 'string', enum: ['auto', '16:9', '9:16', '3:4', '1:1', 'custom'], description: 'Aspect ratio preset or auto AI selection.' },
+        quality: { type: 'string', enum: ['720p', '1080p', '2k', '4k', 'custom'], description: 'Output resolution tier.' },
+        width: { type: 'number', description: 'Optional custom width (even integer >= 320).' },
+        height: { type: 'number', description: 'Optional custom height (even integer >= 320).' },
+        aiBadge: { type: 'boolean', description: 'Whether to show an optional AI badge corner watermark.' },
         fps: { type: 'number', description: 'Target frame rate (e.g. 30 or 60).' },
         voiceId: { type: 'string', description: 'Voice ID or "auto" for AI voice matching.' },
       },
@@ -254,7 +291,7 @@ export function apply(ctx) {
   ctx.tools.register({
     name: 'produce_video',
     description:
-      'End-to-end one-click production: import assets -> AI storyboard & copy -> real IndexTTS-2 narration -> HTML/Remotion code -> SFX/BGM ducked audio mix -> full-FPS H.264 MP4.',
+      'Local Draft one-click production: import assets -> storyboard -> local IndexTTS-2 narration -> HTML/Remotion code -> SFX/BGM ducked mix -> MP4.',
     parameters: {
       type: 'object',
       properties: {
@@ -264,6 +301,11 @@ export function apply(ctx) {
         topic: { type: 'string', description: 'Topic / prompt.' },
         style: { type: 'string', enum: ['tech', 'cinematic', 'documentary', 'energetic', 'warm'] },
         engine: { type: 'string', enum: ['html', 'remotion'] },
+        aspectRatio: { type: 'string', enum: ['auto', '16:9', '9:16', '3:4', '1:1', 'custom'] },
+        quality: { type: 'string', enum: ['720p', '1080p', '2k', '4k', 'custom'] },
+        width: { type: 'number', description: 'Optional custom width.' },
+        height: { type: 'number', description: 'Optional custom height.' },
+        aiBadge: { type: 'boolean', description: 'Optional corner AI badge.' },
         fps: { type: 'number', description: 'Target frame rate (e.g. 30 or 60).' },
         voiceId: { type: 'string', description: 'Voice ID or "auto".' },
       },
@@ -275,6 +317,126 @@ export function apply(ctx) {
     isConcurrencySafe: () => false,
     async execute(args) {
       return await produceFullVideo(args)
+    },
+  })
+
+  ctx.tools.register({
+    name: 'get_llm_config',
+    description: 'Inspect current external LLM configuration (masked key status, baseUrl, model, protocol).',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    output: { schema: { type: 'object', additionalProperties: true } },
+    timeoutMs: 10_000,
+    isConcurrencySafe: () => true,
+    async execute() {
+      return getSafeLlmConfigSummary()
+    },
+  })
+
+  ctx.tools.register({
+    name: 'configure_llm_model',
+    description: 'Save or test any OpenAI-compatible or Anthropic-compatible LLM provider configuration.',
+    parameters: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', description: 'Preset template ID (custom, anthropic, openai, deepseek, openrouter, gemini, ollama).' },
+        format: { type: 'string', enum: ['auto', 'openai', 'anthropic'], description: 'API wire format.' },
+        baseUrl: { type: 'string', description: 'LLM API Base URL.' },
+        apiKey: { type: 'string', description: 'API Key (never logged or returned).' },
+        model: { type: 'string', description: 'Target model ID string (e.g. claude-opus-4-6, deepseek-chat, etc.).' },
+        maxRepairRounds: { type: 'number', description: 'Max compiler/lint self-repair attempts (1-5).' },
+        runTest: { type: 'boolean', description: 'If true, also test endpoint connectivity.' },
+      },
+      additionalProperties: false,
+    },
+    output: { schema: { type: 'object', additionalProperties: true } },
+    timeoutMs: 30_000,
+    isConcurrencySafe: () => false,
+    async execute(args) {
+      const saved = saveLlmConfig(args)
+      if (args.runTest) {
+        const test = await testLlmConnection(args)
+        return { ...saved, test }
+      }
+      return saved
+    },
+  })
+
+  ctx.tools.register({
+    name: 'ai_create_video',
+    description:
+      'Use the configured LLM coding model + local IndexTTS-2 voices to author bespoke Remotion TSX or HyperFrames HTML code, custom DSP BGM/SFX, run TypeScript & lint auto-repair (up to 3 rounds), and render + QA the final MP4.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectDir: { type: 'string', description: 'Video project directory.' },
+        sources: { type: 'array', items: { type: 'string' }, description: 'Optional local asset folders or files.' },
+        topic: { type: 'string', description: 'Creative brief or video topic.' },
+        userPrompt: { type: 'string', description: 'Detailed visual, pacing, or aesthetic instructions for the AI director/coder.' },
+        engine: { type: 'string', enum: ['remotion', 'html'], description: 'Output engine (remotion strongly recommended for AI coding).' },
+        aspectRatio: { type: 'string', enum: ['auto', '16:9', '9:16', '3:4', '1:1', 'custom'], description: 'auto lets AI select from topic/assets; or specify exact ratio.' },
+        quality: { type: 'string', enum: ['720p', '1080p', '2k', '4k', 'custom'], description: 'Output quality preset.' },
+        width: { type: 'number', description: 'Custom pixel width.' },
+        height: { type: 'number', description: 'Custom pixel height.' },
+        voiceId: { type: 'string', description: 'Voice ID or "auto".' },
+        aiBadge: { type: 'boolean', description: 'Show optional AI corner attribution badge.' },
+        useDraftReference: { type: 'boolean', description: 'Read existing local draft script/WAVs as pacing baseline.' },
+        render: { type: 'boolean', description: 'Whether to immediately render MP4 and run FFmpeg QA.' },
+      },
+      required: ['projectDir'],
+      additionalProperties: false,
+    },
+    output: { schema: { type: 'object', additionalProperties: true } },
+    timeoutMs: 600_000,
+    isConcurrencySafe: () => false,
+    async execute(args) {
+      return await runAiStudioPipeline(args)
+    },
+  })
+
+  ctx.tools.register({
+    name: 'ai_refine_scene',
+    description:
+      'Apply a natural-language modification request to an AI-coded scene or rollback to the previous snapshot.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectDir: { type: 'string', description: 'Video project directory.' },
+        sceneId: { type: 'string', description: 'Target scene ID (or omit for global polish).' },
+        instruction: { type: 'string', description: 'Natural language editing request.' },
+        rollback: { type: 'boolean', description: 'If true, restore the previous saved snapshot instead of editing.' },
+        render: { type: 'boolean', description: 'Re-render MP4 after passing code validation.' },
+      },
+      required: ['projectDir'],
+      additionalProperties: false,
+    },
+    output: { schema: { type: 'object', additionalProperties: true } },
+    timeoutMs: 600_000,
+    isConcurrencySafe: () => false,
+    async execute(args) {
+      if (args.rollback) return rollbackAiVersion(args.projectDir)
+      return await refineAiScene(args)
+    },
+  })
+
+  ctx.tools.register({
+    name: 'video_qa',
+    description: 'Run FFmpeg automated post-render quality check (blackdetect + EBU R128 loudness + stream/duration match) on an MP4.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectDir: { type: 'string', description: 'Video project directory.' },
+        mp4Path: { type: 'string', description: 'Optional MP4 file path (defaults to output/final.mp4).' },
+      },
+      required: ['projectDir'],
+      additionalProperties: false,
+    },
+    output: { schema: { type: 'object', additionalProperties: true } },
+    timeoutMs: 90_000,
+    isConcurrencySafe: () => true,
+    async execute(args) {
+      const { runPostRenderQa } = await import('@dsh-video/tool-video-suite')
+      const script = readScriptJson(args.projectDir).data
+      return await runPostRenderQa({ projectDir: args.projectDir, mp4Path: args.mp4Path, script })
     },
   })
 }

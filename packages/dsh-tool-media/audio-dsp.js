@@ -349,6 +349,45 @@ export function synthSfxStereo(type = 'whoosh', opts = {}) {
   const seed = (Number(opts.seed) || 17) + kind.split('').reduce((a, c) => a + c.charCodeAt(0) * 19, 0)
   const rand = createRng(seed)
 
+  // Parametric LLM-authored DSP synthesizer ('synth_sfx')
+  if (kind === 'synth_sfx' || (Number(opts.freqStart) > 0 && Number(opts.freqEnd) > 0)) {
+    const dur = clamp((Number(opts.durationMs) || 340) / 1000, 0.05, 3.0)
+    const f0 = clamp(Number(opts.freqStart) || 880, 35, 12000)
+    const f1 = clamp(Number(opts.freqEnd) || 160, 28, 12000)
+    const q = clamp(Number(opts.q) || 1.2, 0.4, 8)
+    const noiseMix = clamp(Number(opts.noiseMix) || 0.22, 0, 1)
+    const wave = String(opts.wave || 'saw').toLowerCase()
+    const decayRate = Number(opts.decay) > 0 ? Number(opts.decay) : 3.2 / dur
+    const n = Math.floor(dur * DSP_SR)
+    const mono = new Float32Array(n)
+    const noiseBuf = new Float32Array(n)
+    let phase = 0
+    for (let i = 0; i < n; i++) {
+      const u = i / n
+      const t = i / DSP_SR
+      const instF = f0 * Math.pow(f1 / Math.max(1, f0), u)
+      phase += (2 * Math.PI * instF) / DSP_SR
+      const cyc = (phase / (2 * Math.PI)) % 1
+      let osc = Math.sin(phase)
+      if (wave === 'saw') osc = 2 * cyc - 1
+      else if (wave === 'square') osc = cyc < 0.5 ? 0.8 : -0.8
+      else if (wave === 'triangle') osc = 1 - 4 * Math.abs(Math.round(cyc - 0.25) - (cyc - 0.25))
+      const att = Math.min(1, t / 0.008)
+      const env = att * Math.exp(-t * decayRate)
+      mono[i] = osc * env * 0.58
+      noiseBuf[i] = (rand() * 2 - 1) * env * 0.48
+    }
+    const filteredNoise = biquadFilter(noiseBuf, 'bp', (f0 + f1) * 0.5, q)
+    const L = new Float32Array(n)
+    const R = new Float32Array(n)
+    for (let i = 0; i < n; i++) {
+      const s = mono[i] * (1 - noiseMix * 0.5) + filteredNoise[i] * noiseMix
+      L[i] = s
+      R[i] = s * 0.96
+    }
+    return { L, R }
+  }
+
   if (kind === 'hit' || kind === 'impact') {
     const dur = 1.05
     const n = Math.floor(dur * DSP_SR)
@@ -584,15 +623,37 @@ const PROGRESSIONS = {
   ],
 }
 
-export function renderBgmWavBuffer({ durationSec = 20, mood = 'tech', bpm }) {
+export function renderBgmWavBuffer({ durationSec = 20, mood = 'tech', bpm, audioSpec = null }) {
   const dur = Math.max(2, Number(durationSec) || 20)
-  const resolvedBpm = Number(bpm) || (mood === 'energetic' ? 124 : mood === 'tech' ? 118 : mood === 'cinematic' ? 104 : 96)
+  const specMood = String(audioSpec?.mood || mood || 'tech').toLowerCase()
+  const resolvedBpm =
+    Number(audioSpec?.bpm || bpm) ||
+    (specMood === 'energetic' ? 124 : specMood === 'tech' ? 118 : specMood === 'cinematic' ? 104 : 96)
   const B = 60 / resolvedBpm
   const n = Math.floor(dur * DSP_SR)
   const L = new Float32Array(n)
   const R = new Float32Array(n)
   const rand = createRng(991 + resolvedBpm)
-  const prog = PROGRESSIONS[mood] || PROGRESSIONS.tech
+
+  const validSpecChords =
+    Array.isArray(audioSpec?.chords) &&
+    audioSpec.chords.length >= 2 &&
+    audioSpec.chords.every(
+      (bar) => Array.isArray(bar) && Number.isFinite(Number(bar[0])) && Array.isArray(bar[1]) && bar[1].length >= 2,
+    )
+  const prog = validSpecChords
+    ? audioSpec.chords.map((b) => [Number(b[0]), b[1].map((m) => Number(m) || 60)])
+    : PROGRESSIONS[specMood] || PROGRESSIONS.tech
+
+  const drumDensity = Number.isFinite(Number(audioSpec?.drumDensity))
+    ? clamp(Number(audioSpec.drumDensity), 0, 1)
+    : specMood === 'tech' || specMood === 'energetic'
+      ? 0.88
+      : 0.48
+  const leadStyle = String(
+    audioSpec?.leadStyle || (specMood === 'tech' || specMood === 'energetic' ? 'pluck' : 'epiano'),
+  ).toLowerCase()
+  const baseCutoff = clamp(Number(audioSpec?.padCutoff) || 950, 500, 4200)
 
   const barDur = 4 * B
   const totalBars = Math.ceil(dur / barDur)
@@ -600,15 +661,15 @@ export function renderBgmWavBuffer({ durationSec = 20, mood = 'tech', bpm }) {
   for (let bar = 0; bar < totalBars; bar++) {
     const tb = bar * barDur
     const [root, ch] = prog[bar % prog.length]
-    const isEnergetic = mood === 'tech' || mood === 'energetic'
+    const isEnergetic = drumDensity >= 0.6
     const lvl = bar === 0 ? 0.58 : bar >= totalBars - 1 ? 0.92 : 0.8
 
     // Stereo detuned pad
-    const p = synthPadStereo(ch.map((m) => m - 12), barDur + 0.35, 950 + 1300 * lvl, 0.08, 0.24)
+    const p = synthPadStereo(ch.map((m) => m - 12), barDur + 0.35, baseCutoff + 1150 * lvl, 0.08, 0.24)
     addStereo(L, R, p.L, p.R, tb, 1.0)
 
     // Crash cymbal at start of phrase bars (0, 4, 8...)
-    if (bar % 4 === 0 && bar > 0) {
+    if (bar % 4 === 0 && bar > 0 && drumDensity > 0.25) {
       addMonoPanned(L, R, synthCrash(rand, 0.16), tb, 1.0, 0)
     }
 
@@ -618,36 +679,39 @@ export function renderBgmWavBuffer({ durationSec = 20, mood = 'tech', bpm }) {
       if (tt >= dur) break
 
       // Bass on 8th notes
-      if (s % 2 === 0) {
+      if (s % 2 === 0 && drumDensity > 0.1) {
         const oct = s % 8 === 6 ? 12 : 0
         addMonoPanned(L, R, synthBass(root + oct, (B / 2) * 0.82, s % 4 === 0 ? 0.44 : 0.34), tt, 1.0, 0)
       }
 
       // Kick drum
-      if (s % 4 === 0 && (isEnergetic || bar > 0)) {
-        addMonoPanned(L, R, synthKick(rand, 46, isEnergetic ? 0.85 : 0.62), tt, 1.0, 0)
+      if (s % 4 === 0 && drumDensity > 0.2 && (isEnergetic || bar > 0)) {
+        addMonoPanned(L, R, synthKick(rand, 46, (isEnergetic ? 0.85 : 0.62) * Math.min(1, drumDensity + 0.2)), tt, 1.0, 0)
       }
 
       // Clap / snare on backbeats 2 and 4
-      if ((s === 4 || s === 12) && (isEnergetic || bar >= 1)) {
+      if ((s === 4 || s === 12) && drumDensity > 0.35 && (isEnergetic || bar >= 1)) {
         addMonoPanned(L, R, synthClap(rand, (isEnergetic ? 0.42 : 0.28) * lvl), tt, 1.0, 0)
       }
 
       // Off-beat hi-hats
-      if (s % 2 === 1 && isEnergetic) {
-        addMonoPanned(L, R, synthHat(rand, false, 0.16 * lvl), tt, 1.0, 0.28)
+      if (s % 2 === 1 && drumDensity > 0.55) {
+        addMonoPanned(L, R, synthHat(rand, false, 0.16 * lvl * drumDensity), tt, 1.0, 0.28)
       }
-      if (s % 4 === 2 && lvl > 0.65 && isEnergetic) {
+      if (s % 4 === 2 && lvl > 0.65 && drumDensity > 0.65) {
         addMonoPanned(L, R, synthHat(rand, true, 0.11 * lvl), tt, 1.0, -0.28)
       }
 
-      // Stereo arpeggio pluck or FM e-piano
-      if (isEnergetic && s % 2 === 0) {
-        const note = ch[[0, 2, 1, 3, 2, 1, 3, 2][(s >> 1) % 8]] + 12
-        const pan = ((s >> 1) % 2 === 0 ? -0.35 : 0.35)
+      // Lead synth voice from audioSpec.leadStyle
+      if (leadStyle === 'pluck' && s % 2 === 0) {
+        const note = ch[[0, 2, 1, 3, 2, 1, 3, 2][(s >> 1) % 8] % ch.length] + 12
+        const pan = (s >> 1) % 2 === 0 ? -0.35 : 0.35
         addMonoPanned(L, R, synthPluck(note, 0.28, 1700 + 2400 * lvl, 0.26 * lvl), tt, 1.0, pan)
-      } else if (!isEnergetic && s % 4 === 0) {
-        const note = ch[[0, 2, 1, 3][s >> 2]] + 12
+      } else if (leadStyle === 'glock' && s % 4 === 0) {
+        const note = ch[(s >> 2) % ch.length] + 24
+        addMonoPanned(L, R, synthGlock(note, 0.72, 0.24 * lvl), tt, 1.0, ((s >> 2) % 2 === 0 ? -0.28 : 0.28))
+      } else if (leadStyle === 'epiano' && s % 4 === 0) {
+        const note = ch[(s >> 2) % ch.length] + 12
         addMonoPanned(L, R, synthEpiano(note, 1.4, 0.28), tt, 1.0, ((s >> 2) - 1.5) * 0.22)
       }
     }
@@ -679,7 +743,17 @@ export function renderSfxMasterBuffer({ durationSec, cues = [] }) {
     if (!Number.isFinite(at) || at < 0 || at >= dur) continue
     const vol = Number.isFinite(Number(cue.volume)) ? Number(cue.volume) : 0.55
     const pan = Number.isFinite(Number(cue.pan)) ? Number(cue.pan) : 0
-    const sample = synthSfxStereo(cue.type, { d: cue.d, seed: idx + 31 })
+    const sample = synthSfxStereo(cue.type, {
+      d: cue.d,
+      freqStart: cue.freqStart,
+      freqEnd: cue.freqEnd,
+      durationMs: cue.durationMs,
+      q: cue.q,
+      wave: cue.wave,
+      noiseMix: cue.noiseMix,
+      decay: cue.decay,
+      seed: idx + 31,
+    })
     const startIdx = Math.round(at * DSP_SR)
     const p = clamp(pan, -1, 1)
     const gL = vol * Math.sqrt((1 - p) * 0.5) * 1.414

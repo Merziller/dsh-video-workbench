@@ -27,6 +27,13 @@ import {
   renderHtmlVideoToMp4,
   renderRemotionProject,
 } from './frame-renderer.js'
+import {
+  runPostRenderQa,
+  runTypecheckOnProject,
+  scanAiGeneratedCodeSandbox,
+} from './qa-checker.js'
+
+export { runPostRenderQa, runTypecheckOnProject, scanAiGeneratedCodeSandbox }
 
 /**
  * Parse hex color (#RRGGBB or #RGB) to relative luminance per WCAG 2.1.
@@ -142,17 +149,17 @@ export async function executeVideoLint(args = {}) {
     } else {
       const html = readFileSync(htmlPath, 'utf8')
 
-      // Check <template> scene wrapping
-      const templateMatches = [...html.matchAll(/<template\b[^>]*>/gi)]
+      // Check <template> or data-scene-id scene wrapping
+      const templateMatches = [...html.matchAll(/<template\b[^>]*>|data-scene-id=/gi)]
       const hasTemplates = templateMatches.length > 0
       checks.push({
-        name: 'HTML <template> Scene Isolation',
+        name: 'HTML Scene Isolation (<template> / data-scene-id)',
         passed: hasTemplates,
-        value: `${templateMatches.length} <template> block(s) found`,
+        value: `${templateMatches.length} scene block(s) found`,
       })
       if (!hasTemplates) {
         errors.push(
-          'HTML mode requires each scene to be wrapped in a `<template id="scene-XX">` tag to prevent DOM/CSS collisions.',
+          'HTML mode requires each scene to use `<template id="scene-XX">` or `data-scene-id="scene-XX"` to prevent DOM/CSS collisions.',
         )
       }
 
@@ -212,15 +219,29 @@ export async function executeVideoLint(args = {}) {
     if (!hasSrc) {
       errors.push(`Remotion mode requires a src/ directory inside ${targetDir}`)
     } else {
-      const files = readdirSync(srcDir).filter((f) => /\.(tsx|ts|jsx|js)$/.test(f))
+      const files = []
+      const walkSrc = (dir, prefix = '') => {
+        for (const ent of readdirSync(dir, { withFileTypes: true })) {
+          const rel = prefix ? `${prefix}/${ent.name}` : ent.name
+          const full = join(dir, ent.name)
+          if (ent.isDirectory()) walkSrc(full, rel)
+          else if (/\.(tsx|ts|jsx|js)$/.test(ent.name)) files.push({ rel, full })
+        }
+      }
+      walkSrc(srcDir)
+
       let usesCurrentFrame = false
       const cssTransitionViolations = []
+      const mathRandomViolations = []
 
-      for (const file of files) {
-        const content = readFileSync(join(srcDir, file), 'utf8')
+      for (const f of files) {
+        const content = readFileSync(f.full, 'utf8')
         if (/useCurrentFrame\s*\(/.test(content)) usesCurrentFrame = true
         if (/transition\s*:/i.test(content) || /@keyframes/i.test(content)) {
-          cssTransitionViolations.push(file)
+          cssTransitionViolations.push(f.rel)
+        }
+        if (/\bMath\.random\s*\(/.test(content)) {
+          mathRandomViolations.push(f.rel)
         }
       }
       checks.push({
@@ -236,9 +257,22 @@ export async function executeVideoLint(args = {}) {
             ? 'Clean'
             : `Found in: ${cssTransitionViolations.join(', ')}`,
       })
+      checks.push({
+        name: 'Deterministic Random Only (No Math.random)',
+        passed: mathRandomViolations.length === 0,
+        value:
+          mathRandomViolations.length === 0
+            ? 'Clean'
+            : `Found in: ${mathRandomViolations.join(', ')}`,
+      })
       if (cssTransitionViolations.length > 0) {
-        warnings.push(
+        errors.push(
           `Avoid CSS transitions/@keyframes in Remotion components (${cssTransitionViolations.join(', ')}); use interpolate() or spring() instead.`,
+        )
+      }
+      if (mathRandomViolations.length > 0) {
+        errors.push(
+          `Avoid Math.random() in Remotion components (${mathRandomViolations.join(', ')}); use random(seed) instead.`,
         )
       }
     }
@@ -355,13 +389,18 @@ export async function executeVideoSnapshot(args = {}) {
 
   if (!captured && browserBin && existsSync(htmlEntry)) {
     try {
+      const baseW = Number(script.width) || 1920
+      const baseH = Number(script.height) || 1080
+      const snapScale = Math.min(1, 1280 / Math.max(baseW, baseH))
+      const snapW = Math.max(320, Math.round((baseW * snapScale) / 2) * 2)
+      const snapH = Math.max(320, Math.round((baseH * snapScale) / 2) * 2)
       await captureHtmlSnapshots({
         projectDir: targetDir,
         browserBin,
         frames: sampleFrames,
         outDir: framesDir,
-        width: 1280,
-        height: 720,
+        width: snapW,
+        height: snapH,
       })
       captureMethod = 'chromium-cdp-dom'
       captured = true
@@ -422,8 +461,8 @@ export async function executeVideoRender(args = {}) {
   const { data: script } = writeScriptJson(targetDir, readScriptJson(targetDir).data)
   const engine = args.engine || script.engine || 'html'
   const fps = Number(script.fps) || 30
-  const width = Number(args.width) || 1920
-  const height = Number(args.height) || 1080
+  const width = Number(args.width) || Number(script.width) || 1920
+  const height = Number(args.height) || Number(script.height) || 1080
   const totalFrames = Math.max(30, Number(script.totalDurationInFrames) || 300)
   const totalSec = Number((totalFrames / fps).toFixed(3))
 
@@ -453,7 +492,7 @@ export async function executeVideoRender(args = {}) {
   if (engine === 'remotion' && existsSync(join(targetDir, 'src', 'Root.tsx'))) {
     syncRemotionPublicAssets(targetDir, script)
     const vcPath = join(targetDir, 'src', 'VideoComposition.tsx')
-    if (existsSync(vcPath)) {
+    if (existsSync(vcPath) && script?.authoringMode !== 'ai-coded') {
       const vcSrc = readFileSync(vcPath, 'utf8')
       if (
         (vcSrc.includes('const PALETTE') || vcSrc.includes('import scriptData from')) &&
@@ -475,15 +514,24 @@ export async function executeVideoRender(args = {}) {
     }
   }
 
+  let renderW = width
+  let renderH = height
   if (!renderMethod) {
     const browserBin = resolveBrowserExecutable()
     const htmlEntry = join(targetDir, 'index.html')
     if (!browserBin || !existsSync(htmlEntry)) {
       throw new Error(`Cannot render HTML video: missing browser (${browserBin}) or ${htmlEntry}`)
     }
-    // Optional draft scale (default 1920x1080; pass renderWidth/renderHeight for faster 720p drafts)
-    const rW = Number(args.renderWidth) || width
-    const rH = Number(args.renderHeight) || height
+    // Preserve aspect ratio if caller passed draft renderWidth / renderHeight or custom scale
+    let rW = Number(args.renderWidth) || width
+    let rH = Number(args.renderHeight) || height
+    if (args.draftScale && Number(args.draftScale) > 0 && Number(args.draftScale) < 1) {
+      const s = Number(args.draftScale)
+      rW = Math.max(320, Math.round((width * s) / 2) * 2)
+      rH = Math.max(320, Math.round((height * s) / 2) * 2)
+    }
+    renderW = rW
+    renderH = rH
     await renderHtmlVideoToMp4({
       projectDir: targetDir,
       browserBin,
@@ -501,6 +549,13 @@ export async function executeVideoRender(args = {}) {
   }
 
   await stitch3x3Grid(ffmpeg, framesDir, snapshotOut)
+  const qaReport = await runPostRenderQa({
+    projectDir: targetDir,
+    mp4Path: outPath,
+    script,
+    expectedWidth: renderW,
+    expectedHeight: renderH,
+  })
 
   const fileSizeBytes = statSync(outPath).size
   return {
@@ -518,6 +573,8 @@ export async function executeVideoRender(args = {}) {
     audioTracksMixed: mixRes.voiceCount,
     sfxCount: mixRes.sfxCount,
     bgmSource: mixRes.bgmSource,
+    qaReportPath: qaReport?.qaReportPath || '',
+    qaReport,
   }
 }
 

@@ -5,6 +5,7 @@ import {
   probeAudioDuration,
   REPO_ROOT,
   resolveBinaries,
+  resolveVideoDimensions,
   runCommandRedirected,
 } from '../packages/shared/index.js'
 import {
@@ -18,12 +19,15 @@ import {
   executeVideoLint,
   executeVideoRender,
   executeVideoSnapshot,
+  runPostRenderQa,
+  runTypecheckOnProject,
 } from '../packages/dsh-tool-video-suite/index.js'
 import {
   importAssets,
   mixVideoAudio,
   planVideoFromAssets,
   readAssets,
+  runAiStudioPipeline,
 } from '../packages/dsh-tool-media/index.js'
 import { scaffoldVideoProject } from '../packages/dsh-preset-video/index.js'
 import { handleWorkbenchApiRequest } from '../packages/dsh-web-video-workbench/lib/index.js'
@@ -340,11 +344,14 @@ async function runSelfTest() {
     `[7/8] Remotion Engine Render verified (${remRender.renderMethod}): ${(remRender.fileSizeBytes / 1024).toFixed(1)} KB, snap=${remSnap.captureMethod}`,
   )
 
-  // 8. Live API Route & Range Check + Demo Reset + Open-Source Hygiene Scan
+  // 8. Live API Route, LLM Masked Config, & Range Check
   const apiState = await handleWorkbenchApiRequest(new Request('http://127.0.0.1:4399/api/video-workbench/state'))
   const apiJson = await apiState.json()
-  if (!apiJson.ok || !apiJson.ttsStatus) {
-    throw new Error('Workbench /state API failed health check')
+  if (!apiJson.ok || !apiJson.ttsStatus || !apiJson.llmConfig) {
+    throw new Error('Workbench /state API failed health check or missing llmConfig summary')
+  }
+  if ('apiKey' in (apiJson.llmConfig || {})) {
+    throw new Error('Security violation: plaintext apiKey must never be serialized in /state')
   }
   const rangeRes = await handleWorkbenchApiRequest(
     new Request(`http://127.0.0.1:4399/api/video-workbench/asset?projectDir=${encodeURIComponent(tmpHtmlProj)}&rel=${encodeURIComponent('output/final.mp4')}`, {
@@ -355,7 +362,197 @@ async function runSelfTest() {
     throw new Error(`Expected HTTP 206 Partial Content for asset Range request, got ${rangeRes.status}`)
   }
 
-  // Re-scaffold clean starter demos so zero local temp state stays in `examples/`
+  // Verify Post-Render FFmpeg QA Report from HTML render & QA API endpoint
+  const qaApiRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1:4399/api/video-workbench/qa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir: tmpHtmlProj }),
+    }),
+  )
+  const qaJson = await qaApiRes.json()
+  if (!qaJson.ok || !qaJson.qa?.passed) {
+    throw new Error(`FFmpeg QA verification failed: ${JSON.stringify(qaJson)}`)
+  }
+  console.log(
+    `[8/10] API, Masked LLM Config, Range 206 & FFmpeg QA verified (loudness=${qaJson.qa.loudness?.integratedLufs} LUFS, blackSegments=${qaJson.qa.blackSegments?.length})`,
+  )
+
+  // 9. Aspect Ratio Resolver + `tsc --noEmit` Preflight + Mocked LLM Coding 3-Round Auto-Repair Loop
+  const autoPortDims = resolveVideoDimensions({
+    aspectRatio: 'auto',
+    quality: '1080p',
+    topic: '抖音爆款产品竖屏推广',
+  })
+  const xhsDims = resolveVideoDimensions({ aspectRatio: 'auto', quality: '720p', topic: '小红书好物图文笔记' })
+  const twoKDims = resolveVideoDimensions({ aspectRatio: '16:9', quality: '2k' })
+  const assetPortDims = resolveVideoDimensions({
+    aspectRatio: 'auto',
+    quality: '1080p',
+    topic: '风光记录',
+    assets: [{ width: 1080, height: 1920 }, { width: 1080, height: 1920 }],
+  })
+  if (
+    autoPortDims.width !== 1080 || autoPortDims.height !== 1920 ||
+    xhsDims.aspectRatio !== '3:4' || xhsDims.width !== 720 || xhsDims.height !== 960 ||
+    twoKDims.width !== 2560 || twoKDims.height !== 1440 ||
+    assetPortDims.aspectRatio !== '9:16'
+  ) {
+    throw new Error(`Dimension resolver assertion failed: ${JSON.stringify({ autoPortDims, xhsDims, twoKDims, assetPortDims })}`)
+  }
+
+  // Run strict tsc --noEmit on Remotion showcase project (`shotcraft.tsx` + `VideoComposition.tsx`)
+  const remTsc = await runTypecheckOnProject(tmpRemotionProj)
+  if (!remTsc.ok) {
+    throw new Error(`Remotion preflight tsc --noEmit failed: ${remTsc.errors.join(' | ')}`)
+  }
+
+  // Test full LLM AI Studio pipeline with mocked Anthropic-format LLM returning broken TSX first, then repairing in Round 1!
+  const tmpAiProj = join(REPO_ROOT, '.tmp', 'test-ai-coder')
+  rmSync(tmpAiProj, { recursive: true, force: true })
+  scaffoldVideoProject(tmpAiProj, { title: 'LLM Auto-Repair Test', engine: 'remotion' })
+
+  let llmCallCounter = 0
+  const mockLlmFetch = async (url, init) => {
+    llmCallCounter++
+    const body = JSON.parse(init?.body || '{}')
+    const userPrompt = String(body?.messages?.[body.messages.length - 1]?.content || '')
+
+    // Call 1: Director Architect returning 9:16 portrait plan + custom audioSpec + synth_sfx
+    if (llmCallCounter === 1) {
+      const directorReply = JSON.stringify({
+        title: 'AI 编程测试短片',
+        style: 'cinematic',
+        recommendedAspectRatio: '9:16',
+        theme: {
+          bgPrimary: '#090B10',
+          bgSecondary: '#141926',
+          textPrimary: '#F8FAFC',
+          textMuted: '#94A3B8',
+          accentPrimary: '#E5A93C',
+          accentSecondary: '#38BDF8',
+        },
+        audioSpec: {
+          mood: 'cinematic',
+          bpm: 112,
+          drumDensity: 0.72,
+          leadStyle: 'glock',
+          padCutoff: 1650,
+          chords: [
+            [38, [62, 65, 69, 72]],
+            [34, [58, 65, 69, 74]],
+            [41, [60, 65, 69, 76]],
+            [36, [60, 64, 67, 72]],
+          ],
+        },
+        scenes: [
+          {
+            id: 'scene-01',
+            title: '竖屏黑金视觉震撼开场',
+            shotType: 'hero-title',
+            emotion: '激情',
+            role: 'host',
+            narration: '从零行模板到专属电影动效代码，让每一帧画面由大模型精准编排。',
+            headline: 'AI 创意编程',
+            kicker: 'CINEMA STUDIO',
+            metrics: [{ label: '效率提升', value: 98, suffix: '%' }],
+            motionNotes: 'PageCam 缓慢推进 + DigitRoll 数字滚动',
+            sfxCues: [{ type: 'synth_sfx', offsetSec: 0.1, freqStart: 920, freqEnd: 160, durationMs: 320, wave: 'saw', volume: 0.55 }],
+          },
+        ],
+      })
+      return new Response(JSON.stringify({ model: 'mock-opus', content: [{ type: 'text', text: directorReply }] }), { status: 200 })
+    }
+
+    // Call 2: Deliberately emit invalid TSX (CSS transition + TypeScript error) to trigger auto-repair!
+    if (llmCallCounter === 2) {
+      const brokenTsx = `import React from 'react';
+import { AbsoluteFill, Audio, staticFile } from 'remotion';
+export const VideoComposition: React.FC = () => {
+  const broken: number = "bad_type_string";
+  return <AbsoluteFill style={{ transition: 'all 0.3s' }}><Audio src={staticFile('master-audio.wav')} />{broken}</AbsoluteFill>;
+};`
+      const brokenReply = JSON.stringify({
+        files: {
+          'src/theme.ts': `export const THEME = { accent: '#E5A93C' };`,
+          'src/VideoComposition.tsx': brokenTsx,
+        },
+      })
+      return new Response(JSON.stringify({ model: 'mock-opus', content: [{ type: 'text', text: brokenReply }] }), { status: 200 })
+    }
+
+    // Call 3: Receive exact tsc + lint diagnostics -> emit valid fixed TSX using shotcraft primitives!
+    if (!userPrompt.includes('transition') && !userPrompt.includes('TS2322') && !userPrompt.includes('number')) {
+      throw new Error(`Auto-repair prompt missing compiler/lint diagnostics: ${userPrompt.slice(0, 200)}`)
+    }
+    const fixedTsx = `import React from 'react';
+import { AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame } from 'remotion';
+import scriptData from '../script.json';
+import { AIBadge, ClipCard, DigitRoll, PageCam, ShotCaption } from './lib/shotcraft';
+import { THEME } from './theme';
+
+export const VideoComposition: React.FC = () => {
+  const frame = useCurrentFrame();
+  const sData: any = scriptData;
+  const scenes: any[] = Array.isArray(sData.scenes) ? sData.scenes : [];
+  return (
+    <AbsoluteFill style={{ backgroundColor: '#090B10', color: '#F8FAFC' }}>
+      {scenes.map((sc: any) => (
+        <Sequence key={sc.id} from={sc.startFrame} durationInFrames={sc.durationInFrames}>
+          <PageCam startFrame={0} durationFrames={sc.durationInFrames}>
+            <ClipCard delay={4} accentColor={THEME.accent}>
+              <DigitRoll to={98} suffix="%" />
+            </ClipCard>
+          </PageCam>
+        </Sequence>
+      ))}
+      <ShotCaption subtitles={sData.subtitles || []} accentColor={THEME.accent} isPortrait={true} />
+      <AIBadge visible={Boolean(sData.aiBadge)} accentColor={THEME.accent} />
+      <Audio src={staticFile('master-audio.wav')} />
+    </AbsoluteFill>
+  );
+};`
+    return new Response(
+      JSON.stringify({
+        model: 'mock-opus',
+        content: [{ type: 'text', text: JSON.stringify({ files: { 'src/VideoComposition.tsx': fixedTsx } }) }],
+      }),
+      { status: 200 },
+    )
+  }
+
+  const aiPipeRes = await runAiStudioPipeline({
+    projectDir: tmpAiProj,
+    topic: 'AI 编程测试短片',
+    engine: 'remotion',
+    aspectRatio: 'auto',
+    quality: '1080p',
+    aiBadge: true,
+    render: false, // Full tsc + lint + audioSpec + auto-repair verified without duplicating 20s headless chromium in mock pass
+    allowPlaceholder: true,
+    llmOverride: {
+      provider: 'anthropic',
+      format: 'anthropic',
+      baseUrl: 'https://mock.anthropic.local',
+      apiKey: 'mock-test-key',
+      model: 'mock-opus',
+      maxRepairRounds: 3,
+    },
+    fetchImpl: mockLlmFetch,
+  })
+  if (!aiPipeRes.ok || aiPipeRes.buildLog?.repairRoundsUsed !== 1 || aiPipeRes.script?.width !== 1080 || aiPipeRes.script?.height !== 1920) {
+    throw new Error(`AI Coding Auto-Repair verification failed: ${JSON.stringify(aiPipeRes.buildLog)}`)
+  }
+  const codeApiRes = await handleWorkbenchApiRequest(new Request(`http://127.0.0.1:4399/api/video-workbench/code?projectDir=${encodeURIComponent(tmpAiProj)}`))
+  const codeApiJson = await codeApiRes.json()
+  if (!codeApiJson.ok || !(codeApiJson.files || []).some((f) => f.path === 'src/VideoComposition.tsx')) {
+    throw new Error('Workbench /code API failed to list generated TSX files')
+  }
+  console.log(
+    `[9/10] Dimensions Auto-Detection + tsc --noEmit (${remTsc.skipped ? 'skipped' : '0 errors'}) + Mocked LLM 3-Round Self-Repair (repaired cleanly in ${aiPipeRes.buildLog.repairRoundsUsed} round) + Custom audioSpec/synth_sfx OK!`,
+  )
+
+  // 10. Re-scaffold clean starter demos + Open-Source Hygiene Scan
   const demoDir = join(REPO_ROOT, 'examples', 'demo-html-project')
   const demoRemotionDir = join(REPO_ROOT, 'examples', 'demo-remotion-project')
   scaffoldVideoProject(demoDir, {
@@ -374,7 +571,7 @@ async function runSelfTest() {
     throw new Error(`Hardcoded machine paths found in tracked files: ${violations.join(', ')}`)
   }
   console.log(
-    `[8/8] API & Range 206 OK · 0 hardcoded personal paths/keys across all tracked files!`,
+    `[10/10] Starter Demos reset & 0 hardcoded personal paths/keys across all tracked files!`,
   )
   console.log('======================================================================')
 }

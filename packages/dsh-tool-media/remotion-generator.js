@@ -10,6 +10,7 @@
 import { copyFileSync, existsSync, linkSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { resolvePalette } from './html-generator.js'
+import { writeShotcraftRemotionLib } from './shotcraft-lib.js'
 
 function syncFileToPublic(absSrc, absDest) {
   if (!existsSync(absSrc)) return
@@ -51,11 +52,12 @@ export function syncRemotionPublicAssets(projectDir, script) {
   return pubDir
 }
 
-export function writeRemotionProjectFiles(projectDir, script) {
+export function writeRemotionProjectFiles(projectDir, script, { rebuildTemplate = true } = {}) {
   const absDir = resolve(projectDir)
   const srcDir = join(absDir, 'src')
   mkdirSync(srcDir, { recursive: true })
   syncRemotionPublicAssets(absDir, script)
+  writeShotcraftRemotionLib(absDir)
 
   const theme = resolvePalette(script)
   const hasMasterAudio = existsSync(join(absDir, 'public', 'master-audio.wav'))
@@ -94,6 +96,11 @@ export const RemotionRoot: React.FC = () => {
     'utf8',
   )
 
+  // When an AI LLM has authored custom scene code, preserve VideoComposition.tsx unless explicitly rebuilding draft
+  if (script?.authoringMode === 'ai-coded' && rebuildTemplate === false && existsSync(join(srcDir, 'VideoComposition.tsx'))) {
+    return
+  }
+
   writeFileSync(
     join(srcDir, 'VideoComposition.tsx'),
     `import React from 'react';
@@ -111,6 +118,7 @@ import {
   useVideoConfig,
 } from 'remotion';
 import scriptData from '../script.json';
+import { AIBadge } from './lib/shotcraft';
 
 const PALETTE: any = ${JSON.stringify(theme)};
 const SANS = 'Microsoft YaHei, PingFang SC, sans-serif';
@@ -433,7 +441,12 @@ const SceneStage: React.FC<{
   beats: number[];
 }> = ({ scene, idx, total, beats }) => {
   const localFrame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, width, height } = useVideoConfig();
+  const isPortrait = width < height;
+  const cx = width / 2;
+  const cy = height / 2;
+  const rxScale = width / 1920;
+  const ryScale = height / 1080;
   const dur = Math.max(30, Number(scene.durationInFrames) || 90);
   const progress = Math.min(1, localFrame / Math.max(1, dur - 1));
   const absFrame = (Number(scene.startFrame) || 0) + localFrame;
@@ -506,17 +519,17 @@ const SceneStage: React.FC<{
 
         {/* Ambient Floating Particles & Dot Grid */}
         <AbsoluteFill style={{ pointerEvents: 'none' }}>
-          <svg width="1920" height="1080" style={{ position: 'absolute', inset: 0, opacity: 0.22 }}>
+          <svg width={width} height={height} style={{ position: 'absolute', inset: 0, opacity: 0.22 }}>
             <defs>
               <pattern id={\`grid-\${idx}\`} width="64" height="64" patternUnits="userSpaceOnUse">
                 <circle cx="2" cy="2" r="1.4" fill={PALETTE.accent2 || PALETTE.accent} />
               </pattern>
             </defs>
-            <rect width="1920" height="1080" fill={\`url(#grid-\${idx})\`} />
+            <rect width={width} height={height} fill={\`url(#grid-\${idx})\`} />
           </svg>
           {PARTICLES.map((p, pi) => {
-            const px = ((((p.x0 + absFrame * p.vx) % 1) + 1) % 1) * 1920;
-            const py = ((((p.y0 + absFrame * p.vy) % 1) + 1) % 1) * 1080;
+            const px = ((((p.x0 + absFrame * p.vx) % 1) + 1) % 1) * width;
+            const py = ((((p.y0 + absFrame * p.vy) % 1) + 1) % 1) * height;
             return (
               <div
                 key={pi}
@@ -537,11 +550,11 @@ const SceneStage: React.FC<{
 
         {/* Entrance Shockwave Ring */}
         {localFrame < 26 ? (
-          <svg width="1920" height="1080" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+          <svg width={width} height={height} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
             <circle
-              cx="960"
-              cy="520"
-              r={interpolate(localFrame, [0, 26], [30, 820], { easing: easeOut })}
+              cx={cx}
+              cy={cy}
+              r={interpolate(localFrame, [0, 26], [30, Math.min(width, height) * 0.76], { easing: easeOut })}
               fill="none"
               stroke={PALETTE.accent}
               strokeWidth={interpolate(localFrame, [0, 26], [10, 1])}
@@ -563,8 +576,8 @@ const SceneStage: React.FC<{
               const driftX = Math.sin(absFrame * 0.025 + si) * 18;
               const driftY = Math.cos(absFrame * 0.02 + si * 1.7) * 14;
               const pullT = interpolate(localFrame, [0, 22], [1.45, 1.0], { extrapolateRight: 'clamp', easing: easeOut });
-              const x = 960 + slot.x * pullT + driftX - 135;
-              const y = 540 + slot.y * pullT + driftY - 85;
+              const x = cx + slot.x * rxScale * pullT + driftX - 135;
+              const y = cy + slot.y * ryScale * pullT + driftY - 85;
               return (
                 <div
                   key={si}
@@ -645,13 +658,14 @@ const SceneStage: React.FC<{
           <AbsoluteFill
             style={{
               display: 'flex',
-              flexDirection: 'row',
+              flexDirection: isPortrait ? 'column' : 'row',
               alignItems: 'center',
-              padding: '70px 104px 120px',
-              gap: 64,
+              justifyContent: 'center',
+              padding: isPortrait ? '84px 52px 170px' : '70px 104px 120px',
+              gap: isPortrait ? 32 : 64,
             }}
           >
-            <div style={{ flex: '1 1 46%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+            <div style={{ flex: isPortrait ? '0 0 auto' : '1 1 46%', width: isPortrait ? '100%' : 'auto', display: 'flex', flexDirection: 'column', alignItems: isPortrait ? 'center' : 'flex-start' }}>
               <div
                 style={{
                   padding: '7px 18px',
@@ -667,20 +681,20 @@ const SceneStage: React.FC<{
               >
                 {String(idx + 1).padStart(2, '0')} / {String(total).padStart(2, '0')} · {sceneTag}
               </div>
-              <KineticHeadline lines={titleLines} localFrame={localFrame} fps={fps} fontSize={66} align="left" rgbSplit={rgbSplit} />
+              <KineticHeadline lines={titleLines} localFrame={localFrame} fps={fps} fontSize={isPortrait ? 52 : 66} align={isPortrait ? 'center' : 'left'} rgbSplit={rgbSplit} />
               <div
                 style={{
-                  width: interpolate(localFrame, [6, 22], [0, 260], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: easeOut }),
+                  width: interpolate(localFrame, [6, 22], [0, isPortrait ? 200 : 260], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: easeOut }),
                   height: 5,
                   borderRadius: 99,
                   marginTop: 18,
                   background: \`linear-gradient(90deg, \${PALETTE.accent}, \${PALETTE.gold || PALETTE.accent2})\`,
                 }}
               />
-              <HighlightsRow highlights={highlights} localFrame={localFrame} fps={fps} align="left" />
+              <HighlightsRow highlights={highlights} localFrame={localFrame} fps={fps} align={isPortrait ? 'center' : 'left'} />
             </div>
 
-            <div style={{ flex: '1 1 54%', height: 690, position: 'relative', perspective: 1200 }}>
+            <div style={{ flex: isPortrait ? '1 1 auto' : '1 1 54%', width: isPortrait ? '100%' : 'auto', height: isPortrait ? 560 : 690, position: 'relative', perspective: 1200 }}>
               <div
                 style={{
                   width: '100%',
@@ -1053,7 +1067,8 @@ const SceneStage: React.FC<{
 
 export const VideoComposition: React.FC = () => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
+  const { fps, durationInFrames, width, height } = useVideoConfig();
+  const isPortrait = width < height;
   const sData: any = scriptData;
   const scenes: any[] = Array.isArray(sData.scenes) ? sData.scenes : [];
   const subtitles: any[] = Array.isArray(sData.subtitles) ? sData.subtitles : [];
@@ -1085,30 +1100,37 @@ export const VideoComposition: React.FC = () => {
         </Sequence>
       ))}
 
+      <AIBadge
+        visible={Boolean(sData.aiBadge)}
+        text={typeof sData.aiBadge === 'string' ? sData.aiBadge : undefined}
+        accentColor={PALETTE.accent}
+      />
+
       {/* Clean Single-Line Broadcast Subtitles */}
       {subText ? (
         <AbsoluteFill
           style={{
             justifyContent: 'flex-end',
             alignItems: 'center',
-            paddingBottom: 46,
+            paddingBottom: isPortrait ? 96 : 46,
             pointerEvents: 'none',
             zIndex: 40,
           }}
         >
           <div
             style={{
-              padding: '10px 30px',
+              padding: isPortrait ? '10px 22px' : '10px 30px',
               borderRadius: 12,
               background: 'rgba(5, 8, 18, 0.84)',
               border: \`1px solid rgba(\${PALETTE.rgbAccent || '125,178,255'}, 0.36)\`,
               borderLeft: \`4px solid \${PALETTE.accent}\`,
               fontFamily: SANS,
-              fontSize: 32,
+              fontSize: isPortrait ? 28 : 32,
               fontWeight: 700,
               color: '#FFFFFF',
-              maxWidth: 1620,
-              whiteSpace: 'nowrap',
+              maxWidth: Math.round(width * 0.88),
+              whiteSpace: isPortrait ? 'normal' : 'nowrap',
+              textAlign: 'center',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               textShadow: '0 2px 10px rgba(0,0,0,0.9)',

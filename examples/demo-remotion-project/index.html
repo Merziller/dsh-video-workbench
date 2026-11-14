@@ -30,6 +30,7 @@
     }
     #stage {
       position: relative; width: 1920px; height: 1080px;
+      flex: 0 0 auto; min-width: 1920px; min-height: 1080px;
       overflow: hidden; background: var(--bg);
       transform-origin: center center;
     }
@@ -322,6 +323,13 @@
       width: 0%; height: 100%;
       background: linear-gradient(90deg, var(--accent), var(--gold));
     }
+    #ai-badge {
+      position: absolute; top: 24px; right: 28px; z-index: 28;
+      padding: 6px 14px; border-radius: 999px;
+      background: rgba(8,12,20,0.72); border: 1px solid rgba(255,255,255,0.16);
+      font: 600 15px var(--font-sans); color: #CBD5E1; letter-spacing: 0.03em;
+    }
+    
   </style>
 </head>
 <body>
@@ -342,6 +350,7 @@
       <div id="c-bl" class="k-corner"></div>
       <div id="c-br" class="k-corner"></div>
     </div>
+    
     <div id="sub-wrap"><div id="sub-pill"></div></div>
     <div id="progress-line"><div id="progress-fill"></div></div>
   </div>
@@ -829,8 +838,8 @@
         drawGlow(fxt, CFG.width / 2, CFG.height / 2, 420, CFG.rgbGold, 0.16 + beatPulse(t, true) * 0.1);
       }
       if (localT < 1.2) {
-        drawShockRing(fxt, localT, 0.04, 480, 480, 860, 0.65, CFG.rgbAccent);
-        drawSparks(fxt, localT, 0.1, 460, 460, CFG.rgbGold, 44, activeIdx + 5);
+        drawShockRing(fxt, localT, 0.04, CFG.width * 0.5, CFG.height * 0.45, Math.min(CFG.width, CFG.height) * 0.78, 0.65, CFG.rgbAccent);
+        drawSparks(fxt, localT, 0.1, CFG.width * 0.5, CFG.height * 0.45, CFG.rgbGold, 44, activeIdx + 5);
         drawScanSweep(fxt, localT, 0.35, 0.55, CFG.rgbAccent);
       }
 
@@ -909,6 +918,15 @@
       renderFrameSync(frame);
       return frame;
     };
+
+    function fitStageToViewport() {
+      const vw = window.innerWidth || CFG.width;
+      const vh = window.innerHeight || CFG.height;
+      const scale = Math.min(vw / CFG.width, vh / CFG.height);
+      stageEl.style.transform = Math.abs(scale - 1) < 0.002 ? '' : 'scale(' + scale.toFixed(4) + ')';
+    }
+    window.addEventListener('resize', fitStageToViewport);
+    fitStageToViewport();
 
     // Smooth Live Preview Mode (runs when not ?render=1)
     const isRenderMode = new URLSearchParams(location.search).get('render') === '1';

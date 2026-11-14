@@ -6,7 +6,7 @@
  */
 import { existsSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { readScriptJson, writeScriptJson } from '@dsh-video/shared'
+import { readScriptJson, resolveVideoDimensions, writeScriptJson } from '@dsh-video/shared'
 import { matchAllScenesInScript } from '@dsh-video/tool-local-tts'
 import { importAssets, readAssets } from './asset-manager.js'
 import { buildRichHtmlVideo, resolvePalette } from './html-generator.js'
@@ -75,11 +75,16 @@ function ensureBeatGridOnScript(scriptData) {
   return scriptData
 }
 
-export function syncProjectCodeFromScript(projectDir, scriptData) {
+export function syncProjectCodeFromScript(projectDir, scriptData, { forceOverwrite = false } = {}) {
   const absDir = resolve(projectDir)
   const enriched = ensureBeatGridOnScript(scriptData)
+  if (enriched.authoringMode === 'ai-coded' && !forceOverwrite) {
+    // Preserve custom LLM-authored scene code; only refresh public assets & shared shotcraft primitives
+    writeRemotionProjectFiles(absDir, enriched, { rebuildTemplate: false })
+    return
+  }
   writeFileSync(join(absDir, 'index.html'), buildRichHtmlVideo(enriched), 'utf8')
-  writeRemotionProjectFiles(absDir, enriched)
+  writeRemotionProjectFiles(absDir, enriched, { rebuildTemplate: true })
 }
 
 function buildSceneSfxCues({ idx, total, layout, dur, sfxPick }) {
@@ -140,6 +145,11 @@ export async function planVideoFromAssets(options = {}) {
     topic = '',
     style = 'tech',
     engine = 'html',
+    aspectRatio = 'auto',
+    quality = '1080p',
+    width: requestedWidth,
+    height: requestedHeight,
+    aiBadge = false,
     fps: requestedFps,
     voiceId = 'auto',
     audience = '大众与创作者',
@@ -290,15 +300,30 @@ export async function planVideoFromAssets(options = {}) {
     })
   }
 
+  const dims = resolveVideoDimensions({
+    aspectRatio: aspectRatio || existing.requestedAspectRatio || 'auto',
+    quality: quality || existing.quality || '1080p',
+    width: requestedWidth,
+    height: requestedHeight,
+    topic: coreTopic,
+    assets: visuals,
+  })
+
   const nextScript = {
     ...existing,
+    authoringMode: 'local-draft',
     title: projectTitle,
     topic: coreTopic,
     style,
     engine: engine === 'remotion' ? 'remotion' : 'html',
     fps,
-    width: Number(existing.width) || 1920,
-    height: Number(existing.height) || 1080,
+    width: dims.width,
+    height: dims.height,
+    aspectRatio: dims.aspectRatio,
+    requestedAspectRatio: dims.requestedAspectRatio,
+    quality: dims.quality,
+    dimensionReason: dims.reason,
+    aiBadge: Boolean(aiBadge),
     audience,
     goal,
     voiceMode: voiceId && voiceId !== 'auto' ? 'manual' : 'auto',
@@ -321,7 +346,7 @@ export async function planVideoFromAssets(options = {}) {
   await ensureProjectAudioAssets(absDir, saved.data, assets)
   matchAllScenesInScript(absDir, { voiceId: voiceId || 'auto', forceAuto: voiceId === 'auto' })
   const reloaded = readScriptJson(absDir).data
-  syncProjectCodeFromScript(absDir, reloaded)
+  syncProjectCodeFromScript(absDir, reloaded, { forceOverwrite: true })
 
   return {
     ok: true,

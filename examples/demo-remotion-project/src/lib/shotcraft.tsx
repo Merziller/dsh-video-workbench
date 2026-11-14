@@ -1,0 +1,340 @@
+/**
+ * @dsh-video/shotcraft — Reusable Remotion Motion Primitives
+ * Adapted from Apache-2.0 open-source video-shotcraft & remotion-dev/skills patterns.
+ * Strictly driven by useCurrentFrame() + spring() + interpolate() — zero CSS transition / keyframes.
+ */
+import React from 'react'
+import {
+  AbsoluteFill,
+  interpolate,
+  spring,
+  useCurrentFrame,
+  useVideoConfig,
+} from 'remotion'
+
+export const FONT_SANS = '"Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif'
+export const FONT_MONO = '"Consolas", "Courier New", monospace'
+
+export interface PageCamProps {
+  children: React.ReactNode
+  startFrame?: number
+  durationFrames?: number
+  fromScale?: number
+  toScale?: number
+  fromX?: number
+  toX?: number
+  fromY?: number
+  toY?: number
+  tiltDeg?: number
+}
+
+export const PageCam: React.FC<PageCamProps> = ({
+  children,
+  startFrame = 0,
+  durationFrames = 90,
+  fromScale = 1.06,
+  toScale = 1.0,
+  fromX = 0,
+  toX = 0,
+  fromY = 18,
+  toY = 0,
+  tiltDeg = 0,
+}) => {
+  const frame = useCurrentFrame()
+  const progress = interpolate(
+    frame,
+    [startFrame, startFrame + Math.max(1, durationFrames)],
+    [0, 1],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+  )
+  const eased = 1 - Math.pow(1 - progress, 3)
+  const scale = fromScale + (toScale - fromScale) * eased
+  const x = fromX + (toX - fromX) * eased
+  const y = fromY + (toY - fromY) * eased
+  const tilt = tiltDeg * (1 - eased)
+
+  return (
+    <AbsoluteFill
+      style={{
+        transform: `perspective(1400px) translate3d(${x}px, ${y}px, 0) scale(${scale}) rotateX(${tilt}deg)`,
+        transformOrigin: 'center center',
+      }}
+    >
+      {children}
+    </AbsoluteFill>
+  )
+}
+
+export interface ClipCardProps {
+  children: React.ReactNode
+  delay?: number
+  fromY?: number
+  tiltDeg?: number
+  accentColor?: string
+  bg?: string
+  borderColor?: string
+  padding?: number | string
+  borderRadius?: number
+  style?: React.CSSProperties
+}
+
+export const ClipCard: React.FC<ClipCardProps> = ({
+  children,
+  delay = 0,
+  fromY = 36,
+  tiltDeg = -2,
+  accentColor = '#38BDF8',
+  bg = 'rgba(15, 23, 42, 0.78)',
+  borderColor = 'rgba(255, 255, 255, 0.14)',
+  padding = 28,
+  borderRadius = 20,
+  style = {},
+}) => {
+  const frame = useCurrentFrame()
+  const { fps } = useVideoConfig()
+  const spr = spring({
+    frame: Math.max(0, frame - delay),
+    fps,
+    config: { damping: 14, stiffness: 150, mass: 0.9 },
+  })
+  const y = interpolate(spr, [0, 1], [fromY, 0], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  })
+  const opacity = interpolate(spr, [0, 0.35], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  })
+  const rot = interpolate(spr, [0, 1], [tiltDeg, 0], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  })
+  const scale = interpolate(spr, [0, 1], [0.94, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  })
+
+  return (
+    <div
+      style={{
+        background: bg,
+        border: `1px solid ${borderColor}`,
+        borderRadius,
+        padding,
+        boxShadow: `0 24px 64px rgba(0, 0, 0, 0.45), 0 0 0 1px ${accentColor}22 inset`,
+        opacity,
+        transform: `translate3d(0, ${y}px, 0) scale(${scale}) rotate(${rot}deg)`,
+        fontFamily: FONT_SANS,
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
+export interface DigitRollProps {
+  from?: number
+  to: number
+  startFrame?: number
+  durationFrames?: number
+  prefix?: string
+  suffix?: string
+  decimals?: number
+  color?: string
+  fontSize?: number
+  style?: React.CSSProperties
+}
+
+export const DigitRoll: React.FC<DigitRollProps> = ({
+  from = 0,
+  to,
+  startFrame = 4,
+  durationFrames = 36,
+  prefix = '',
+  suffix = '',
+  decimals = 0,
+  color = '#F8FAFC',
+  fontSize = 68,
+  style = {},
+}) => {
+  const frame = useCurrentFrame()
+  const progress = interpolate(
+    frame,
+    [startFrame, startFrame + Math.max(1, durationFrames)],
+    [0, 1],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+  )
+  const eased = 1 - Math.pow(1 - progress, 4)
+  const val = from + (to - from) * eased
+  const formatted = decimals > 0 ? val.toFixed(decimals) : Math.round(val).toLocaleString('en-US')
+
+  return (
+    <span
+      style={{
+        fontFamily: FONT_MONO,
+        fontWeight: 800,
+        fontSize,
+        color,
+        fontVariantNumeric: 'tabular-nums',
+        letterSpacing: '-0.02em',
+        ...style,
+      }}
+    >
+      {prefix}
+      {formatted}
+      {suffix}
+    </span>
+  )
+}
+
+export interface FlashCutProps {
+  atFrame?: number
+  durationFrames?: number
+  color?: string
+  mode?: 'flash' | 'wipe' | 'iris'
+}
+
+export const FlashCut: React.FC<FlashCutProps> = ({
+  atFrame = 0,
+  durationFrames = 10,
+  color = '#FFFFFF',
+  mode = 'flash',
+}) => {
+  const frame = useCurrentFrame()
+  const local = frame - atFrame
+  if (local < 0 || local > durationFrames) return null
+
+  const t = local / Math.max(1, durationFrames)
+  if (mode === 'wipe') {
+    const x = interpolate(t, [0, 0.5, 1], [-100, 0, 100], {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+    })
+    return (
+      <AbsoluteFill
+        style={{
+          pointerEvents: 'none',
+          background: `linear-gradient(90deg, transparent, ${color}CC, transparent)`,
+          transform: `translateX(${x}%)`,
+          zIndex: 80,
+        }}
+      />
+    )
+  }
+
+  const opacity = t < 0.25 ? t / 0.25 : 1 - (t - 0.25) / 0.75
+  return (
+    <AbsoluteFill
+      style={{
+        pointerEvents: 'none',
+        backgroundColor: color,
+        opacity: Math.max(0, Math.min(0.65, opacity * 0.65)),
+        zIndex: 80,
+      }}
+    />
+  )
+}
+
+export interface SubtitleCue {
+  index?: number
+  text: string
+  startFrame: number
+  endFrame: number
+}
+
+export interface ShotCaptionProps {
+  subtitles?: SubtitleCue[]
+  frameOffset?: number
+  accentColor?: string
+  isPortrait?: boolean
+}
+
+export const ShotCaption: React.FC<ShotCaptionProps> = ({
+  subtitles = [],
+  frameOffset = 0,
+  accentColor = '#38BDF8',
+  isPortrait = false,
+}) => {
+  const frame = useCurrentFrame()
+  const globalFrame = frame + frameOffset
+  const active = subtitles.find((s) => globalFrame >= s.startFrame && globalFrame <= s.endFrame)
+  if (!active || !active.text) return null
+
+  const enter = interpolate(globalFrame, [active.startFrame, active.startFrame + 4], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  })
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: '6%',
+        right: '6%',
+        bottom: isPortrait ? '11%' : '6.5%',
+        display: 'flex',
+        justifyContent: 'center',
+        pointerEvents: 'none',
+        zIndex: 60,
+        opacity: enter,
+        transform: `translateY(${(1 - enter) * 8}px)`,
+      }}
+    >
+      <div
+        style={{
+          maxWidth: isPortrait ? '92%' : '76%',
+          padding: isPortrait ? '12px 22px' : '11px 28px',
+          borderRadius: 14,
+          background: 'rgba(8, 12, 20, 0.84)',
+          border: `1px solid ${accentColor}55`,
+          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)',
+          color: '#F8FAFC',
+          fontFamily: FONT_SANS,
+          fontSize: isPortrait ? 34 : 30,
+          fontWeight: 700,
+          lineHeight: 1.35,
+          textAlign: 'center',
+          letterSpacing: '0.02em',
+        }}
+      >
+        {active.text}
+      </div>
+    </div>
+  )
+}
+
+export interface AIBadgeProps {
+  visible?: boolean
+  text?: string
+  accentColor?: string
+}
+
+export const AIBadge: React.FC<AIBadgeProps> = ({
+  visible = false,
+  text = 'AI 生成 · 仅供参考',
+  accentColor = '#38BDF8',
+}) => {
+  if (!visible) return null
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: 22,
+        right: 26,
+        zIndex: 70,
+        padding: '6px 14px',
+        borderRadius: 999,
+        background: 'rgba(10, 14, 24, 0.72)',
+        border: `1px solid ${accentColor}44`,
+        color: '#CBD5E1',
+        fontFamily: FONT_SANS,
+        fontSize: 16,
+        fontWeight: 600,
+        letterSpacing: '0.03em',
+      }}
+    >
+      {text}
+    </div>
+  )
+}

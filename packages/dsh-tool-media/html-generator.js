@@ -399,6 +399,7 @@ export function buildRichHtmlVideo(script) {
     }
     #stage {
       position: relative; width: ${width}px; height: ${height}px;
+      flex: 0 0 auto; min-width: ${width}px; min-height: ${height}px;
       overflow: hidden; background: var(--bg);
       transform-origin: center center;
     }
@@ -691,6 +692,54 @@ export function buildRichHtmlVideo(script) {
       width: 0%; height: 100%;
       background: linear-gradient(90deg, var(--accent), var(--gold));
     }
+    #ai-badge {
+      position: absolute; top: 24px; right: 28px; z-index: 28;
+      padding: 6px 14px; border-radius: 999px;
+      background: rgba(8,12,20,0.72); border: 1px solid rgba(255,255,255,0.16);
+      font: 600 15px var(--font-sans); color: #CBD5E1; letter-spacing: 0.03em;
+    }
+    ${width < height ? `
+    /* Portrait Responsive Adaptation (${width}x${height}) */
+    .k-split-grid, .k-split-grid.k-reverse {
+      flex-direction: column; justify-content: center; gap: 28px;
+      padding: 84px 52px 175px;
+    }
+    .k-left-col { width: 100%; align-items: center; text-align: center; }
+    .k-right-col { width: 100%; }
+    .k-center-stage { padding: 84px 52px 175px; gap: 22px; }
+    .k-headline { font-size: 58px; }
+    .k-headline-lg { font-size: 66px; }
+    .k-headline-md { font-size: 50px; }
+    .k-headline-sm { font-size: 42px; }
+    .k-subline { font-size: 24px; max-width: 100%; }
+    .k-card-stage { max-width: 100%; }
+    .k-pip-frame { right: 8px; bottom: -18px; width: 38%; }
+    .k-mosaic-grid {
+      width: ${Math.round(width * 0.9)}px; height: ${Math.round(height * 0.56)}px;
+      grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(3, 1fr); gap: 14px;
+    }
+    .k-mosaic-overlay { left: 40px; right: 40px; bottom: 155px; flex-direction: column; align-items: flex-start; gap: 14px; }
+    .k-cnt-num { font-size: 52px; }
+    .k-compare-row { flex-direction: column; gap: 20px; }
+    .k-cmp-card { max-width: 100%; width: 100%; padding: 28px 24px; }
+    .k-cmp-val { font-size: 36px; }
+    .k-cmp-bridge { width: 3px; height: 34px; }
+    .k-cmp-bridge i { border-top: none; border-left: 3px dashed rgba(255,255,255,0.45); }
+    .k-glow-bar { width: ${Math.round(width * 0.65)}px; }
+    #sub-wrap { bottom: 96px; }
+    #sub-pill { max-width: ${Math.round(width * 0.9)}px; font-size: 28px; white-space: normal; }
+    ` : width === height ? `
+    /* Square 1:1 Adaptation */
+    .k-split-grid, .k-split-grid.k-reverse {
+      flex-direction: column; justify-content: center; gap: 26px;
+      padding: 68px 56px 135px;
+    }
+    .k-center-stage { padding: 68px 64px 135px; }
+    .k-headline { font-size: 62px; }
+    .k-headline-lg { font-size: 72px; }
+    .k-mosaic-grid { width: ${Math.round(width * 0.88)}px; height: ${Math.round(height * 0.62)}px; }
+    #sub-pill { max-width: ${Math.round(width * 0.9)}px; font-size: 27px; }
+    ` : ''}
   </style>
 </head>
 <body>
@@ -711,6 +760,7 @@ export function buildRichHtmlVideo(script) {
       <div id="c-bl" class="k-corner"></div>
       <div id="c-br" class="k-corner"></div>
     </div>
+    ${script?.aiBadge ? `<div id="ai-badge">${typeof script.aiBadge === 'string' ? script.aiBadge : 'AI 生成 · 仅供参考'}</div>` : ''}
     <div id="sub-wrap"><div id="sub-pill"></div></div>
     <div id="progress-line"><div id="progress-fill"></div></div>
   </div>
@@ -1169,8 +1219,8 @@ export function buildRichHtmlVideo(script) {
         drawGlow(fxt, CFG.width / 2, CFG.height / 2, 420, CFG.rgbGold, 0.16 + beatPulse(t, true) * 0.1);
       }
       if (localT < 1.2) {
-        drawShockRing(fxt, localT, 0.04, 480, 480, 860, 0.65, CFG.rgbAccent);
-        drawSparks(fxt, localT, 0.1, 460, 460, CFG.rgbGold, 44, activeIdx + 5);
+        drawShockRing(fxt, localT, 0.04, CFG.width * 0.5, CFG.height * 0.45, Math.min(CFG.width, CFG.height) * 0.78, 0.65, CFG.rgbAccent);
+        drawSparks(fxt, localT, 0.1, CFG.width * 0.5, CFG.height * 0.45, CFG.rgbGold, 44, activeIdx + 5);
         drawScanSweep(fxt, localT, 0.35, 0.55, CFG.rgbAccent);
       }
 
@@ -1249,6 +1299,15 @@ export function buildRichHtmlVideo(script) {
       renderFrameSync(frame);
       return frame;
     };
+
+    function fitStageToViewport() {
+      const vw = window.innerWidth || CFG.width;
+      const vh = window.innerHeight || CFG.height;
+      const scale = Math.min(vw / CFG.width, vh / CFG.height);
+      stageEl.style.transform = Math.abs(scale - 1) < 0.002 ? '' : 'scale(' + scale.toFixed(4) + ')';
+    }
+    window.addEventListener('resize', fitStageToViewport);
+    fitStageToViewport();
 
     // Smooth Live Preview Mode (runs when not ?render=1)
     const isRenderMode = new URLSearchParams(location.search).get('render') === '1';
