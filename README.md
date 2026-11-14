@@ -37,10 +37,9 @@
 5. **真·逐帧双引擎高清视频渲染 (`@dsh-video/tool-video-suite`)**：
    - **HTML5 引擎**：无头 Chromium 经 WebSocket CDP 逐帧驱动 `window.__seekToFrame(frame)` 与 `<video>` 帧同步抓取全部帧序列，结合 `master-audio.wav` 编码输出 H.264 (`yuv420p`) MP4。
    - **Remotion 引擎**：直接复用本地 `@remotion/bundler` 与 `@remotion/renderer` 逐帧渲染 React/TSX 组件序列与 `<Audio>`，同步生成 `snapshot-3x3.png` 九宫格视觉自检图。
-6. **三栏一体化工作台 UI + 开源零硬编码**：
-   - **左栏**：视频工程管理、用户素材库（文件夹/文件导入与缩略图预览）、205 音色包搜索/试听/自定义导入。
-   - **中栏**：顶栏快速切换 `HTML5` / `REMOTION` 引擎与 `IndexTTS-2` 常驻状态，下方配有 **「✨ AI 一键制片导演台」**、分镜脚本/素材/特效细粒度编辑、带混音同步播放的 16:9 舞台预览及字幕/分镜/波形三轨时间轴。
-   - **右栏**：DeepSeek Harness Agent 协同对话与工具执行卡片。
+6. **极简四步引导式工作台 UI + 开源零硬编码**：
+   - **左栏（项目与声音库）**：新建/切换/删除视频项目、打开可搜索试听的 `205 款配音声音库` 弹窗并支持浏览器上传个人声音参考。
+   - **主区域（顶栏四步向导）**：`1. 上传素材`（支持拖拽/文件/文件夹/本地目录与图片视频音频画廊）→ `2. 创作设置`（主题描述 + 5 套画面风格 + 双引擎 + 一键成片）→ `3. 预览微调`（16:9 同步舞台 + 底部可点击分镜条 + 右侧聚焦编辑单幕文案/配音/素材）→ `4. 导出 MP4`（内置成片播放器、下载按钮与折叠高级体检工具）。
    - **零硬编码路径与密钥**：所有本地路径统一由 `.env` 管理，附带脱敏 [`.env.example`](./.env.example)。
 
 ---
@@ -49,11 +48,10 @@
 
 ```mermaid
 flowchart TB
-  subgraph UI["前端层: @dsh-video/web-video-workbench"]
-    LeftCol["左栏: 工程列表 + 🗂️ 用户素材库(选文件夹/文件) + 🎙️ 205 音色库"]
-    Director["中栏顶部: ✨ AI 一键全自动制片导演台 (主题/风格/引擎/一键成片)"]
-    CenterCol["中栏视图: [ 📝 脚本与特效 | 🖥️ 16:9 同步音频预览 | 🎞️ MP4 导出 ] + 三轨时间轴"]
-    RightCol["右栏: DeepSeek Harness Agent 协同 + 快捷指令 + tool.call.toolview"]
+  subgraph UI["前端层: @dsh-video/web-video-workbench (极简四步工作台)"]
+    Sidebar["左栏: 项目管理 + 新建项目弹窗 + 205 配音声音库弹窗"]
+    Step12["步骤 1-2: 拖拽/文件夹上传素材 + 主题/风格/引擎一键生成"]
+    Step34["步骤 3-4: 16:9 音画同步预览与单幕微调 + MP4 导出下载"]
   end
 
   subgraph Core["Cordis 插件层 (DSH Host)"]
@@ -69,7 +67,7 @@ flowchart TB
     Renderers["Chromium WebSocket CDP 逐帧渲染 (HTML5) & @remotion/renderer (TSX)"]
   end
 
-  LeftCol & Director & CenterCol & RightCol <-->|"/api/video-workbench/*"| Core
+  Sidebar & Step12 & Step34 <-->|"/api/video-workbench/*"| Core
   Preset --> Media & TTS & Suite
   Media --> TTS & Suite & FFmpeg
   TTS --> IndexTTS & FFmpeg
@@ -78,16 +76,18 @@ flowchart TB
 
 ---
 
-## 🎯 三、新手快速上手：导入素材并一键生成完整视频
+## 🎯 三、新手快速上手：四步完成一条完整视频
 
 1. 启动服务：在终端运行 `.\pnpm.cmd dsh video --keep-alive`，浏览器访问 `http://127.0.0.1:4399`（或在已挂载本插件的 DeepSeek Harness 桌面端打开视频工作台）。
-2. **导入你的素材**：
-   - 在左栏 **「🗂️ 用户素材库」** 点击 **「📂 选文件夹」** 或 **「📎 选素材文件」**（也可以直接粘贴本地素材文件夹绝对路径，如 `D:\素材\产品宣传` 点击「导入」）。
-   - 支持图片、视频片段、背景音乐 (`bgm` 命名优先识别为配乐)、音效 (`sfx` 命名优先识别为音效) 以及文本文案参考 (`.txt`/`.md`)。
-3. **一键生成完整视频**：
-   - 在中栏顶部 **「✨ AI 一键制片」** 输入视频主题（例如：`新一代智能手表发布会宣传片`），选择画面风格（如`科技产品风`）与目标引擎（`HTML5 动效引擎` 或 `Remotion 引擎`）。
-   - 点击 **「🚀 一键生成完整视频 (含配音+混音+MP4)」**，系统将自动完成：素材分析 → 文案与分镜规划 → `IndexTTS-2` 真人配音与 `ffprobe` 测长 → SFX 音效与闪避 BGM 混音 → 规范校验 → 逐帧高清 MP4 与九宫格导出。
-   - 若希望人工先微调每一幕文案、运镜、转场或音效，也可先点击 **「📝 仅AI策划分镜」**，在「📝 脚本」视图逐幕调整后再点右上角 **「🎬 导出 MP4」**。
+2. **第 1 步 · 上传素材（可选）**：
+   - 点击左上角 **「+ 新建视频项目」** 创建项目后，直接将图片、视频片段、背景音乐 (`bgm`)、音效 (`sfx`) 或文稿 (`.txt`/`.md`) 拖入上传区，或点击「选择文件 / 选择整个文件夹」（大体积目录也可展开「通过本机文件夹路径导入」）。
+   - 没有现成素材也可以直接点击右上角 **「跳过素材，下一步」**。
+3. **第 2 步 · 创作设置与一键成片**：
+   - 填写视频主题（也可一键套用示例模板），选择 5 种视觉风格与目标引擎（推荐 `HTML5 极速动效` 或 `Remotion 电影精修`），挑选主配音或保持 `AI 自动匹配`。
+   - 点击 **「一键生成完整视频」**，系统将自动完成：素材分析 → 文案与分镜规划 → `IndexTTS-2` 真人配音与 `ffprobe` 测长 → SFX 音效与闪避 BGM 混音 → 逐帧导出高清 MP4，完成后自动进入第 4 步播放与下载。
+4. **第 3 步 · 预览与逐幕微调（可选）**：
+   - 若想先改剧本再渲染，可在第 2 步点击 **「先生成分镜剧本与预览」** 进入第 3 步：下方点击任意一幕分镜卡片，画面立即跳转并可在右侧修改文案、更换单幕配音音色/情绪、重新生成配音并试听。
+   - 调整满意后点右上角 **「导出 MP4」** 进入第 4 步播放、下载成品或展开折叠「高级检查工具」查看 `3×3 九宫格预览图` 与规范体检报告。
 
 ---
 
@@ -119,8 +119,8 @@ Copy-Item .env.example .env
 
 ## 🎙️ 五、本地 TTS 与自定义音色包指南
 
-- **导入音色包**：在左栏点击 **「+ 导入音色包」**，支持 `.wav` / `.mp3` / `.pt` / 音色目录 / `.zip`。
-- **AI 智能匹配 vs 手动锁定**：全局或单幕均支持设为 `🤖 AI 自动匹配`，系统会自动结合分镜台词情绪、受众与角色标签挑选最佳声线；也可直接下拉指定具体音色并点 `▶ 试听`。
+- **导入音色包**：点击左下角 **「配音声音库 (205 款)」** 打开声音库弹窗，点击右上角 **「+ 上传我的声音」** 即可直接从电脑选取 `.wav` / `.mp3` 上传，支持即时原声「试听」与一键选用（底层同时支持 `.pt` 特征文件与目录批量导入）。
+- **AI 智能匹配 vs 手动锁定**：全局或任意单幕分镜均支持设为 `AI 自动匹配最佳声音`，系统会自动结合分镜台词情绪、受众与角色标签挑选声线；也可在声音库里筛选试听后精准指定。
 
 ---
 
@@ -143,7 +143,7 @@ Copy-Item .env.example .env
 - `packages/dsh-tool-local-tts`: Persistent `IndexTTS-2` HTTP server manager (`tts-server.py`), 205+ voice catalog (`list_voices`, `import_voice_pack`, `match_scene_voices`), and exact `ffprobe` duration backfill (`generate_speech`).
 - `packages/dsh-tool-video-suite`: `video_lint`, `video_snapshot` (3×3 contact sheet), and full-FPS Chromium WebSocket CDP / `@remotion/renderer` MP4 exporter (`video_render`).
 - `packages/dsh-preset-video`: Registers the `视频制作模式` (`video-maker`) Agent Preset with Windows 11 safeguards (`.npmrc` local cache + `Microsoft YaHei` / `Consolas` fonts).
-- `packages/dsh-web-video-workbench`: Registers `/api/video-workbench/*` endpoints (with HTTP Byte-Range streaming & file/folder uploads) and the non-duplicated 3-column Video Workbench UI.
+- `packages/dsh-web-video-workbench`: Registers `/api/video-workbench/*` endpoints (including Byte-Range streaming, drag/folder/voice upload, and safe project deletion) and the minimalist 4-step Video Studio UI.
 
 ### License
 Released under the [MIT License](./LICENSE).

@@ -79,18 +79,42 @@ export function setupDshVideoProfile() {
     const userDesktopProfile = join(homedir(), '.dsh', 'profiles', 'desktop')
     desktopPatchPath = join(userDesktopProfile, 'cordis.patch.yml')
     if (existsSync(desktopPatchPath)) {
-      const currentLines = readFileSync(desktopPatchPath, 'utf8')
+      // The desktop profile patch is a top-level YAML ARRAY of loader entries.
+      // Bare `  - path: ...` lines appended at the end are NOT valid there: the
+      // 2-space indent makes them children of the previous entry, so the loader
+      // dies with `YAMLException: bad indentation of a sequence entry` and the
+      // whole profile (plugin_manager, guardian, every provider) stops loading.
+      // They must live inside their own `- insert:` block instead.
+      const MARKER = '# >>> dsh-video-workbench (managed block) >>>'
+      const END_MARKER = '# <<< dsh-video-workbench (managed block) <<<'
+      const block = [
+        MARKER,
+        '- insert:',
+        ...pluginPaths.map((p) => `    - path: "${p}"`),
+        END_MARKER,
+      ].join('\n')
+
+      let raw = readFileSync(desktopPatchPath, 'utf8')
+      // Drop any previously managed block (marker-delimited, or the legacy
+      // bare-line form appended by older versions of this script).
+      const managed = new RegExp(
+        `\\n?${MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${END_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n?`,
+        'g',
+      )
+      raw = raw.replace(managed, '\n')
+      raw = raw
         .split(/\r?\n/)
         .filter(
           (line) =>
-            !line.includes('dsh-tool-local-tts') &&
-            !line.includes('dsh-tool-video-suite') &&
-            !line.includes('dsh-tool-media') &&
-            !line.includes('dsh-preset-video') &&
-            !line.includes('dsh-web-video-workbench'),
+            !(
+              /^\s*-\s+path:/.test(line) &&
+              /dsh-tool-local-tts|dsh-tool-video-suite|dsh-tool-media|dsh-preset-video|dsh-web-video-workbench/.test(line)
+            ),
         )
-      const additions = pluginPaths.map((p) => `  - path: "${p}"`)
-      const updated = [...currentLines.filter((l, i, arr) => i < arr.length - 1 || l.trim() !== ''), ...additions, ''].join('\n')
+        .join('\n')
+        .replace(/\n+$/, '')
+
+      const updated = `${raw}\n${block}\n`
       writeFileSync(desktopPatchPath, updated, 'utf8')
       desktopMounted = true
     }

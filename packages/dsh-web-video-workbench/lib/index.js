@@ -6,10 +6,11 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { dirname, extname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   loadEnv,
@@ -300,6 +301,32 @@ export async function handleWorkbenchApiRequest(req) {
       })
     }
 
+    // 2b. POST /api/video-workbench/projects/delete (delete custom project inside workspaceRoot)
+    if (pathname === '/api/video-workbench/projects/delete' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir) {
+        return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
+      }
+      const wsRoot = resolve(getWorkspaceRoot())
+      const targetDir = resolve(body.projectDir)
+      const folderName = basename(targetDir)
+      const protectedNames = new Set(['demo-html-project', 'demo-remotion-project'])
+      if (protectedNames.has(folderName)) {
+        return jsonResponse({ ok: false, error: '内置演示示例不可删除' }, 400)
+      }
+      if (!targetDir.startsWith(wsRoot + '\\') && !targetDir.startsWith(wsRoot + '/')) {
+        return jsonResponse({ ok: false, error: '仅允许删除工作区内的自定义项目' }, 403)
+      }
+      if (existsSync(targetDir)) {
+        rmSync(targetDir, { recursive: true, force: true })
+      }
+      return jsonResponse({
+        ok: true,
+        workspaceRoot: wsRoot,
+        projects: listVideoProjects(),
+      })
+    }
+
     // 3. POST /api/video-workbench/script (save script.json & sync HTML/Remotion files)
     if (pathname === '/api/video-workbench/script' && req.method === 'POST') {
       const body = await parseRequestJson(req)
@@ -406,10 +433,23 @@ export async function handleWorkbenchApiRequest(req) {
       })
     }
 
-    // 4. POST /api/video-workbench/voices/import (import custom voice pack)
+    // 4. POST /api/video-workbench/voices/import (import custom voice pack via path or uploaded file)
     if (pathname === '/api/video-workbench/voices/import' && req.method === 'POST') {
       const body = await parseRequestJson(req)
-      const res = await importVoicePack(body)
+      const importPayload = { ...body }
+      if (!importPayload.sourcePath && body.dataBase64 && body.fileName) {
+        const uploadDir = join(REPO_ROOT, 'voice-packs', 'imported', '_uploads')
+        mkdirSync(uploadDir, { recursive: true })
+        const safeName = basename(String(body.fileName)).replace(/[<>:"/\\|?*]+/g, '_') || `voice-${Date.now()}.wav`
+        const stagedPath = join(uploadDir, `${Date.now()}-${safeName}`)
+        const cleanB64 = String(body.dataBase64).replace(/^data:[^;]+;base64,/, '')
+        writeFileSync(stagedPath, Buffer.from(cleanB64, 'base64'))
+        importPayload.sourcePath = stagedPath
+        if (!importPayload.name) {
+          importPayload.name = safeName.replace(/\.[^.]+$/, '')
+        }
+      }
+      const res = await importVoicePack(importPayload)
       const catalog = getVoiceCatalog()
       return jsonResponse({
         ok: true,
@@ -569,6 +609,7 @@ export function apply(ctx) {
       { path: '/api/video-workbench/state', methods: ['GET'] },
       { path: '/api/video-workbench/voices/preview', methods: ['GET'] },
       { path: '/api/video-workbench/projects', methods: ['POST'] },
+      { path: '/api/video-workbench/projects/delete', methods: ['POST'] },
       { path: '/api/video-workbench/script', methods: ['POST'] },
       { path: '/api/video-workbench/assets/import', methods: ['POST'] },
       { path: '/api/video-workbench/assets/upload', methods: ['POST'] },
