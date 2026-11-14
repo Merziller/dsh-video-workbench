@@ -150,16 +150,66 @@ async function main() {
       return
     }
 
-    // Serve standalone preview shell hosting the `[ DeepSeek Harness | HTML 视频 ]` top-bar switcher
+    if (url.pathname === '/client.js') {
+      const clientJsPath = join(REPO_ROOT, 'packages', 'dsh-web-video-workbench', 'lib', 'client.js')
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8')
+      res.setHeader('Cache-Control', 'no-store')
+      res.end(readFileSync(clientJsPath, 'utf8'))
+      return
+    }
+
+    // Serve standalone interactive preview shell hosting `dsh-web-video-workbench` (`client.js`)
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.end(`<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>DeepSeek Harness — HTML 视频工作台 (Profile: video)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeepSeek Harness — 双引擎视频工作台 (Profile: ${profileName})</title>
+  <style>
+    html, body, #root { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background: #090d18; color: #f8fafc; font-family: 'Microsoft YaHei', Consolas, sans-serif; }
+  </style>
 </head>
-<body style="margin:0;background:#090d18;color:#f8fafc;font-family:'Microsoft YaHei',Consolas,sans-serif;">
-  <div id="status">DSH Video Workbench Ready (Profile: ${profileName})</div>
+<body>
+  <div id="root"></div>
+  <script type="module">
+    import React from 'https://esm.sh/react@18.3.1';
+    import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
+
+    const slots = new Map();
+    window.__ModuleLoader__ = {
+      load: async ({ factory }) => {
+        const plugin = await factory(async (mod) => {
+          if (mod === 'react') return React;
+          return null;
+        });
+        const ctx = {
+          connection: { fetch: window.fetch.bind(window) },
+          slots: {
+            register(slotName, def) {
+              slots.set(slotName, def);
+            }
+          }
+        };
+        plugin.apply(ctx);
+        const overlaySlot = slots.get('shell.overlay');
+        const mainSlot = slots.get('main');
+        const root = createRoot(document.getElementById('root'));
+        root.render(
+          React.createElement(
+            React.Fragment,
+            null,
+            overlaySlot ? overlaySlot.render() : null,
+            mainSlot ? mainSlot.render() : null
+          )
+        );
+      }
+    };
+
+    const s = document.createElement('script');
+    s.src = '/client.js';
+    document.body.appendChild(s);
+  </script>
 </body>
 </html>`)
   })
