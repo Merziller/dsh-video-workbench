@@ -254,24 +254,56 @@ export async function probeAudioDuration(audioPath, fps = 30) {
 }
 
 /**
- * Split narration text into sentence-level subtitle cues proportional to character count.
+ * Split narration text into clean single-line subtitle cues proportional to character count.
+ * Splits long sentences cleanly at commas/pauses (~16 CJK chars max) and strips trailing punctuation.
  */
 export function buildSentenceSubtitles(narration, durationSec, fps = 30) {
   const clean = String(narration || '').trim()
   if (!clean || durationSec <= 0) return []
+
+  const stripTailPunct = (s) => s.replace(/[，。！？；,!;、]+$/g, '').trim()
 
   const rawSentences = clean
     .split(/(?<=[。！？；!?;…\n])/)
     .map((s) => s.trim())
     .filter(Boolean)
 
-  const parts = rawSentences.length > 0 ? rawSentences : [clean]
-  const totalWeight = parts.reduce((acc, s) => acc + Math.max(1, s.replace(/[^\w\u4e00-\u9fa5]/g, '').length), 0)
+  const parts = []
+  for (const sent of rawSentences.length > 0 ? rawSentences : [clean]) {
+    const cleanLen = stripTailPunct(sent).length
+    if (cleanLen <= 18) {
+      const t = stripTailPunct(sent)
+      if (t) parts.push(t)
+      continue
+    }
+    const subChunks = sent
+      .split(/(?<=[，,、：:])/)
+      .map((c) => stripTailPunct(c))
+      .filter(Boolean)
+    for (const c of subChunks) {
+      if (parts.length > 0 && c.length <= 4 && (parts[parts.length - 1] + ' ' + c).length <= 20) {
+        parts[parts.length - 1] = `${parts[parts.length - 1]} ${c}`
+      } else if (c.length > 22) {
+        // Wrap ultra-long unpunctuated clause into ~16-char lines
+        for (let i = 0; i < c.length; i += 16) {
+          parts.push(c.slice(i, i + 16))
+        }
+      } else {
+        parts.push(c)
+      }
+    }
+  }
+
+  const finalParts = parts.length > 0 ? parts : [stripTailPunct(clean) || clean]
+  const totalWeight = finalParts.reduce(
+    (acc, s) => acc + Math.max(1, s.replace(/[^\w\u4e00-\u9fa5]/g, '').length),
+    0,
+  )
 
   let cursorSec = 0
-  return parts.map((text, idx) => {
+  return finalParts.map((text, idx) => {
     const weight = Math.max(1, text.replace(/[^\w\u4e00-\u9fa5]/g, '').length)
-    const isLast = idx === parts.length - 1
+    const isLast = idx === finalParts.length - 1
     const segDur = isLast
       ? Math.max(0.1, Number((durationSec - cursorSec).toFixed(3)))
       : Number(((durationSec * weight) / totalWeight).toFixed(3))

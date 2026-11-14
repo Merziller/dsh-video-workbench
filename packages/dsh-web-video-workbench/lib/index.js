@@ -207,6 +207,31 @@ function serveFileWithRange(req, filePath, contentType) {
   })
 }
 
+const ASYNC_JOBS = new Map()
+
+function createBackgroundJob(initialMessage, runner) {
+  const id = `job-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+  const job = { id, status: 'running', message: initialMessage, result: null, error: '' }
+  ASYNC_JOBS.set(id, job)
+  if (ASYNC_JOBS.size > 40) {
+    const firstKey = ASYNC_JOBS.keys().next().value
+    if (firstKey) ASYNC_JOBS.delete(firstKey)
+  }
+  Promise.resolve()
+    .then(() => runner((msg) => { if (msg) job.message = String(msg) }))
+    .then((res) => {
+      job.status = 'done'
+      job.result = res
+      job.message = '处理完成'
+    })
+    .catch((err) => {
+      job.status = 'error'
+      job.error = err?.message || String(err)
+      job.message = job.error
+    })
+  return job
+}
+
 /**
  * Handle API calls from the frontend Video Workbench UI (`/api/video-workbench/*`).
  */
@@ -215,6 +240,15 @@ export async function handleWorkbenchApiRequest(req) {
   const pathname = url.pathname
 
   try {
+    // 0. GET /api/video-workbench/jobs (poll async produce/render job)
+    if (pathname === '/api/video-workbench/jobs' && req.method === 'GET') {
+      const id = url.searchParams.get('id') || ''
+      const job = ASYNC_JOBS.get(id)
+      if (!job) {
+        return jsonResponse({ ok: false, error: 'Job not found' }, 404)
+      }
+      return jsonResponse({ ok: true, job })
+    }
     // 1. GET /api/video-workbench/state
     if (pathname === '/api/video-workbench/state' && req.method === 'GET') {
       const { workspaceRoot, projects } = listVideoProjects()
@@ -426,6 +460,12 @@ export async function handleWorkbenchApiRequest(req) {
       if (!body.projectDir) {
         return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
       }
+      if (body.async) {
+        const job = createBackgroundJob('正在准备素材与分析分镜...', (onProgress) =>
+          produceFullVideo({ ...body, onProgress }),
+        )
+        return jsonResponse({ ok: true, jobId: job.id })
+      }
       const res = await produceFullVideo(body)
       return jsonResponse({
         ok: true,
@@ -522,27 +562,38 @@ export async function handleWorkbenchApiRequest(req) {
       }
 
       if (action === 'tts-all') {
-        const { data } = readScriptJson(projectDir)
-        const results = []
-        for (const scene of data.scenes || []) {
-          const outWav = join(projectDir, 'audio', `${scene.id}.wav`)
-          const res = await executeGenerateSpeech({
-            text: scene.narration,
-            emotion: scene.emotion || '平静',
-            voiceId: scene.voiceId || data.defaultVoiceId || 'auto',
-            engine: body.ttsEngine || process.env.DEFAULT_TTS_ENGINE || 'indextts2',
-            fps: data.fps || 30,
-            outputPath: outWav,
-            scriptPath: projectDir,
-            sceneId: scene.id,
-            allowPlaceholder: Boolean(body.allowPlaceholder),
-          })
-          results.push(res)
+        const runTtsAll = async (onProgress) => {
+          const { data } = readScriptJson(projectDir)
+          const scenes = data.scenes || []
+          const results = []
+          for (let i = 0; i < scenes.length; i++) {
+            const scene = scenes[i]
+            onProgress?.(`正在生成全片配音 (${i + 1}/${scenes.length}): ${scene.title || scene.id}`)
+            const outWav = join(projectDir, 'audio', `${scene.id}.wav`)
+            const res = await executeGenerateSpeech({
+              text: scene.narration,
+              emotion: scene.emotion || '平静',
+              voiceId: scene.voiceId || data.defaultVoiceId || 'auto',
+              engine: body.ttsEngine || process.env.DEFAULT_TTS_ENGINE || 'indextts2',
+              fps: data.fps || 30,
+              outputPath: outWav,
+              scriptPath: projectDir,
+              sceneId: scene.id,
+              allowPlaceholder: Boolean(body.allowPlaceholder),
+            })
+            results.push(res)
+          }
+          onProgress?.('正在合成配音、音效与背景音乐混音...')
+          const updated = readScriptJson(projectDir)
+          syncProjectCodeFromScript(projectDir, updated.data)
+          const mixResult = await mixVideoAudio({ projectDir, script: updated.data })
+          return { ok: true, action, results, mixResult, script: updated.data }
         }
-        const updated = readScriptJson(projectDir)
-        syncProjectCodeFromScript(projectDir, updated.data)
-        const mixResult = await mixVideoAudio({ projectDir, script: updated.data })
-        return jsonResponse({ ok: true, action, results, mixResult, script: updated.data })
+        if (body.async) {
+          const job = createBackgroundJob('正在启动配音引擎...', runTtsAll)
+          return jsonResponse({ ok: true, jobId: job.id })
+        }
+        return jsonResponse(await runTtsAll())
       }
 
       if (action === 'snapshot') {
@@ -551,13 +602,23 @@ export async function handleWorkbenchApiRequest(req) {
       }
 
       if (action === 'render') {
-        const result = await executeVideoRender({
-          projectDir,
-          engine: body.engine,
-          renderWidth: body.renderWidth,
-          renderHeight: body.renderHeight,
-        })
-        return jsonResponse({ ok: true, action, result })
+        const runRender = async (onProgress) => {
+          onProgress?.('正在混音与启动逐帧渲染...')
+          const result = await executeVideoRender({
+            projectDir,
+            engine: body.engine,
+            renderWidth: body.renderWidth,
+            renderHeight: body.renderHeight,
+            onProgress: ({ frame, totalFrames, pct }) =>
+              onProgress?.(`正在逐帧合成 MP4 (${frame}/${totalFrames} 帧 · ${pct}%)...`),
+          })
+          return { ok: true, action, result }
+        }
+        if (body.async) {
+          const job = createBackgroundJob('正在准备渲染视频...', runRender)
+          return jsonResponse({ ok: true, jobId: job.id })
+        }
+        return jsonResponse(await runRender())
       }
 
       return jsonResponse({ ok: false, error: `Unknown action: ${action}` }, 400)
@@ -607,6 +668,7 @@ export function apply(ctx) {
   ctx.inject(['connection'], (innerCtx) => {
     const routes = [
       { path: '/api/video-workbench/state', methods: ['GET'] },
+      { path: '/api/video-workbench/jobs', methods: ['GET'] },
       { path: '/api/video-workbench/voices/preview', methods: ['GET'] },
       { path: '/api/video-workbench/projects', methods: ['POST'] },
       { path: '/api/video-workbench/projects/delete', methods: ['POST'] },

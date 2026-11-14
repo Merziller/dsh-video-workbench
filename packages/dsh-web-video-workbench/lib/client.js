@@ -880,14 +880,33 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const pollBackgroundJob = useCallback(
+        async (jobId) => {
+          while (true) {
+            await new Promise((r) => setTimeout(r, 900))
+            const res = await connFetch(`/api/video-workbench/jobs?id=${encodeURIComponent(jobId)}`)
+            const payload = await res.json()
+            if (!payload.ok || !payload.job) {
+              throw new Error(payload.error || '查询任务状态失败')
+            }
+            const job = payload.job
+            if (job.message) setBusyLabel(job.message)
+            if (job.status === 'done') return job.result || {}
+            if (job.status === 'error') throw new Error(job.error || '后台处理出错')
+          }
+        },
+        [connFetch],
+      )
+
       const handleProduceVideo = async () => {
         if (!activeProjectDir) return
-        setBusyLabel('正在全自动制作视频：编排分镜 -> 生成配音 -> 混音配乐 -> 渲染 MP4（首次唤醒配音模型约 30~90 秒）...')
+        setBusyLabel('正在提交一键全自动制片任务...')
         try {
           const res = await connFetch('/api/video-workbench/produce', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              async: true,
               projectDir: activeProjectDir,
               sources: assetDirInput.trim() || undefined,
               topic: directorForm.topic.trim() || script?.title || '',
@@ -896,14 +915,17 @@ window.__ModuleLoader__.load({
               voiceId: directorForm.voiceId,
             }),
           })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`一键制作失败: ${data.error}`, 'error')
+          const initData = await res.json()
+          if (!initData.ok) {
+            notify(`一键制作失败: ${initData.error}`, 'error')
             return
           }
+          const data = initData.jobId ? await pollBackgroundJob(initData.jobId) : initData
           setAssetVersion((v) => v + 1)
           await refreshState(activeProjectDir, { autoStep: true, preferredStep: 4 })
           notify(`完整视频导出成功！总时长 ${data.script?.totalDurationSec || ''}s`, 'success')
+        } catch (err) {
+          notify(`一键制作失败: ${err.message}`, 'error')
         } finally {
           setBusyLabel('')
         }
@@ -955,17 +977,19 @@ window.__ModuleLoader__.load({
           lint: '正在检查字幕对比度与排版规范...',
         }
         setBusyLabel(labelMap[action] || '正在处理中...')
+        const useAsync = action === 'render' || action === 'tts-all'
         try {
           const res = await connFetch('/api/video-workbench/action', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectDir: activeProjectDir, action, ...extra }),
+            body: JSON.stringify({ async: useAsync, projectDir: activeProjectDir, action, ...extra }),
           })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`操作失败: ${data.error}`, 'error')
+          const initData = await res.json()
+          if (!initData.ok) {
+            notify(`操作失败: ${initData.error}`, 'error')
             return null
           }
+          const data = initData.jobId ? await pollBackgroundJob(initData.jobId) : initData
           setAssetVersion((v) => v + 1)
           if (action === 'lint') {
             setLintReport(data)
@@ -981,6 +1005,9 @@ window.__ModuleLoader__.load({
             if (action === 'snapshot') notify('3×3 关键帧检查图已生成', 'success')
           }
           return data
+        } catch (err) {
+          notify(`操作失败: ${err.message}`, 'error')
+          return null
         } finally {
           setBusyLabel('')
         }

@@ -256,25 +256,37 @@ export async function executeVideoLint(args = {}) {
 }
 
 function computeSampleFrames(script) {
-  const fps = Number(script.fps) || 30
   const totalFrames = Math.max(9, Number(script.totalDurationInFrames) || 270)
   const scenes = Array.isArray(script.scenes) ? script.scenes : []
-  if (scenes.length >= 3) {
-    const picked = []
+  const picked = []
+  const used = new Set()
+
+  const pickUnique = (target) => {
+    let f = Math.min(totalFrames - 1, Math.max(0, Math.floor(target)))
+    while (used.has(f) && f + 1 < totalFrames) f++
+    while (used.has(f) && f > 0) f--
+    used.add(f)
+    return f
+  }
+
+  if (scenes.length >= 2) {
     for (let i = 0; i < 9; i++) {
-      const s = scenes[Math.floor((i * scenes.length) / 9)]
+      const sceneIdx = Math.min(scenes.length - 1, Math.floor((i * scenes.length) / 9))
+      const s = scenes[sceneIdx]
       const startF = Number(s.startFrame || 0)
       const durF = Math.max(3, Number(s.durationInFrames || 90))
-      const slot = (i % Math.max(1, Math.round(9 / scenes.length)))
-      const ratio = Math.min(0.85, 0.25 + slot * 0.28)
-      picked.push(Math.min(totalFrames - 1, startF + Math.floor(ratio * durF)))
+      const countForScene = Math.max(1, Math.ceil(9 / scenes.length))
+      const idxInScene = i - Math.floor((sceneIdx * 9) / scenes.length)
+      const ratio = Math.min(0.88, Math.max(0.12, (idxInScene + 0.5) / (countForScene + 0.3)))
+      picked.push(pickUnique(startF + Math.floor(ratio * durF)))
     }
-    return picked
+    return picked.sort((a, b) => a - b)
   }
-  return Array.from({ length: 9 }, (_, i) => {
-    const ratio = (i + 0.5) / 9
-    return Math.min(totalFrames - 1, Math.max(0, Math.floor(ratio * totalFrames)))
-  })
+
+  for (let i = 0; i < 9; i++) {
+    picked.push(pickUnique(((i + 0.5) / 9) * totalFrames))
+  }
+  return picked.sort((a, b) => a - b)
 }
 
 async function stitch3x3Grid(ffmpeg, framesDir, outPath) {
@@ -479,6 +491,7 @@ export async function executeVideoRender(args = {}) {
       outMp4Path: outPath,
       snapshotFrames: sampleFrames,
       snapshotDir: framesDir,
+      onProgress: args.onProgress,
     })
     renderMethod = 'chromium-cdp-full-fps'
   }

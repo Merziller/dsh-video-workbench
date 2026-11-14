@@ -24,11 +24,12 @@ const STYLE_CONFIG = {
   warm: { label: '温暖叙事', emotion: '温柔', mood: 'warm', role: 'storyteller' },
 }
 
-function cleanAssetTitle(name) {
-  return String(name || '')
-    .replace(/[-_]+/g, ' ')
-    .replace(/^\d+[\s._-]*/, '')
-    .trim()
+function extractChapterTitle(narration, fallback) {
+  const raw = String(narration || '').trim()
+  if (!raw) return fallback
+  const first = raw.split(/[，。！？；,!?;：:\n]/)[0].trim()
+  if (!first) return fallback
+  return first.length > 16 ? first.slice(0, 16) : first
 }
 
 export function syncProjectCodeFromScript(projectDir, scriptData) {
@@ -111,52 +112,53 @@ export async function planVideoFromAssets(options = {}) {
       trimStartSec: 0,
     }))
 
-    const assetLabel = primary ? cleanAssetTitle(primary.name) : ''
     let sceneTitle = ''
     let narration = ''
-    let layout = primary ? (i % 2 === 1 ? 'split-showcase' : 'hero-media') : 'kinetic-title'
+    let layout = primary ? (bucket.length >= 2 ? 'split-showcase' : 'hero-media') : 'kinetic-title'
     let tag = st.label
     let highlights = []
     let metrics = []
+    let subtitleLine = ''
 
     if (isFirst) {
-      sceneTitle = assetLabel ? `${projectTitle} · ${assetLabel}` : projectTitle
+      sceneTitle = projectTitle
       narration =
         noteChunks[0] ||
-        `欢迎来到${coreTopic}。今天我们通过精心编排的画面、动态视觉特效与真实配音，带你开启一段沉浸式的视听之旅。`
-      tag = '震撼开场'
-      highlights = [st.label, '音画同步', '全自动制作']
-      if (visuals.length > 0) metrics = [{ value: visuals.length, suffix: ' 组', label: '实景与视觉素材' }]
+        `欢迎来到${coreTopic}。今天我们通过精心编排的画面、细腻节奏与真挚旁白，带你开启一段沉浸式的视听之旅。`
+      tag = st.label
+      subtitleLine = topic && topic.length <= 36 ? topic : ''
+      if (!primary) {
+        highlights = [st.label, '沉浸叙事']
+      }
     } else if (isLast) {
-      sceneTitle = assetLabel ? `圆满呈现 · ${assetLabel}` : `即刻开启 · ${coreTopic}`
       narration =
         noteChunks[i] ||
-        `从素材精选到多轨配乐混音，每一帧都精准打磨。感谢观看${coreTopic}，期待与你一起创造更多精彩作品。`
-      tag = '压轴收尾'
-      highlights = ['H.264 高清成片', '多轨混音', '帧级对齐']
-      metrics = [{ value: 100, suffix: '%', label: '声画同步率' }]
+        `感谢观看${coreTopic}，期待与你一起定格更多值得铭记的精彩瞬间。`
+      sceneTitle = primary ? extractChapterTitle(narration, projectTitle) : projectTitle
+      tag = '尾声'
+      subtitleLine = ''
+      if (!primary) {
+        highlights = [coreTopic]
+      }
     } else {
-      sceneTitle = assetLabel || `${coreTopic} · 核心亮点 ${i}`
       narration =
         noteChunks[i] ||
-        (assetLabel
-          ? `在${assetLabel}这一幕中，细腻的运镜配合动态光影与背景配乐，将核心细节与氛围感立体呈现出来。`
-          : `通过多层次排版、动态指标卡与转场音效的紧密配合，让关键信息在几秒内清晰直达观众视野。`)
-      tag = primary?.type === 'video' ? '实拍视频' : primary ? '精选画面' : `篇章 0${i + 1}`
-      highlights = [
-        primary?.type === 'video' ? '视频片段运镜' : primary ? 'Ken Burns 动效' : '动态排版',
-        '粒子光效',
-        '同步字幕',
-      ]
+        `随着镜头缓缓推进，光影与声音交织展开，将这一刻的细节与氛围真实地呈现在眼前。`
+      sceneTitle = primary ? extractChapterTitle(narration, `篇章 ${String(i + 1).padStart(2, '0')}`) : `${coreTopic} · 亮点 ${i}`
+      tag = `第 ${i + 1} 幕`
+      subtitleLine = ''
+      if (!primary) {
+        highlights = [st.label, '核心看点']
+      }
     }
 
     const sfxPick = (kind) => importedSfx.find((x) => x.name.toLowerCase().includes(kind))?.path || `audio/sfx/${kind}.wav`
     const sfxCues = []
-    if (i > 0) sfxCues.push({ type: 'whoosh', path: sfxPick('whoosh'), offsetSec: 0, volume: 0.48 })
+    if (i > 0) sfxCues.push({ type: 'whoosh', path: sfxPick('whoosh'), offsetSec: 0, volume: 0.45 })
     if (isFirst || isLast) {
-      sfxCues.push({ type: isLast ? 'chime' : 'impact', path: sfxPick(isLast ? 'chime' : 'impact'), offsetSec: 0.15, volume: 0.45 })
+      sfxCues.push({ type: isLast ? 'chime' : 'impact', path: sfxPick(isLast ? 'chime' : 'impact'), offsetSec: 0.15, volume: 0.42 })
     } else {
-      sfxCues.push({ type: 'pop', path: sfxPick('pop'), offsetSec: 0.35, volume: 0.35 })
+      sfxCues.push({ type: 'pop', path: sfxPick('pop'), offsetSec: 0.35, volume: 0.32 })
     }
 
     const estDur = Math.max(4.0, Number((narration.length / 4.2 + 1.1).toFixed(2)))
@@ -164,7 +166,7 @@ export async function planVideoFromAssets(options = {}) {
       id: `scene-${String(i + 1).padStart(2, '0')}`,
       title: sceneTitle,
       narration,
-      subtitleLine: primary ? `${primary.originalName} · ${primary.orientation || '高清'}素材` : `${st.label}视觉编排`,
+      subtitleLine,
       emotion: isFirst || isLast ? '高兴' : st.emotion,
       role: st.role,
       voiceId: voiceId || 'auto',
@@ -176,7 +178,7 @@ export async function planVideoFromAssets(options = {}) {
       metrics,
       media: mediaArr,
       sfxCues,
-      visualPrompt: primary ? `展示用户素材 ${primary.path}，配合 ${MOTIONS[i % MOTIONS.length]} 运镜与光效。` : `动态视觉排版与粒子背景`,
+      visualPrompt: primary ? `展示画面 ${primary.path}，配合 ${MOTIONS[i % MOTIONS.length]} 运镜与转场。` : `动态视觉排版与光影背景`,
       durationSec: estDur,
     })
   }

@@ -117,6 +117,8 @@ export async function produceFullVideo(options = {}) {
     engine,
     renderWidth,
     renderHeight,
+    onProgress: ({ frame, totalFrames, pct }) =>
+      onProgress?.(`4/5 正在逐帧合成高清视频 (${frame}/${totalFrames} 帧 · ${pct}%)...`),
   })
 
   onProgress?.('5/5 制作完成！')

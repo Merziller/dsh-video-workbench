@@ -140,7 +140,8 @@ async function openCdpSession(browserBin, width, height) {
       '--headless=new',
       '--remote-debugging-port=0',
       `--user-data-dir=${userDataDir}`,
-      '--disable-gpu',
+      '--disable-gpu-vsync',
+      '--run-all-compositor-stages-before-draw',
       '--no-sandbox',
       '--hide-scrollbars',
       '--mute-audio',
@@ -281,12 +282,17 @@ export async function renderHtmlVideoToMp4({
   outMp4Path,
   snapshotFrames = [],
   snapshotDir = '',
+  onProgress,
 }) {
   const tmpBase = join(REPO_ROOT, '.tmp')
   mkdirSync(tmpBase, { recursive: true })
   const mjpegPath = join(tmpBase, `frames-${Date.now()}.mjpeg`)
   const mjpegFd = openSync(mjpegPath, 'w')
-  const snapMap = new Map(snapshotFrames.map((f, idx) => [f, idx]))
+  const snapMap = new Map()
+  snapshotFrames.forEach((f, idx) => {
+    if (!snapMap.has(f)) snapMap.set(f, [])
+    snapMap.get(f).push(idx)
+  })
   if (snapshotDir) mkdirSync(snapshotDir, { recursive: true })
 
   const { server, port } = await startStaticProjectServer(projectDir)
@@ -299,17 +305,27 @@ export async function renderHtmlVideoToMp4({
         expression: `Promise.resolve(window.__seekToFrame ? window.__seekToFrame(${f}) : ${f}).then(() => new Promise(r => requestAnimationFrame(r)))`,
         awaitPromise: true,
       })
-      const shot = await session.cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 92 })
+      const shot = await session.cdp.send('Page.captureScreenshot', {
+        format: 'jpeg',
+        quality: 90,
+        optimizeForSpeed: true,
+      })
       const jpg = Buffer.from(shot.data, 'base64')
       writeSync(mjpegFd, jpg)
 
       if (snapshotDir && snapMap.has(f)) {
-        const idx = snapMap.get(f)
-        const sPath = join(snapshotDir, `shot_${String(idx).padStart(2, '0')}.png`)
         const pShot = await session.cdp.send('Page.captureScreenshot', { format: 'png' })
-        const pFd = openSync(sPath, 'w')
-        writeSync(pFd, Buffer.from(pShot.data, 'base64'))
-        closeSync(pFd)
+        const pngBuf = Buffer.from(pShot.data, 'base64')
+        for (const idx of snapMap.get(f)) {
+          const sPath = join(snapshotDir, `shot_${String(idx).padStart(2, '0')}.png`)
+          const pFd = openSync(sPath, 'w')
+          writeSync(pFd, pngBuf)
+          closeSync(pFd)
+        }
+      }
+      if (onProgress && (f % 15 === 0 || f === totalFrames - 1)) {
+        const pct = Math.min(99, Math.round(((f + 1) / Math.max(1, totalFrames)) * 100))
+        onProgress({ frame: f + 1, totalFrames, pct })
       }
     }
   } finally {

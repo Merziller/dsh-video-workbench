@@ -1,7 +1,10 @@
 /**
- * Rich HTML5 / CSS3 / Canvas2D / SVG Frame-Deterministic Video Generator
- * Supports user-imported images & videos, Ken Burns camera motion, scene transitions,
- * deterministic particle & light-leak VFX, kinetic typography, metric count-ups, and synced subtitles.
+ * Rich HTML5 / CSS3 / Canvas2D Frame-Deterministic Video Generator
+ * Produces clean cinema-grade visuals for user images, video clips, and kinetic typography:
+ * - Zero debug counters / filenames stamped onto frames
+ * - Light bottom-only cinema scrims so imported photography & B-roll stay vibrant
+ * - Single-line timed cinema subtitles & deterministic Ken Burns + particle light-sweep VFX
+ * - Avoids expensive CPU software blur filters so Chromium CDP renders smoothly
  */
 
 function esc(s) {
@@ -25,9 +28,9 @@ const STYLE_PALETTES = {
     background: '#09090B',
     surface: '#18181B',
     textPrimary: '#FAFAFA',
-    textSecondary: '#D4D4D8',
+    textSecondary: '#E4E4E7',
     accent: '#F59E0B',
-    accent2: '#EF4444',
+    accent2: '#FB7185',
   },
   documentary: {
     background: '#0C1210',
@@ -73,9 +76,11 @@ export function buildRichHtmlVideo(script) {
           : []
       const primary = mediaList[0] || null
       const secondary = mediaList[1] || null
-      const layout = scene.layout || (primary ? (idx % 2 === 1 ? 'split-showcase' : 'hero-media') : 'kinetic-title')
+      const hasMedia = Boolean(primary && primary.path)
+      const layout = scene.layout || (hasMedia ? (secondary ? 'split-showcase' : 'hero-media') : 'kinetic-title')
       const tags = Array.isArray(scene.highlights) ? scene.highlights : []
       const metrics = Array.isArray(scene.metrics) ? scene.metrics : []
+      const isOpening = idx === 0
 
       const renderMediaEl = (m, cls) => {
         if (!m || !m.path) return ''
@@ -86,30 +91,46 @@ export function buildRichHtmlVideo(script) {
         return `<img class="media-el ${cls}" src="${esc(m.path)}" alt="${esc(scene.title)}" />`
       }
 
+      const chapterBadge = `${String(idx + 1).padStart(2, '0')} / ${String(scenes.length).padStart(2, '0')}`
+
       return `
   <!-- 分镜 ${idx + 1}: ${esc(scene.title)} -->
   <template id="${esc(scene.id)}">
-    <section class="scene-layer layout-${esc(layout)}" data-scene-id="${esc(scene.id)}" data-scene-index="${idx}">
+    <section class="scene-layer layout-${esc(layout)} ${isOpening ? 'is-opening' : 'is-chapter'}" data-scene-id="${esc(scene.id)}" data-scene-index="${idx}">
       ${
-        primary && layout === 'hero-media'
-          ? `<div class="hero-media-wrap">${renderMediaEl(primary, 'hero-media-item')}<div class="hero-scrim"></div></div>`
-          : primary
-            ? `<div class="backdrop-blur-media">${renderMediaEl(primary, 'blur-bg-item')}<div class="hero-scrim strong"></div></div>`
-            : `<div class="procedural-bg"></div>`
+        hasMedia && layout === 'hero-media'
+          ? `<div class="hero-media-wrap">${renderMediaEl(primary, 'hero-media-item')}<div class="hero-scrim ${isOpening ? 'opening-scrim' : 'cinema-scrim'}"></div></div>`
+          : hasMedia
+            ? `<div class="backdrop-media-wrap">${renderMediaEl(primary, 'backdrop-media-item')}<div class="hero-scrim strong-scrim"></div></div>`
+            : `<div class="procedural-bg"><div class="procedural-grid"></div></div>`
       }
+      ${
+        hasMedia && layout === 'hero-media'
+          ? `
+      <div class="cinema-title-overlay ${isOpening ? 'hero-opening-overlay' : 'lower-third-overlay'}">
+        <div class="chapter-eyebrow">
+          <span class="chapter-bar"></span>
+          <span>${esc(chapterBadge)}</span>
+          ${scene.tag ? `<span class="chapter-sep">·</span><span>${esc(scene.tag)}</span>` : ''}
+        </div>
+        <h1 class="kinetic-title ${isOpening ? 'opening-title' : 'chapter-title'}">${esc(scene.title)}</h1>
+        ${isOpening && scene.subtitleLine ? `<p class="scene-lead">${esc(scene.subtitleLine)}</p>` : ''}
+      </div>`
+          : `
       <div class="scene-content-grid">
         <div class="scene-copy-col">
-          <div class="scene-top-pills">
-            <span class="pill-index">${String(idx + 1).padStart(2, '0')} / ${String(scenes.length).padStart(2, '0')}</span>
-            <span class="pill-badge">${esc(scene.tag || scene.emotion || '重点呈现')}</span>
+          <div class="chapter-eyebrow">
+            <span class="chapter-bar"></span>
+            <span>${esc(chapterBadge)}</span>
+            ${scene.tag ? `<span class="chapter-sep">·</span><span>${esc(scene.tag)}</span>` : ''}
           </div>
           <h1 class="kinetic-title">${esc(scene.title)}</h1>
-          ${scene.subtitleLine || scene.visualPrompt ? `<p class="scene-lead">${esc(scene.subtitleLine || scene.visualPrompt)}</p>` : ''}
+          ${scene.subtitleLine ? `<p class="scene-lead">${esc(scene.subtitleLine)}</p>` : ''}
           ${
             tags.length > 0
               ? `<div class="highlight-chips">${tags
                   .slice(0, 4)
-                  .map((t, ti) => `<span class="hl-chip" data-chip-idx="${ti}">✦ ${esc(t)}</span>`)
+                  .map((t, ti) => `<span class="hl-chip" data-chip-idx="${ti}">${esc(t)}</span>`)
                   .join('')}</div>`
               : ''
           }
@@ -126,18 +147,15 @@ export function buildRichHtmlVideo(script) {
           }
         </div>
         ${
-          primary && layout !== 'hero-media'
+          hasMedia
             ? `<div class="scene-media-col">
                  <div class="media-card primary-card">${renderMediaEl(primary, 'card-media-item')}</div>
                  ${secondary ? `<div class="media-card secondary-card">${renderMediaEl(secondary, 'card-media-item')}</div>` : ''}
                </div>`
-            : secondary
-              ? `<div class="scene-media-col">
-                   <div class="media-card primary-card">${renderMediaEl(secondary, 'card-media-item')}</div>
-                 </div>`
-              : ''
+            : ''
         }
-      </div>
+      </div>`
+      }
     </section>
   </template>`
     })
@@ -185,19 +203,7 @@ export function buildRichHtmlVideo(script) {
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 55%),
-                  radial-gradient(circle at 80% 78%, color-mix(in srgb, var(--accent2) 18%, transparent), transparent 55%),
-                  var(--bg);
-    }
-    #hud-grid-bg {
-      position: absolute;
-      inset: 0;
-      background-image:
-        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
-      background-size: 64px 64px;
-      pointer-events: none;
-      z-index: 1;
+      background: var(--bg);
     }
     #stage-layers {
       position: absolute;
@@ -216,7 +222,7 @@ export function buildRichHtmlVideo(script) {
       position: absolute;
       inset: 0;
       pointer-events: none;
-      background: radial-gradient(ellipse at center, transparent 58%, rgba(0,0,0,0.58) 100%);
+      background: radial-gradient(ellipse at center, transparent 62%, rgba(0,0,0,0.42) 100%);
       z-index: 5;
     }
     .scene-layer {
@@ -228,15 +234,25 @@ export function buildRichHtmlVideo(script) {
     .scene-layer.active {
       display: block;
     }
-    .hero-media-wrap, .backdrop-blur-media, .procedural-bg {
+    .hero-media-wrap, .backdrop-media-wrap, .procedural-bg {
       position: absolute;
-      inset: -4%;
+      inset: 0;
       overflow: hidden;
       z-index: 0;
     }
     .procedural-bg {
-      background: radial-gradient(circle at 32% 35%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 52%),
-                  radial-gradient(circle at 72% 68%, color-mix(in srgb, var(--accent2) 22%, transparent), transparent 52%);
+      background:
+        radial-gradient(circle at 26% 28%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 54%),
+        radial-gradient(circle at 76% 74%, color-mix(in srgb, var(--accent2) 20%, transparent), transparent 54%),
+        var(--bg);
+    }
+    .procedural-grid {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 72px 72px;
     }
     .media-el {
       width: 100%;
@@ -245,29 +261,105 @@ export function buildRichHtmlVideo(script) {
       display: block;
       will-change: transform;
     }
-    .blur-bg-item {
-      filter: blur(26px) saturate(1.25) brightness(0.45);
-      transform: scale(1.16);
+    .backdrop-media-item {
+      opacity: 0.28;
+      transform: scale(1.08);
     }
     .hero-scrim {
       position: absolute;
       inset: 0;
-      background: linear-gradient(90deg, rgba(4,8,18,0.88) 0%, rgba(4,8,18,0.56) 55%, rgba(4,8,18,0.42) 100%),
-                  linear-gradient(180deg, rgba(4,8,18,0.38) 0%, transparent 28%, rgba(4,8,18,0.82) 100%);
+      pointer-events: none;
     }
-    .hero-scrim.strong {
-      background: linear-gradient(135deg, rgba(6,11,24,0.82), rgba(6,11,24,0.68));
+    .cinema-scrim {
+      background: linear-gradient(
+        180deg,
+        rgba(0,0,0,0.12) 0%,
+        rgba(0,0,0,0.02) 45%,
+        rgba(0,0,0,0.48) 76%,
+        rgba(0,0,0,0.78) 100%
+      );
     }
-    .scene-content-grid {
+    .opening-scrim {
+      background:
+        linear-gradient(90deg, rgba(0,0,0,0.68) 0%, rgba(0,0,0,0.28) 55%, rgba(0,0,0,0.12) 100%),
+        linear-gradient(180deg, rgba(0,0,0,0.18) 0%, transparent 45%, rgba(0,0,0,0.78) 100%);
+    }
+    .strong-scrim {
+      background: linear-gradient(135deg, rgba(6,10,18,0.84), rgba(6,10,18,0.62));
+    }
+
+    /* Full-bleed Cinema Overlays (Vibrant photos + minimal lower-third typography) */
+    .cinema-title-overlay {
       position: relative;
-      z-index: 2;
+      z-index: 3;
       width: 100%;
       height: 100%;
-      padding: 6% 6.5% 13%;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 6% 6.5% 118px;
+      gap: 12px;
+    }
+    .hero-opening-overlay {
+      max-width: 960px;
+    }
+    .lower-third-overlay {
+      max-width: 780px;
+    }
+    .chapter-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: rgba(255,255,255,0.82);
+      text-shadow: 0 2px 8px rgba(0,0,0,0.85);
+    }
+    .chapter-bar {
+      width: 24px;
+      height: 3px;
+      border-radius: 99px;
+      background: var(--accent);
+      display: inline-block;
+    }
+    .chapter-sep {
+      opacity: 0.45;
+    }
+    .kinetic-title {
+      font-weight: 800;
+      line-height: 1.18;
+      color: var(--fg);
+      text-shadow: 0 4px 24px rgba(0,0,0,0.78);
+      letter-spacing: -0.01em;
+    }
+    .opening-title {
+      font-size: clamp(38px, 4.6vw, 70px);
+    }
+    .chapter-title {
+      font-size: clamp(26px, 2.8vw, 44px);
+      font-weight: 700;
+    }
+    .scene-lead {
+      font-size: clamp(16px, 1.55vw, 22px);
+      line-height: 1.55;
+      color: rgba(255,255,255,0.88);
+      max-width: 680px;
+      text-shadow: 0 2px 12px rgba(0,0,0,0.85);
+    }
+
+    /* Kinetic / Multi-Card Split Layouts */
+    .scene-content-grid {
+      position: relative;
+      z-index: 3;
+      width: 100%;
+      height: 100%;
+      padding: 6% 6.5% 118px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 4%;
+      gap: 4.5%;
     }
     .layout-kinetic-title .scene-content-grid {
       justify-content: center;
@@ -278,50 +370,11 @@ export function buildRichHtmlVideo(script) {
       max-width: 82%;
     }
     .scene-copy-col {
-      flex: 1.1;
+      flex: 1.05;
       display: flex;
       flex-direction: column;
-      gap: 18px;
+      gap: 16px;
       min-width: 0;
-    }
-    .scene-top-pills {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-family: var(--font-mono);
-    }
-    .pill-index {
-      font-size: 13px;
-      font-weight: 700;
-      padding: 5px 12px;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.2);
-      color: var(--fg);
-    }
-    .pill-badge {
-      font-size: 13px;
-      font-weight: 700;
-      padding: 5px 14px;
-      border-radius: 999px;
-      background: color-mix(in srgb, var(--accent) 22%, transparent);
-      border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-      color: var(--accent);
-    }
-    .kinetic-title {
-      font-size: clamp(34px, 4.3vw, 68px);
-      font-weight: 800;
-      line-height: 1.15;
-      color: var(--fg);
-      text-shadow: 0 8px 32px rgba(0,0,0,0.6);
-      letter-spacing: -0.01em;
-    }
-    .scene-lead {
-      font-size: clamp(16px, 1.75vw, 25px);
-      line-height: 1.55;
-      color: var(--fg-sub);
-      max-width: 680px;
-      text-shadow: 0 2px 12px rgba(0,0,0,0.55);
     }
     .highlight-chips {
       display: flex;
@@ -331,13 +384,12 @@ export function buildRichHtmlVideo(script) {
     }
     .hl-chip {
       padding: 7px 15px;
-      border-radius: 10px;
-      background: rgba(15, 23, 42, 0.78);
-      border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
-      font-size: clamp(13px, 1.25vw, 17px);
-      font-weight: 600;
+      border-radius: 99px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.16);
+      font-size: clamp(13px, 1.15vw, 16px);
+      font-weight: 500;
       color: var(--fg);
-      backdrop-filter: blur(8px);
     }
     .metric-row {
       display: flex;
@@ -348,16 +400,16 @@ export function buildRichHtmlVideo(script) {
     .stat-card {
       min-width: 130px;
       padding: 12px 20px;
-      border-radius: 14px;
-      background: rgba(9, 14, 28, 0.82);
-      border: 1px solid color-mix(in srgb, var(--accent) 38%, rgba(255,255,255,0.16));
+      border-radius: 12px;
+      background: rgba(15, 20, 32, 0.85);
+      border: 1px solid rgba(255,255,255,0.14);
       display: flex;
       flex-direction: column;
       gap: 4px;
     }
     .stat-val {
       font-family: var(--font-mono);
-      font-size: clamp(22px, 2.4vw, 34px);
+      font-size: clamp(22px, 2.3vw, 34px);
       font-weight: 800;
       color: var(--accent);
     }
@@ -366,73 +418,33 @@ export function buildRichHtmlVideo(script) {
       color: var(--fg-sub);
     }
     .scene-media-col {
-      flex: 1;
+      flex: 1.15;
       height: 100%;
       display: flex;
-      flex-direction: column;
       align-items: center;
       justify-content: center;
       position: relative;
-      gap: 16px;
     }
     .media-card {
       width: 100%;
-      max-height: 76%;
+      max-height: 78%;
       aspect-ratio: 16 / 10;
-      border-radius: 18px;
+      border-radius: 16px;
       overflow: hidden;
-      border: 1px solid color-mix(in srgb, var(--accent) 45%, rgba(255,255,255,0.22));
-      box-shadow: 0 28px 70px rgba(0,0,0,0.62), 0 0 40px color-mix(in srgb, var(--accent) 22%, transparent);
-      background: #050811;
+      border: 1px solid rgba(255,255,255,0.16);
+      box-shadow: 0 24px 64px rgba(0,0,0,0.65);
+      background: #080A10;
     }
     .secondary-card {
       position: absolute;
       width: 46%;
-      right: -18px;
-      bottom: 6%;
-      box-shadow: 0 20px 50px rgba(0,0,0,0.75);
-      border-color: var(--accent2);
+      right: -14px;
+      bottom: 8%;
+      box-shadow: 0 20px 48px rgba(0,0,0,0.8);
+      border-color: rgba(255,255,255,0.22);
     }
-    #brand-hud {
-      position: absolute;
-      top: 22px;
-      left: 36px;
-      right: 36px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      z-index: 6;
-      pointer-events: none;
-    }
-    .hud-brand {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 6px 14px;
-      border-radius: 999px;
-      background: rgba(9, 13, 24, 0.72);
-      border: 1px solid rgba(255,255,255,0.14);
-      font-size: 13px;
-      font-weight: 700;
-      color: var(--fg);
-      backdrop-filter: blur(8px);
-    }
-    .hud-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--accent);
-      box-shadow: 0 0 10px var(--accent);
-    }
-    .hud-time {
-      font-family: var(--font-mono);
-      font-size: 12px;
-      color: var(--fg-sub);
-      background: rgba(9, 13, 24, 0.72);
-      padding: 5px 12px;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,0.12);
-    }
+
+    /* Clean Broadcast Cinema Subtitles */
     #subtitle-overlay {
       position: absolute;
       left: 0;
@@ -440,55 +452,33 @@ export function buildRichHtmlVideo(script) {
       bottom: 34px;
       display: flex;
       justify-content: center;
-      padding: 0 6%;
+      padding: 0 7%;
       z-index: 7;
       pointer-events: none;
     }
     #subtitle-pill {
-      padding: 10px 28px;
-      border-radius: 14px;
-      background: rgba(6, 10, 20, 0.84);
-      border: 1px solid color-mix(in srgb, var(--accent) 36%, rgba(255,255,255,0.15));
-      border-left: 4px solid var(--accent);
-      font-size: clamp(18px, 2.2vw, 32px);
+      padding: 8px 22px;
+      border-radius: 8px;
+      background: rgba(8, 10, 14, 0.58);
+      font-size: clamp(20px, 2.05vw, 32px);
       font-weight: 600;
       line-height: 1.4;
-      color: #ffffff;
-      text-shadow: 0 2px 8px rgba(0,0,0,0.85);
-      box-shadow: 0 12px 32px rgba(0,0,0,0.5);
-      max-width: 1480px;
+      letter-spacing: 0.02em;
+      color: #FFFFFF;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.92);
+      max-width: 1420px;
       text-align: center;
-    }
-    #global-progress {
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      height: 5px;
-      background: rgba(255,255,255,0.08);
-      z-index: 8;
-    }
-    #global-progress-fill {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, var(--accent), var(--accent2));
     }
   </style>
 </head>
 <body>
   <div id="stage-root">
-    <div id="hud-grid-bg"></div>
     <div id="stage-layers"></div>
     <canvas id="vfx-canvas"></canvas>
     <div id="vignette-layer"></div>
-    <div id="brand-hud">
-      <div class="hud-brand"><span class="hud-dot"></span><span id="hud-title">${esc(script?.title || 'DSH Video')}</span></div>
-      <div class="hud-time" id="hud-counter">00:00.00</div>
-    </div>
     <div id="subtitle-overlay">
       <div id="subtitle-pill"></div>
     </div>
-    <div id="global-progress"><div id="global-progress-fill"></div></div>
   </div>
 
   ${sceneTemplates}
@@ -507,11 +497,8 @@ ${JSON.stringify(script, null, 2)}
       const layersRoot = document.getElementById('stage-layers');
       const vfxCanvas = document.getElementById('vfx-canvas');
       const vfxCtx = vfxCanvas.getContext('2d');
-      const hudCounter = document.getElementById('hud-counter');
       const subPill = document.getElementById('subtitle-pill');
-      const progressFill = document.getElementById('global-progress-fill');
 
-      // Mount every template once so <video> & <img> stay cached across frames
       const mountedScenes = scenes.map(function(s, idx) {
         const tpl = document.getElementById(s.id);
         let el = null;
@@ -523,15 +510,15 @@ ${JSON.stringify(script, null, 2)}
         return { scene: s, idx: idx, el: el };
       });
 
-      const particles = Array.from({ length: 42 }, function(_, i) {
+      const particles = Array.from({ length: 34 }, function(_, i) {
         const seed = (i * 9301 + 49297) % 233280;
         return {
           x0: (seed % 1000) / 1000,
           y0: ((seed * 7) % 1000) / 1000,
-          r: 1.4 + (i % 4) * 1.1,
-          vx: ((i % 2 === 0 ? 1 : -1) * (0.0004 + (i % 5) * 0.00025)),
-          vy: -(0.0005 + (i % 6) * 0.0003),
-          alpha: 0.14 + (i % 5) * 0.07,
+          r: 1.2 + (i % 4) * 0.9,
+          vx: ((i % 2 === 0 ? 1 : -1) * (0.00035 + (i % 5) * 0.0002)),
+          vy: -(0.0004 + (i % 6) * 0.00025),
+          alpha: 0.10 + (i % 5) * 0.055,
         };
       });
 
@@ -545,25 +532,23 @@ ${JSON.stringify(script, null, 2)}
         const h = (vfxCanvas.height = window.innerHeight || 720);
         vfxCtx.clearRect(0, 0, w, h);
 
-        // Moving subtle diagonal light leak
-        const sweep = ((frame % 180) / 180) * 1.6 - 0.3;
+        const sweep = ((frame % 210) / 210) * 1.6 - 0.3;
         const gx = w * sweep;
         const grad = vfxCtx.createLinearGradient(gx - 220, 0, gx + 220, h);
-        grad.addColorStop(0, 'rgba(56, 189, 248, 0)');
-        grad.addColorStop(0.5, 'rgba(56, 189, 248, 0.055)');
-        grad.addColorStop(1, 'rgba(129, 140, 248, 0)');
+        grad.addColorStop(0, 'rgba(255, 220, 170, 0)');
+        grad.addColorStop(0.5, 'rgba(255, 220, 170, 0.035)');
+        grad.addColorStop(1, 'rgba(255, 220, 170, 0)');
         vfxCtx.fillStyle = grad;
         vfxCtx.fillRect(0, 0, w, h);
 
-        // Deterministic floating bokeh particles
         for (let i = 0; i < particles.length; i++) {
           const p = particles[i];
           const x = (((p.x0 + frame * p.vx) % 1) + 1) % 1 * w;
           const y = (((p.y0 + frame * p.vy) % 1) + 1) % 1 * h;
-          const pulse = 0.65 + 0.35 * Math.sin(frame * 0.08 + i);
+          const pulse = 0.65 + 0.35 * Math.sin(frame * 0.07 + i);
           vfxCtx.beginPath();
           vfxCtx.arc(x, y, p.r, 0, Math.PI * 2);
-          vfxCtx.fillStyle = 'rgba(186, 230, 253, ' + (p.alpha * pulse).toFixed(3) + ')';
+          vfxCtx.fillStyle = 'rgba(255, 244, 224, ' + (p.alpha * pulse).toFixed(3) + ')';
           vfxCtx.fill();
         }
       }
@@ -572,17 +557,13 @@ ${JSON.stringify(script, null, 2)}
         if (!el) return;
         const p = Math.max(0, Math.min(1, progress));
         if (motion === 'zoom-out') {
-          const sc = (1.14 - 0.14 * p).toFixed(4);
-          el.style.transform = 'scale(' + sc + ')';
+          el.style.transform = 'scale(' + (1.13 - 0.13 * p).toFixed(4) + ')';
         } else if (motion === 'pan-left') {
-          const tx = (3.5 - 7.0 * p).toFixed(2);
-          el.style.transform = 'scale(1.1) translateX(' + tx + '%)';
+          el.style.transform = 'scale(1.1) translateX(' + (3.2 - 6.4 * p).toFixed(2) + '%)';
         } else if (motion === 'pan-right') {
-          const tx = (-3.5 + 7.0 * p).toFixed(2);
-          el.style.transform = 'scale(1.1) translateX(' + tx + '%)';
+          el.style.transform = 'scale(1.1) translateX(' + (-3.2 + 6.4 * p).toFixed(2) + '%)';
         } else {
-          const sc = (1.0 + 0.12 * p).toFixed(4);
-          el.style.transform = 'scale(' + sc + ')';
+          el.style.transform = 'scale(' + (1.0 + 0.12 * p).toFixed(4) + ')';
         }
       }
 
@@ -605,42 +586,47 @@ ${JSON.stringify(script, null, 2)}
             const pct = ((1 - easeOutCubic(transProgress)) * 100).toFixed(1);
             el.style.clipPath = 'inset(0 0 0 ' + pct + '%)';
           } else if (transType === 'slide-up') {
-            const ty = ((1 - easeOutCubic(transProgress)) * 14).toFixed(2);
+            const ty = ((1 - easeOutCubic(transProgress)) * 10).toFixed(2);
             el.style.transform = 'translateY(' + ty + '%)';
             el.style.opacity = String(easeOutCubic(transProgress).toFixed(3));
           } else if (transType === 'zoom-cut') {
-            const sc = (1.08 - 0.08 * easeOutCubic(transProgress)).toFixed(4);
+            const sc = (1.06 - 0.06 * easeOutCubic(transProgress)).toFixed(4);
             el.style.transform = 'scale(' + sc + ')';
             el.style.opacity = String(easeOutCubic(transProgress).toFixed(3));
           } else {
             el.style.opacity = String(easeOutCubic(transProgress).toFixed(3));
           }
         } else if (isOutgoing) {
-          el.style.opacity = String((1 - easeOutCubic(transProgress) * 0.6).toFixed(3));
+          el.style.opacity = String((1 - easeOutCubic(transProgress) * 0.7).toFixed(3));
         }
 
-        // Kinetic typography & staggered chips
+        const eyebrow = el.querySelector('.chapter-eyebrow');
+        if (eyebrow) {
+          const ep = easeOutCubic(localFrame / 14);
+          eyebrow.style.opacity = String(ep.toFixed(3));
+          eyebrow.style.transform = 'translateY(' + ((1 - ep) * 14).toFixed(1) + 'px)';
+        }
         const titleEl = el.querySelector('.kinetic-title');
         if (titleEl) {
-          const tp = easeOutCubic(localFrame / 18);
+          const tp = easeOutCubic((localFrame - 2) / 16);
           titleEl.style.opacity = String(tp.toFixed(3));
-          titleEl.style.transform = 'translateY(' + ((1 - tp) * 28).toFixed(1) + 'px)';
+          titleEl.style.transform = 'translateY(' + ((1 - tp) * 22).toFixed(1) + 'px)';
         }
         const leadEl = el.querySelector('.scene-lead');
         if (leadEl) {
-          const lp = easeOutCubic((localFrame - 5) / 18);
+          const lp = easeOutCubic((localFrame - 6) / 16);
           leadEl.style.opacity = String(lp.toFixed(3));
-          leadEl.style.transform = 'translateY(' + ((1 - lp) * 20).toFixed(1) + 'px)';
+          leadEl.style.transform = 'translateY(' + ((1 - lp) * 16).toFixed(1) + 'px)';
         }
         el.querySelectorAll('.hl-chip').forEach(function(chip, ci) {
           const cp = easeOutCubic((localFrame - (9 + ci * 4)) / 14);
           chip.style.opacity = String(cp.toFixed(3));
-          chip.style.transform = 'translateY(' + ((1 - cp) * 14).toFixed(1) + 'px) scale(' + (0.92 + 0.08 * cp).toFixed(3) + ')';
+          chip.style.transform = 'translateY(' + ((1 - cp) * 12).toFixed(1) + 'px)';
         });
         el.querySelectorAll('.stat-card').forEach(function(card, si) {
           const sp = easeOutCubic((localFrame - (10 + si * 5)) / 16);
           card.style.opacity = String(sp.toFixed(3));
-          card.style.transform = 'translateY(' + ((1 - sp) * 16).toFixed(1) + 'px)';
+          card.style.transform = 'translateY(' + ((1 - sp) * 14).toFixed(1) + 'px)';
           const valEl = card.querySelector('.stat-val');
           if (valEl) {
             const raw = Number(valEl.getAttribute('data-target'));
@@ -653,12 +639,11 @@ ${JSON.stringify(script, null, 2)}
           }
         });
 
-        // Media card entrance & Ken Burns camera motion
         const mediaCard = el.querySelector('.primary-card');
         if (mediaCard) {
-          const mp = easeOutCubic((localFrame - 4) / 18);
+          const mp = easeOutCubic((localFrame - 3) / 16);
           mediaCard.style.opacity = String(mp.toFixed(3));
-          mediaCard.style.transform = 'translateY(' + ((1 - mp) * 22).toFixed(1) + 'px) scale(' + (0.96 + 0.04 * mp).toFixed(3) + ')';
+          mediaCard.style.transform = 'translateY(' + ((1 - mp) * 18).toFixed(1) + 'px) scale(' + (0.97 + 0.03 * mp).toFixed(3) + ')';
         }
         const mediaList = Array.isArray(s.media) ? s.media : [];
         const heroMedia = el.querySelector('.hero-media-item, .card-media-item');
@@ -675,7 +660,7 @@ ${JSON.stringify(script, null, 2)}
           const ensureLoaded = v.readyState >= 2
             ? Promise.resolve()
             : new Promise(function(resLoad) {
-                const t = setTimeout(resLoad, 1800);
+                const t = setTimeout(resLoad, 1200);
                 const ok = function() { clearTimeout(t); resLoad(); };
                 v.addEventListener('loadeddata', ok, { once: true });
                 v.addEventListener('error', ok, { once: true });
@@ -685,7 +670,7 @@ ${JSON.stringify(script, null, 2)}
             const dur = Number(v.duration);
             let targetTime = startOff + localFrame / fps;
             if (Number.isFinite(dur) && dur > 0.2) targetTime = targetTime % dur;
-            if (v.readyState >= 2 && Math.abs(v.currentTime - targetTime) < 0.03) return;
+            if (v.readyState >= 2 && Math.abs(v.currentTime - targetTime) < 0.015) return;
             return new Promise(function(resolveSeek) {
               let done = false;
               const finish = function() {
@@ -694,7 +679,7 @@ ${JSON.stringify(script, null, 2)}
                 v.removeEventListener('seeked', finish);
                 resolveSeek();
               };
-              const timer = setTimeout(finish, 450);
+              const timer = setTimeout(finish, 140);
               v.addEventListener('seeked', function() {
                 clearTimeout(timer);
                 finish();
@@ -748,7 +733,6 @@ ${JSON.stringify(script, null, 2)}
         await syncVideos(hit.entry, hit.localFrame);
         drawParticlesAndLightLeak(f);
 
-        // Subtitle lookup
         const secInScene = hit.localFrame / fps;
         const subs = hit.entry.scene.subtitles || [];
         const activeSub =
@@ -758,13 +742,6 @@ ${JSON.stringify(script, null, 2)}
         if (subPill) {
           subPill.textContent = text;
           subPill.style.display = text ? 'block' : 'none';
-        }
-        if (hudCounter) {
-          const sec = (f / fps).toFixed(2);
-          hudCounter.textContent = 'SCENE ' + String(hit.entry.idx + 1).padStart(2, '0') + ' · ' + sec + 's · F' + f;
-        }
-        if (progressFill) {
-          progressFill.style.width = ((f / Math.max(1, totalFrames - 1)) * 100).toFixed(2) + '%';
         }
         return f;
       }
