@@ -29,7 +29,7 @@ export {
 
 /**
  * Core execution function for `generate_speech`.
- * Synthesizes WAV via IndexTTS-2 or GPTvoice-tts, measures exact duration via `ffprobe`,
+ * Synthesizes WAV via IndexTTS-2.5 (or legacy IndexTTS-2 / GPTvoice-tts), measures exact duration via `ffprobe`,
  * computes `durationInFrames = Math.ceil(durationSec * fps)`, and updates `script.json`.
  */
 export async function executeGenerateSpeech(args = {}) {
@@ -37,9 +37,11 @@ export async function executeGenerateSpeech(args = {}) {
   const {
     text,
     emotion = '平静',
+    lang = '',
+    durationFactor = 1.0,
     outputPath,
     fps = 30,
-    engine = process.env.DEFAULT_TTS_ENGINE || 'indextts2',
+    engine = process.env.DEFAULT_TTS_ENGINE || 'indextts25',
     voiceId = 'auto',
     scriptPath = '',
     sceneId = '',
@@ -123,6 +125,8 @@ export async function executeGenerateSpeech(args = {}) {
     '--text', String(text).trim(),
     '--output', absOutputPath,
     '--emotion', emotion,
+    '--lang', String(lang || ''),
+    '--duration-factor', String(durationFactor || 1.0),
     '--voice-id', selectedVoice.id,
     '--ref-audio', refAudio,
     '--emo-audio', matched.emotionAudio || '',
@@ -232,13 +236,13 @@ export function apply(ctx) {
   ctx.tools.register({
     name: 'list_voices',
     description:
-      'List all available TTS voices and imported voice packs (IndexTTS-2 & GPTvoice-tts), including gender, style tags, supported emotions, and availability.',
+      'List all available TTS voices and imported voice packs (IndexTTS-2.5 & GPTvoice-tts), including gender, style tags, supported emotions, and availability.',
     parameters: {
       type: 'object',
       properties: {
         category: {
           type: 'string',
-          description: 'Optional filter by category folder (e.g. 热门音色, 中年-男声, 孩童, 老年, IndexTTS-2 内置)',
+          description: 'Optional filter by category folder (e.g. 热门音色, 中年-男声, 孩童, 老年, IndexTTS-2.5 内置)',
         },
         ageGroup: {
           type: 'string',
@@ -328,8 +332,8 @@ export function apply(ctx) {
         },
         engine: {
           type: 'string',
-          enum: ['indextts2', 'gptvoice'],
-          description: 'Target local TTS engine for this voice.',
+          enum: ['indextts25', 'indextts2', 'gptvoice'],
+          description: 'Target local TTS engine for this voice (defaults to indextts25).',
         },
         tags: {
           type: 'array',
@@ -401,7 +405,7 @@ export function apply(ctx) {
   ctx.tools.register({
     name: 'generate_speech',
     description:
-      'Synthesize speech audio (WAV) using local IndexTTS-2 or GPTvoice-tts (supporting AI auto-matched voice `voiceId: "auto"` or user-specified `voiceId`), measure exact duration via `ffprobe`, compute `durationInFrames = Math.ceil(durationSec * fps)`, and write back to `script.json`.',
+      'Synthesize speech audio (WAV) using local IndexTTS-2.5 or GPTvoice-tts (supporting AI auto-matched voice `voiceId: "auto"` or user-specified `voiceId`), measure exact duration via `ffprobe`, compute `durationInFrames = Math.ceil(durationSec * fps)`, and write back to `script.json`.',
     parameters: {
       type: 'object',
       properties: {
@@ -412,6 +416,14 @@ export function apply(ctx) {
         emotion: {
           type: 'string',
           description: 'Emotion label or description (e.g. 平静, 高兴, 伤心, 生气, 害怕, 激昂).',
+        },
+        lang: {
+          type: 'string',
+          description: 'Optional language code for IndexTTS-2.5 (ZH, EN, JA, ES, AR; auto-detected when omitted).',
+        },
+        durationFactor: {
+          type: 'number',
+          description: 'Optional IndexTTS-2.5 speech duration scaling factor (0.5 to 2.0, default 1.0).',
         },
         outputPath: {
           type: 'string',
@@ -427,8 +439,8 @@ export function apply(ctx) {
         },
         engine: {
           type: 'string',
-          enum: ['indextts2', 'gptvoice'],
-          description: 'Local TTS engine to use (defaults to indextts2).',
+          enum: ['indextts25', 'indextts2', 'gptvoice'],
+          description: 'Local TTS engine to use (defaults to indextts25).',
         },
         scriptPath: {
           type: 'string',

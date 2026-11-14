@@ -1,11 +1,35 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { loadEnv, resolveEnvPath } from '@dsh-video/shared'
+
+export const WIRE_PROTOCOLS = [
+  {
+    id: 'openai-completions',
+    label: 'OpenAI 兼容 Chat · /v1/chat/completions',
+    shortLabel: 'OpenAI Chat (/v1/chat/completions)',
+  },
+  {
+    id: 'anthropic-messages',
+    label: 'Anthropic Messages · /v1/messages',
+    shortLabel: 'Anthropic Messages (/v1/messages)',
+  },
+  {
+    id: 'openai-responses',
+    label: 'OpenAI Responses · /v1/responses',
+    shortLabel: 'OpenAI Responses (/v1/responses)',
+  },
+  {
+    id: 'gemini-native',
+    label: 'Gemini 原生 · /v1beta/models',
+    shortLabel: 'Gemini 原生 (/v1beta/models)',
+  },
+]
 
 export const LLM_PROVIDER_TEMPLATES = {
   custom: {
     id: 'custom',
-    label: '自定义任意模型接口 (OpenAI / Anthropic 兼容)',
+    label: '自由定制接口 (支持全部 4 种协议)',
     defaultFormat: 'auto',
     defaultBaseUrl: '',
     suggestedModels: [],
@@ -13,24 +37,32 @@ export const LLM_PROVIDER_TEMPLATES = {
   },
   anthropic: {
     id: 'anthropic',
-    label: 'Anthropic Claude (Opus / Sonnet)',
-    defaultFormat: 'anthropic',
+    label: 'Anthropic Claude (Messages 原生)',
+    defaultFormat: 'anthropic-messages',
     defaultBaseUrl: 'https://api.anthropic.com',
-    suggestedModels: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+    suggestedModels: ['claude-opus-5-5', 'claude-opus-4-6', 'claude-sonnet-4-6'],
     requiresKey: true,
   },
   openai: {
     id: 'openai',
-    label: 'OpenAI GPT 系列',
-    defaultFormat: 'openai',
+    label: 'OpenAI GPT (Chat / Responses)',
+    defaultFormat: 'openai-responses',
     defaultBaseUrl: 'https://api.openai.com/v1',
-    suggestedModels: ['gpt-5', 'gpt-4o'],
+    suggestedModels: ['gpt-6.1-sol', 'gpt-5', 'gpt-4o'],
+    requiresKey: true,
+  },
+  gemini: {
+    id: 'gemini',
+    label: 'Google Gemini (原生 /v1beta/models)',
+    defaultFormat: 'gemini-native',
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com',
+    suggestedModels: ['gemini-2.5-pro', 'gemini-2.5-flash'],
     requiresKey: true,
   },
   deepseek: {
     id: 'deepseek',
     label: 'DeepSeek 官方接口',
-    defaultFormat: 'openai',
+    defaultFormat: 'openai-completions',
     defaultBaseUrl: 'https://api.deepseek.com/v1',
     suggestedModels: ['deepseek-chat', 'deepseek-reasoner'],
     requiresKey: true,
@@ -38,27 +70,46 @@ export const LLM_PROVIDER_TEMPLATES = {
   openrouter: {
     id: 'openrouter',
     label: 'OpenRouter 多模型聚合网关',
-    defaultFormat: 'openai',
+    defaultFormat: 'openai-completions',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
     suggestedModels: ['anthropic/claude-opus-4', 'openai/gpt-5', 'google/gemini-2.5-pro'],
-    requiresKey: true,
-  },
-  gemini: {
-    id: 'gemini',
-    label: 'Google Gemini (OpenAI 兼容接口)',
-    defaultFormat: 'openai',
-    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    suggestedModels: ['gemini-2.5-pro', 'gemini-2.5-flash'],
     requiresKey: true,
   },
   ollama: {
     id: 'ollama',
     label: 'Ollama / 本地大模型服务',
-    defaultFormat: 'openai',
+    defaultFormat: 'openai-completions',
     defaultBaseUrl: 'http://127.0.0.1:11434/v1',
     suggestedModels: ['qwen2.5-coder:32b', 'deepseek-r1:32b'],
     requiresKey: false,
   },
+}
+
+const VALID_FORMATS = new Set([
+  'auto',
+  'openai-completions',
+  'anthropic-messages',
+  'openai-responses',
+  'gemini-native',
+  'openai',
+  'anthropic',
+  'gemini',
+])
+
+export function normalizeProtocolFormat(rawFormat) {
+  const f = String(rawFormat || 'auto').trim().toLowerCase()
+  if (f === 'openai') return 'openai-completions'
+  if (f === 'anthropic') return 'anthropic-messages'
+  if (f === 'gemini') return 'gemini-native'
+  if (
+    f === 'openai-completions' ||
+    f === 'anthropic-messages' ||
+    f === 'openai-responses' ||
+    f === 'gemini-native'
+  ) {
+    return f
+  }
+  return 'auto'
 }
 
 export function getLlmConfigPath() {
@@ -74,6 +125,276 @@ export function maskSecretKey(rawKey) {
   return `${key.slice(0, 6)}${'*'.repeat(Math.min(12, key.length - 10))}${key.slice(-4)}`
 }
 
+function stripYamlScalar(raw) {
+  let s = String(raw || '').trim()
+  if (!s) return ''
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1)
+  }
+  const commentIdx = s.indexOf(' #')
+  if (commentIdx > 0) s = s.slice(0, commentIdx).trim()
+  return s
+}
+
+function parseCredentialsRefs(credPath) {
+  const refs = {}
+  if (!existsSync(credPath)) return refs
+  try {
+    const lines = readFileSync(credPath, 'utf8').split(/\r?\n/)
+    let inRefs = false
+    for (const line of lines) {
+      if (/^\s*$/.test(line) || /^\s*#/.test(line)) continue
+      if (/^refs:\s*$/.test(line)) {
+        inRefs = true
+        continue
+      }
+      if (/^[^\s]/.test(line)) {
+        inRefs = false
+        continue
+      }
+      if (inRefs) {
+        const m = /^  ([A-Za-z0-9_.:-]+):\s*(.+?)\s*$/.exec(line)
+        if (m) {
+          const val = stripYamlScalar(m[2])
+          if (val && !val.startsWith('!')) refs[m[1]] = val
+        }
+      }
+    }
+  } catch {}
+  return refs
+}
+
+function parseProvidersFromCordisPatch(patchPath) {
+  const providers = []
+  if (!existsSync(patchPath)) return providers
+  try {
+    const lines = readFileSync(patchPath, 'utf8').split(/\r?\n/)
+    let topId = ''
+    let inPiProviders = false
+    let curProvider = null
+    let inProviderModels = false
+    let deepseekProvider = null
+    let inDeepseekModels = false
+
+    const flushCur = () => {
+      if (curProvider && curProvider.id) {
+        providers.push(curProvider)
+      }
+      curProvider = null
+      inProviderModels = false
+    }
+
+    for (const rawLine of lines) {
+      if (/^\s*$/.test(rawLine) || /^\s*#/.test(rawLine)) continue
+
+      // Top-level list entry `- id: xxx` or `- insert:`
+      const topMatch = /^- (id:\s*(.+)|insert:\s*)$/.exec(rawLine)
+      if (topMatch) {
+        flushCur()
+        if (deepseekProvider) {
+          providers.push(deepseekProvider)
+          deepseekProvider = null
+        }
+        inPiProviders = false
+        inDeepseekModels = false
+        topId = topMatch[2] ? stripYamlScalar(topMatch[2]) : ''
+        continue
+      }
+
+      if (topId === 'llm-pi-ai') {
+        if (/^    providers:\s*$/.test(rawLine)) {
+          inPiProviders = true
+          continue
+        }
+        if (inPiProviders && /^  [a-zA-Z]/.test(rawLine)) {
+          flushCur()
+          inPiProviders = false
+          continue
+        }
+        if (inPiProviders) {
+          const provMatch = /^      ([a-zA-Z0-9_-]+):\s*$/.exec(rawLine)
+          if (provMatch) {
+            flushCur()
+            curProvider = {
+              id: provMatch[1],
+              displayName: provMatch[1],
+              apiKeyEnv: '',
+              api: 'openai-completions',
+              baseURL: '',
+              models: [],
+            }
+            continue
+          }
+          if (curProvider) {
+            if (/^        models:\s*$/.test(rawLine)) {
+              inProviderModels = true
+              continue
+            }
+            const kv = /^        ([a-zA-Z0-9_]+):\s*(.+?)\s*$/.exec(rawLine)
+            if (kv) {
+              inProviderModels = false
+              const [, k, vRaw] = kv
+              const v = stripYamlScalar(vRaw)
+              if (k === 'displayName') curProvider.displayName = v
+              else if (k === 'apiKeyEnv') curProvider.apiKeyEnv = v
+              else if (k === 'api') curProvider.api = normalizeProtocolFormat(v)
+              else if (k === 'baseURL') curProvider.baseURL = v.replace(/\/+$/, '')
+              continue
+            }
+            if (inProviderModels) {
+              const idMatch = /^          - id:\s*(.+?)\s*$/.exec(rawLine)
+              if (idMatch) {
+                curProvider.models.push({ id: stripYamlScalar(idMatch[1]), name: stripYamlScalar(idMatch[1]) })
+                continue
+              }
+              const lastModel = curProvider.models[curProvider.models.length - 1]
+              if (lastModel) {
+                const nameMatch = /^            name:\s*(.+?)\s*$/.exec(rawLine)
+                if (nameMatch) lastModel.name = stripYamlScalar(nameMatch[1])
+                const tokMatch = /^            maxTokens:\s*(\d+)\s*$/.exec(rawLine)
+                if (tokMatch) lastModel.maxTokens = Number(tokMatch[1])
+              }
+            }
+          }
+        }
+      } else if (topId === 'llm-deepseek') {
+        if (!deepseekProvider) {
+          deepseekProvider = {
+            id: 'llm-deepseek',
+            displayName: 'DSH DeepSeek 默认',
+            apiKeyEnv: 'DEEPSEEK_API_KEY',
+            api: 'openai-completions',
+            baseURL: 'https://api.deepseek.com/v1',
+            models: [],
+          }
+        }
+        if (/^    models:\s*$/.test(rawLine)) {
+          inDeepseekModels = true
+          continue
+        }
+        const dsBase = /^    baseURL:\s*(.+?)\s*$/.exec(rawLine)
+        if (dsBase) {
+          inDeepseekModels = false
+          deepseekProvider.baseURL = stripYamlScalar(dsBase[1]).replace(/\/+$/, '')
+          continue
+        }
+        if (inDeepseekModels) {
+          const dm = /^      - id:\s*(.+?)\s*$/.exec(rawLine)
+          if (dm) {
+            deepseekProvider.models.push({ id: stripYamlScalar(dm[1]), name: stripYamlScalar(dm[1]) })
+            continue
+          }
+          const lastM = deepseekProvider.models[deepseekProvider.models.length - 1]
+          if (lastM) {
+            const nm = /^        name:\s*(.+?)\s*$/.exec(rawLine)
+            if (nm) lastM.name = stripYamlScalar(nm[1])
+          }
+        }
+      }
+    }
+    flushCur()
+    if (deepseekProvider) providers.push(deepseekProvider)
+  } catch {}
+  return providers
+}
+
+function readLatestDshActiveSelection(dshHome) {
+  const sessDir = join(dshHome, 'storages', 'session_projcache', 'sessions')
+  if (!existsSync(sessDir)) return { provider: '', model: '' }
+  try {
+    const latest = readdirSync(sessDir)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => ({ f, mt: statSync(join(sessDir, f)).mtimeMs }))
+      .sort((a, b) => b.mt - a.mt)
+    for (const item of latest.slice(0, 6)) {
+      const parsed = JSON.parse(readFileSync(join(sessDir, item.f), 'utf8'))
+      const sel = parsed?.record?.rows?.modelSelection?.val
+      const picked = sel?.pending || sel?.lastUsed
+      if (picked && (picked.provider || picked.model)) {
+        return {
+          provider: String(picked.provider || '').trim(),
+          model: String(picked.model || '').trim(),
+        }
+      }
+    }
+  } catch {}
+  return { provider: '', model: '' }
+}
+
+function loadDshClientDiscoveryInternal(dshHomeOverride = '') {
+  loadEnv()
+  const dshHome =
+    dshHomeOverride ||
+    process.env.DSH_CLIENT_HOME ||
+    process.env.DSH_HOME ||
+    join(homedir(), '.dsh')
+  const profile = process.env.DSH_PROFILE || 'desktop'
+  const patchPath = join(dshHome, 'profiles', profile, 'cordis.patch.yml')
+  const credPath = join(dshHome, '.credentials.yaml')
+
+  const refs = parseCredentialsRefs(credPath)
+  const rawProviders = parseProvidersFromCordisPatch(patchPath)
+  const activeSelection = readLatestDshActiveSelection(dshHome)
+
+  const providers = rawProviders.map((p) => {
+    const resolvedKey =
+      (p.apiKeyEnv && (process.env[p.apiKeyEnv] || refs[p.apiKeyEnv])) || ''
+    return {
+      ...p,
+      hasApiKey: Boolean(resolvedKey),
+      maskedApiKey: maskSecretKey(resolvedKey),
+      _secretKey: resolvedKey,
+    }
+  })
+
+  // Match active DSH client selection -> specific provider, else fallback to first keyed provider
+  let defaultProvider =
+    providers.find((p) => p.id === activeSelection.provider && p.hasApiKey) ||
+    providers.find((p) => p.id === activeSelection.provider) ||
+    providers.find((p) => p.hasApiKey && p.models.length > 0) ||
+    providers[0] ||
+    null
+
+  let defaultModel = ''
+  if (defaultProvider) {
+    if (
+      activeSelection.model &&
+      activeSelection.provider === defaultProvider.id
+    ) {
+      defaultModel = activeSelection.model
+    } else if (defaultProvider.models.length > 0) {
+      defaultModel = defaultProvider.models[0].id
+    }
+  }
+
+  return {
+    available: providers.length > 0,
+    dshHome,
+    profile,
+    activeSelection,
+    defaultProvider,
+    defaultModel,
+    providers,
+  }
+}
+
+/**
+ * Public safe view of discovered DSH client providers & active model (ALL API keys stripped).
+ */
+export function discoverDshClientConfig(dshHomeOverride = '') {
+  const d = loadDshClientDiscoveryInternal(dshHomeOverride)
+  return {
+    available: d.available,
+    profile: d.profile,
+    activeSelection: d.activeSelection,
+    defaultProviderId: d.defaultProvider?.id || '',
+    defaultProviderName: d.defaultProvider?.displayName || '',
+    defaultModelId: d.defaultModel || '',
+    defaultProtocol: d.defaultProvider?.api || 'openai-completions',
+    providers: d.providers.map(({ _secretKey, ...rest }) => rest),
+  }
+}
+
 function readStoredConfigFile() {
   const cfgPath = getLlmConfigPath()
   if (!existsSync(cfgPath)) return {}
@@ -86,20 +407,101 @@ function readStoredConfigFile() {
 }
 
 /**
- * Resolve effective LLM configuration by merging `.env` defaults, persisted UI config, and per-call overrides.
+ * Resolve effective LLM configuration:
+ * - Defaults to `mode: 'follow-dsh'` (automatically tracking active DSH client model/gateway/protocol/key)
+ * - Supports switching to any DSH provider/model OR configuring an independent custom provider/model/protocol
+ * - Allows per-call explicit overrides (e.g. from test suites or one-off calls)
  */
 export function resolveLlmConfig(override = {}) {
   loadEnv()
   const fileCfg = readStoredConfigFile()
-  const provider = String(
-    override.provider ?? fileCfg.provider ?? process.env.LLM_PROVIDER ?? 'custom',
-  ).trim() || 'custom'
+  const hasExplicitUrlOrKeyOverride =
+    override.baseUrl !== undefined || override.apiKey !== undefined
+  const envForcesCustom = Boolean(process.env.LLM_BASE_URL || process.env.LLM_MODEL)
+
+  let mode = String(
+    override.mode ??
+      (hasExplicitUrlOrKeyOverride ? 'custom' : undefined) ??
+      fileCfg.mode ??
+      process.env.LLM_MODE ??
+      (envForcesCustom ? 'custom' : 'follow-dsh'),
+  )
+    .trim()
+    .toLowerCase()
+
+  if (mode !== 'custom' && mode !== 'follow-dsh') {
+    mode = 'follow-dsh'
+  }
+
+  const maxRepairRounds = Math.max(
+    1,
+    Math.min(
+      5,
+      Number(override.maxRepairRounds ?? fileCfg.maxRepairRounds ?? process.env.LLM_MAX_REPAIR_ROUNDS ?? 3) || 3,
+    ),
+  )
+  const temperature = Number.isFinite(Number(override.temperature ?? fileCfg.temperature))
+    ? Number(override.temperature ?? fileCfg.temperature)
+    : 0.45
+  const maxTokens = Math.max(
+    1024,
+    Number(override.maxTokens ?? fileCfg.maxTokens ?? 16000) || 16000,
+  )
+
+  if (mode === 'follow-dsh') {
+    const dsh = loadDshClientDiscoveryInternal(override.dshHomeDir || '')
+    const requestedDshProvId = String(
+      override.dshProviderId ?? fileCfg.dshProviderId ?? '',
+    ).trim()
+
+    let pickedProv =
+      (requestedDshProvId && requestedDshProvId !== 'active'
+        ? dsh.providers.find((p) => p.id === requestedDshProvId)
+        : null) || dsh.defaultProvider
+
+    if (pickedProv) {
+      const requestedModel = String(override.model ?? fileCfg.model ?? '').trim()
+      const useModel =
+        requestedModel ||
+        (pickedProv.id === dsh.defaultProvider?.id ? dsh.defaultModel : '') ||
+        pickedProv.models?.[0]?.id ||
+        ''
+
+      const formatOverride = String(override.format ?? fileCfg.format ?? '').trim()
+      const effFormat =
+        formatOverride && formatOverride !== 'auto'
+          ? normalizeProtocolFormat(formatOverride)
+          : pickedProv.api || 'openai-completions'
+
+      return {
+        mode: 'follow-dsh',
+        sourceLabel:
+          !requestedDshProvId || requestedDshProvId === 'active'
+            ? `跟随 DSH 默认 (${pickedProv.displayName})`
+            : `DSH 通道 (${pickedProv.displayName})`,
+        dshProviderId: pickedProv.id,
+        provider: pickedProv.id,
+        format: effFormat,
+        baseUrl: pickedProv.baseURL,
+        apiKey: pickedProv._secretKey || '',
+        model: useModel,
+        maxRepairRounds,
+        temperature,
+        maxTokens,
+      }
+    }
+    // If DSH directory is absent on this machine, fall cleanly to custom fields below
+  }
+
+  const provider =
+    String(override.provider ?? fileCfg.provider ?? process.env.LLM_PROVIDER ?? 'custom').trim() ||
+    'custom'
   const template = LLM_PROVIDER_TEMPLATES[provider] || LLM_PROVIDER_TEMPLATES.custom
 
   const formatRaw = String(
     override.format ?? fileCfg.format ?? process.env.LLM_FORMAT ?? template.defaultFormat ?? 'auto',
   ).toLowerCase()
-  const format = ['openai', 'anthropic', 'auto'].includes(formatRaw) ? formatRaw : 'auto'
+  const format = VALID_FORMATS.has(formatRaw) ? normalizeProtocolFormat(formatRaw) : 'auto'
 
   const baseUrl = String(
     override.baseUrl ?? fileCfg.baseUrl ?? process.env.LLM_BASE_URL ?? template.defaultBaseUrl ?? '',
@@ -117,22 +519,10 @@ export function resolveLlmConfig(override = {}) {
     override.model ?? fileCfg.model ?? process.env.LLM_MODEL ?? '',
   ).trim()
 
-  const maxRepairRounds = Math.max(
-    1,
-    Math.min(
-      5,
-      Number(override.maxRepairRounds ?? fileCfg.maxRepairRounds ?? process.env.LLM_MAX_REPAIR_ROUNDS ?? 3) || 3,
-    ),
-  )
-  const temperature = Number.isFinite(Number(override.temperature ?? fileCfg.temperature))
-    ? Number(override.temperature ?? fileCfg.temperature)
-    : 0.45
-  const maxTokens = Math.max(
-    1024,
-    Number(override.maxTokens ?? fileCfg.maxTokens ?? 16000) || 16000,
-  )
-
   return {
+    mode: 'custom',
+    sourceLabel: template.label || '插件自定义模型',
+    dshProviderId: '',
     provider,
     format,
     baseUrl,
@@ -144,15 +534,22 @@ export function resolveLlmConfig(override = {}) {
   }
 }
 
-export function getSafeLlmConfigSummary() {
-  const cfg = resolveLlmConfig()
+export function getSafeLlmConfigSummary(dshHomeOverride = '') {
+  const cfg = resolveLlmConfig(dshHomeOverride ? { dshHomeDir: dshHomeOverride } : {})
+  const fileCfg = readStoredConfigFile()
+  const dsh = discoverDshClientConfig(dshHomeOverride)
   const template = LLM_PROVIDER_TEMPLATES[cfg.provider] || LLM_PROVIDER_TEMPLATES.custom
-  const requiresKey = cfg.provider !== 'ollama' && !/^http:\/\/127\.0\.0\.1|^http:\/\/localhost/i.test(cfg.baseUrl)
+  const requiresKey =
+    cfg.provider !== 'ollama' && !/^http:\/\/127\.0\.0\.1|^http:\/\/localhost/i.test(cfg.baseUrl)
   const configured = Boolean(cfg.baseUrl && cfg.model && (!requiresKey || cfg.apiKey))
   return {
     configured,
+    mode: cfg.mode,
+    sourceLabel: cfg.sourceLabel,
+    dshProviderId: fileCfg.dshProviderId || (cfg.mode === 'follow-dsh' ? 'active' : ''),
     provider: cfg.provider,
     format: cfg.format,
+    detectedProtocol: detectWireProtocol(cfg),
     baseUrl: cfg.baseUrl,
     model: cfg.model,
     maxRepairRounds: cfg.maxRepairRounds,
@@ -162,6 +559,8 @@ export function getSafeLlmConfigSummary() {
     maskedApiKey: maskSecretKey(cfg.apiKey),
     requiresKey: template.requiresKey,
     templates: Object.values(LLM_PROVIDER_TEMPLATES),
+    protocols: WIRE_PROTOCOLS,
+    dshClient: dsh,
     configFile: getLlmConfigPath(),
   }
 }
@@ -170,25 +569,42 @@ export function saveLlmConfig(patch = {}) {
   const cfgPath = getLlmConfigPath()
   mkdirSync(dirname(cfgPath), { recursive: true })
   const existing = readStoredConfigFile()
-  const incomingKey = patch.apiKey !== undefined ? String(patch.apiKey).trim() : undefined
+  const nextMode =
+    patch.mode === 'custom' || patch.mode === 'follow-dsh'
+      ? patch.mode
+      : existing.mode || 'follow-dsh'
 
   let nextApiKey = existing.apiKey || ''
   if (patch.clearApiKey === true) {
     nextApiKey = ''
-  } else if (incomingKey && incomingKey !== 'KEEP_EXISTING' && !incomingKey.includes('****')) {
-    nextApiKey = incomingKey
+  } else if (patch.apiKey !== undefined) {
+    const incomingKey = String(patch.apiKey).trim()
+    if (incomingKey && incomingKey !== 'KEEP_EXISTING' && !incomingKey.includes('****')) {
+      nextApiKey = incomingKey
+    }
   }
 
+  const fmtIn = String(patch.format ?? existing.format ?? 'auto').toLowerCase()
+  const nextFormat = VALID_FORMATS.has(fmtIn) ? normalizeProtocolFormat(fmtIn) : 'auto'
+
   const next = {
+    mode: nextMode,
+    dshProviderId:
+      nextMode === 'follow-dsh'
+        ? String(patch.dshProviderId ?? existing.dshProviderId ?? 'active').trim() || 'active'
+        : '',
     provider: String(patch.provider ?? existing.provider ?? 'custom').trim() || 'custom',
-    format: ['openai', 'anthropic', 'auto'].includes(String(patch.format || '').toLowerCase())
-      ? String(patch.format).toLowerCase()
-      : existing.format || 'auto',
-    baseUrl: String(patch.baseUrl ?? existing.baseUrl ?? '')
-      .trim()
-      .replace(/\/+$/, ''),
-    apiKey: nextApiKey,
-    model: String(patch.model ?? existing.model ?? '').trim(),
+    format: nextFormat,
+    baseUrl:
+      nextMode === 'follow-dsh'
+        ? existing.baseUrl || ''
+        : String(patch.baseUrl ?? existing.baseUrl ?? '').trim().replace(/\/+$/, ''),
+    // Never write DSH client keys into plugin config when following DSH
+    apiKey: nextMode === 'follow-dsh' ? existing.apiKey || '' : nextApiKey,
+    model:
+      patch.model !== undefined
+        ? String(patch.model).trim()
+        : existing.model || '',
     maxRepairRounds: Math.max(
       1,
       Math.min(5, Number(patch.maxRepairRounds ?? existing.maxRepairRounds ?? 3) || 3),
@@ -205,39 +621,145 @@ export function saveLlmConfig(patch = {}) {
 }
 
 export function detectWireProtocol(cfg) {
-  if (cfg.format === 'anthropic') return 'anthropic'
-  if (cfg.format === 'openai') return 'openai'
-  const url = String(cfg.baseUrl || '').toLowerCase()
-  if (url.includes('anthropic.com') || /\/v1\/messages$/.test(url)) return 'anthropic'
-  if (cfg.provider === 'anthropic' && !url.includes('/chat/completions') && !url.includes('openrouter')) {
-    return 'anthropic'
+  const fmt = normalizeProtocolFormat(cfg.format)
+  if (
+    fmt === 'anthropic-messages' ||
+    fmt === 'openai-completions' ||
+    fmt === 'openai-responses' ||
+    fmt === 'gemini-native'
+  ) {
+    return fmt
   }
-  return 'openai'
+  const url = String(cfg.baseUrl || '').toLowerCase()
+  const model = String(cfg.model || '').toLowerCase()
+  if (url.includes('generativelanguage.googleapis.com') && !url.includes('/openai')) {
+    return 'gemini-native'
+  }
+  if (/\/responses$/.test(url)) return 'openai-responses'
+  if (url.includes('anthropic.com') || /\/v\d+\/messages$/.test(url)) return 'anthropic-messages'
+  if (/\/chat\/completions$/.test(url)) return 'openai-completions'
+  if (cfg.provider === 'gemini') return 'gemini-native'
+  if (cfg.provider === 'anthropic' && !url.includes('openrouter')) return 'anthropic-messages'
+  if (model.includes('codex')) return 'openai-responses'
+  return 'openai-completions'
 }
 
-function buildChatEndpoint(baseUrl, protocol) {
+export function buildChatEndpoint(baseUrl, protocol, model = '') {
   const clean = String(baseUrl || '').trim().replace(/\/+$/, '')
-  if (!clean) throw new Error('未填写 LLM Base URL，请先在「AI 模型设置」中配置或填写 .env。')
-  if (protocol === 'anthropic') {
+  if (!clean) throw new Error('未填写 LLM Base URL，请先在「模型设置」选择 DSH 通道或自定义填入 API 地址。')
+
+  if (protocol === 'anthropic-messages' || protocol === 'anthropic') {
     if (/\/v\d+\/messages$/i.test(clean)) return clean
     if (/\/v\d+$/i.test(clean)) return `${clean}/messages`
     return `${clean}/v1/messages`
   }
+
+  if (protocol === 'openai-responses') {
+    if (/\/responses$/i.test(clean)) return clean
+    if (/\/chat\/completions$/i.test(clean)) return clean.replace(/\/chat\/completions$/i, '/responses')
+    if (/\/v\d+(\/.*)?$/i.test(clean)) return `${clean}/responses`
+    return `${clean}/v1/responses`
+  }
+
+  if (protocol === 'gemini-native') {
+    if (/\/models\/[^/]+:(generateContent|streamGenerateContent)$/i.test(clean)) return clean
+    const cleanRoot = clean.replace(/\/(models|openai)$/i, '')
+    const mName = encodeURIComponent(String(model || 'gemini-2.5-flash').replace(/^models\//, ''))
+    if (/\/v1beta$|\/v1$/i.test(cleanRoot)) {
+      return `${cleanRoot}/models/${mName}:generateContent`
+    }
+    return `${cleanRoot}/v1beta/models/${mName}:generateContent`
+  }
+
+  // Default: openai-completions
   if (/\/chat\/completions$/i.test(clean)) return clean
+  if (/\/responses$/i.test(clean)) return clean.replace(/\/responses$/i, '/chat/completions')
   if (/\/v\d+(\/.*)?$/i.test(clean)) return `${clean}/chat/completions`
   return `${clean}/v1/chat/completions`
 }
 
-function buildModelsEndpoint(baseUrl) {
+function buildModelsEndpoint(baseUrl, protocol) {
   const clean = String(baseUrl || '').trim().replace(/\/+$/, '')
   if (!clean) return ''
-  const root = clean.replace(/\/(chat\/completions|messages)$/i, '')
+  if (protocol === 'gemini-native') {
+    const cleanRoot = clean
+      .replace(/\/models\/[^/]+:(generateContent|streamGenerateContent)$/i, '')
+      .replace(/\/(models|openai)$/i, '')
+    if (/\/v1beta$|\/v1$/i.test(cleanRoot)) return `${cleanRoot}/models`
+    return `${cleanRoot}/v1beta/models`
+  }
+  const root = clean.replace(/\/(chat\/completions|responses|messages)$/i, '')
   if (/\/v\d+(\/openai)?$/i.test(root)) return `${root}/models`
   return `${root}/v1/models`
 }
 
+function extractTextFromReply(data, protocol) {
+  if (!data || typeof data !== 'object') return ''
+
+  if (protocol === 'anthropic-messages' || protocol === 'anthropic') {
+    if (Array.isArray(data.content)) {
+      return data.content
+        .filter((b) => b?.type === 'text' && b.text)
+        .map((b) => b.text)
+        .join('\n')
+    }
+    if (typeof data.completion === 'string') return data.completion
+    return ''
+  }
+
+  if (protocol === 'openai-responses') {
+    if (typeof data.output_text === 'string' && data.output_text.trim()) {
+      return data.output_text
+    }
+    if (Array.isArray(data.output)) {
+      const chunks = []
+      for (const item of data.output) {
+        if (!item) continue
+        if (typeof item.text === 'string') chunks.push(item.text)
+        if (Array.isArray(item.content)) {
+          for (const part of item.content) {
+            if (part?.text && (!part.type || part.type === 'output_text' || part.type === 'text')) {
+              chunks.push(part.text)
+            }
+          }
+        }
+      }
+      if (chunks.length > 0) return chunks.join('\n')
+    }
+    // Some relays echo choices even on responses
+    if (typeof data?.choices?.[0]?.message?.content === 'string') {
+      return data.choices[0].message.content
+    }
+    return ''
+  }
+
+  if (protocol === 'gemini-native') {
+    const parts = data?.candidates?.[0]?.content?.parts
+    if (Array.isArray(parts)) {
+      return parts
+        .filter((p) => !p?.thought && typeof p?.text === 'string')
+        .map((p) => p.text)
+        .join('\n')
+    }
+    return ''
+  }
+
+  // openai-completions
+  const choice = data?.choices?.[0]
+  if (typeof choice?.message?.content === 'string') return choice.message.content
+  if (Array.isArray(choice?.message?.content)) {
+    return choice.message.content.map((c) => c?.text || '').join('\n')
+  }
+  if (typeof data?.output_text === 'string') return data.output_text
+  return ''
+}
+
 /**
- * Call any configured OpenAI-compatible or Anthropic-native LLM endpoint.
+ * Call any configured LLM across all 4 wire protocols:
+ * - openai-completions (/v1/chat/completions)
+ * - anthropic-messages (/v1/messages)
+ * - openai-responses (/v1/responses)
+ * - gemini-native (/v1beta/models)
  */
 export async function callLlmChat({
   messages = [],
@@ -250,21 +772,21 @@ export async function callLlmChat({
 } = {}) {
   const cfg = resolveLlmConfig(overrideConfig)
   if (!cfg.baseUrl) {
-    throw new Error('尚未配置大模型接口地址 (Base URL)。点击右上角「模型设置」填入任意 API 地址和密钥即可开始 AI 编程创作。')
+    throw new Error('尚未配置大模型接口地址 (Base URL)。点击右上角「模型设置」可一键跟随 DSH 客户端或填写自定义网关。')
   }
   if (!cfg.model) {
-    throw new Error('尚未指定模型名称 (例如 claude-opus-4-6 / deepseek-chat / gpt-5 或任意中转模型 ID)。')
+    throw new Error('尚未指定模型名称 (例如 claude-opus-5-5 / gpt-6.1-sol / deepseek-chat / gemini-2.5-pro)。')
   }
   const requiresKey = cfg.provider !== 'ollama' && !/^http:\/\/127\.0\.0\.1|^http:\/\/localhost/i.test(cfg.baseUrl)
   if (requiresKey && !cfg.apiKey) {
-    throw new Error('尚未配置 API Key，请先在「模型设置」填写密钥。')
+    throw new Error('尚未找到可用 API Key：请在「模型设置」开启跟随 DSH 客户端或填入插件专属密钥。')
   }
   if (typeof fetchImpl !== 'function') {
     throw new Error('当前 Node 运行时缺少 fetch API。')
   }
 
   const protocol = detectWireProtocol(cfg)
-  const endpoint = buildChatEndpoint(cfg.baseUrl, protocol)
+  const endpoint = buildChatEndpoint(cfg.baseUrl, protocol, cfg.model)
   const temp = Number.isFinite(Number(temperature)) ? Number(temperature) : cfg.temperature
   const maxOut = Number(maxTokens) > 0 ? Number(maxTokens) : cfg.maxTokens
 
@@ -274,27 +796,59 @@ export async function callLlmChat({
   try {
     let headers
     let payload
-    if (protocol === 'anthropic') {
+    const sysParts = [system, ...messages.filter((m) => m?.role === 'system').map((m) => m.content)]
+      .filter(Boolean)
+      .join('\n\n')
+    const chatMsgs = messages
+      .filter((m) => m && m.role !== 'system' && m.content)
+      .map((m) => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: String(m.content || ''),
+      }))
+
+    if (protocol === 'anthropic-messages') {
       headers = {
         'content-type': 'application/json',
         'x-api-key': cfg.apiKey,
         'anthropic-version': '2023-06-01',
       }
-      const normMsgs = messages
-        .filter((m) => m && m.role !== 'system')
-        .map((m) => ({
-          role: m.role === 'assistant' ? 'assistant' : 'user',
-          content: String(m.content || ''),
-        }))
-      const sysParts = [system, ...messages.filter((m) => m?.role === 'system').map((m) => m.content)]
-        .filter(Boolean)
-        .join('\n\n')
       payload = {
         model: cfg.model,
         max_tokens: maxOut,
         temperature: temp,
         ...(sysParts ? { system: sysParts } : {}),
-        messages: normMsgs,
+        messages: chatMsgs,
+      }
+    } else if (protocol === 'openai-responses') {
+      headers = {
+        'content-type': 'application/json',
+        ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}),
+      }
+      payload = {
+        model: cfg.model,
+        ...(sysParts ? { instructions: sysParts } : {}),
+        input: chatMsgs.map((m) => ({
+          type: 'message',
+          role: m.role,
+          content: [{ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: m.content }],
+        })),
+        max_output_tokens: maxOut,
+      }
+    } else if (protocol === 'gemini-native') {
+      headers = {
+        'content-type': 'application/json',
+        ...(cfg.apiKey ? { 'x-goog-api-key': cfg.apiKey } : {}),
+      }
+      payload = {
+        ...(sysParts ? { systemInstruction: { parts: [{ text: sysParts }] } } : {}),
+        contents: chatMsgs.map((m) => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }],
+        })),
+        generationConfig: {
+          temperature: temp,
+          maxOutputTokens: maxOut,
+        },
       }
     } else {
       headers = {
@@ -302,11 +856,8 @@ export async function callLlmChat({
         ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}),
       }
       const normMsgs = []
-      if (system) normMsgs.push({ role: 'system', content: String(system) })
-      for (const m of messages) {
-        if (!m || !m.content) continue
-        normMsgs.push({ role: m.role || 'user', content: String(m.content) })
-      }
+      if (sysParts) normMsgs.push({ role: 'system', content: sysParts })
+      for (const m of chatMsgs) normMsgs.push(m)
       payload = {
         model: cfg.model,
         messages: normMsgs,
@@ -336,30 +887,12 @@ export async function callLlmChat({
         data?.message ||
         rawText.slice(0, 300) ||
         `HTTP ${res.status}`
-      throw new Error(`大模型接口返回错误 (${res.status}): ${msg}`)
+      throw new Error(`大模型接口 (${protocol}) 返回错误 (${res.status}): ${msg}`)
     }
 
-    let text = ''
-    if (protocol === 'anthropic') {
-      if (Array.isArray(data?.content)) {
-        text = data.content
-          .filter((b) => b?.type === 'text' && b.text)
-          .map((b) => b.text)
-          .join('\n')
-      } else if (typeof data?.completion === 'string') {
-        text = data.completion
-      }
-    } else {
-      const choice = data?.choices?.[0]
-      if (typeof choice?.message?.content === 'string') {
-        text = choice.message.content
-      } else if (Array.isArray(choice?.message?.content)) {
-        text = choice.message.content.map((c) => c?.text || '').join('\n')
-      }
-    }
-
+    const text = extractTextFromReply(data, protocol)
     if (!text.trim()) {
-      throw new Error('大模型返回内容为空，请检查模型 ID 或额度限制。')
+      throw new Error('大模型返回内容为空，请检查模型 ID、协议类型或额度限制。')
     }
 
     return {
@@ -368,7 +901,7 @@ export async function callLlmChat({
       endpoint,
       model: data?.model || cfg.model,
       text,
-      usage: data?.usage || null,
+      usage: data?.usage || data?.usageMetadata || null,
     }
   } finally {
     clearTimeout(timer)
@@ -377,27 +910,30 @@ export async function callLlmChat({
 
 export async function fetchAvailableModels(overrideConfig = {}, fetchImpl = globalThis.fetch) {
   const cfg = resolveLlmConfig(overrideConfig)
-  const endpoint = buildModelsEndpoint(cfg.baseUrl)
-  if (!endpoint || typeof fetchImpl !== 'function') return []
   const protocol = detectWireProtocol(cfg)
+  const endpoint = buildModelsEndpoint(cfg.baseUrl, protocol)
+  if (!endpoint || typeof fetchImpl !== 'function') return []
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 12000)
   try {
-    const headers =
-      protocol === 'anthropic'
-        ? {
-            'x-api-key': cfg.apiKey,
-            'anthropic-version': '2023-06-01',
-          }
-        : {
-            ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}),
-          }
+    let headers = {}
+    if (protocol === 'anthropic-messages') {
+      headers = {
+        'x-api-key': cfg.apiKey,
+        'anthropic-version': '2023-06-01',
+      }
+    } else if (protocol === 'gemini-native') {
+      headers = cfg.apiKey ? { 'x-goog-api-key': cfg.apiKey } : {}
+    } else {
+      headers = cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}
+    }
+
     const res = await fetchImpl(endpoint, { method: 'GET', headers, signal: controller.signal })
     if (!res.ok) return []
     const json = await res.json()
     const list = Array.isArray(json?.data) ? json.data : Array.isArray(json?.models) ? json.models : []
     return list
-      .map((item) => String(item?.id || item?.name || '').trim())
+      .map((item) => String(item?.id || item?.name || '').replace(/^models\//, '').trim())
       .filter(Boolean)
       .slice(0, 80)
   } catch {
@@ -423,6 +959,7 @@ export async function testLlmConnection(overrideConfig = {}, fetchImpl = globalT
   return {
     ok: true,
     latencyMs: Date.now() - started,
+    mode: cfg.mode,
     protocol: res.protocol,
     model: res.model,
     endpoint: res.endpoint,

@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-DSH Video Workbench - Persistent IndexTTS-2 HTTP Server
-Loads the compiled IndexTTS-2 engine (`cy_app.tts`) ONCE and serves synthesis requests,
-so each sentence takes seconds instead of reloading the 6GB model every time.
+DSH Video Workbench - Persistent IndexTTS-2.5 / IndexTTS-2 HTTP Server
+Loads IndexTTS-2.5 (`indextts.infer_v2_5.IndexTTS2`) first when available under INDEXTTS_ROOT,
+and cleanly falls back to legacy compiled IndexTTS-2 (`cy_app.tts`) if pointing to a v2 directory.
 
 Usage:  python tts-server.py --root <INDEXTTS_ROOT> --port 9880
 Endpoints:
-  GET  /health          -> {"ok": true, "ready": bool}
+  GET  /health          -> {"ok": true, "engine": "indextts25" | "indextts2", "version": "2.5" | "2.0", "ready": bool}
   POST /tts  (JSON)     -> writes WAV to `output_path`, returns {"ok": true, "output_path": ...}
 Zero hardcoded paths: everything comes from CLI args / env.
 """
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -22,8 +23,29 @@ import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-STATE = {"ready": False, "error": "", "tts": None, "loaded_sec": 0.0, "root": ""}
+STATE = {
+    "ready": False,
+    "error": "",
+    "tts": None,
+    "engine": "indextts25",
+    "version": "2.5",
+    "use_qwen_emo": False,
+    "loaded_sec": 0.0,
+    "root": "",
+}
 LOCK = threading.Lock()
+
+
+def detect_lang_code(text: str, explicit: str = "") -> str:
+    if explicit and explicit.upper() in ("ZH", "EN", "JA", "ES", "AR"):
+        return explicit.upper()
+    if re.search(r"[\u3040-\u30ff]", text or ""):
+        return "JA"
+    if re.search(r"[\u0600-\u06ff]", text or ""):
+        return "AR"
+    if re.search(r"[\u4e00-\u9fff]", text or ""):
+        return "ZH"
+    return "EN"
 
 
 def load_engine(root):
@@ -32,12 +54,46 @@ def load_engine(root):
         os.chdir(root)
         if root not in sys.path:
             sys.path.insert(0, root)
+        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
+        infer_v25 = os.path.join(root, "indextts", "infer_v2_5.py")
+        cfg_yaml = os.path.join(root, "checkpoints", "config.yaml")
+        ckpt_dir = os.path.join(root, "checkpoints")
+
+        if os.path.isfile(infer_v25) and os.path.isfile(cfg_yaml):
+            from indextts.infer_v2_5 import IndexTTS2  # type: ignore
+
+            want_qwen_emo = os.environ.get("INDEXTTS_QWEN_EMO", "1") == "1" and os.path.isdir(
+                os.path.join(ckpt_dir, "qwen0.6bemo4-merge")
+            )
+            tts = IndexTTS2(
+                cfg_path=cfg_yaml,
+                model_dir=ckpt_dir,
+                use_bf16=True,
+                use_qwen_emo=want_qwen_emo,
+            )
+            STATE["tts"] = tts
+            STATE["engine"] = "indextts25"
+            STATE["version"] = "2.5"
+            STATE["use_qwen_emo"] = bool(want_qwen_emo)
+            STATE["ready"] = True
+            STATE["loaded_sec"] = round(time.time() - t0, 1)
+            print(
+                f"[tts-server] IndexTTS-2.5 ready in {STATE['loaded_sec']}s (qwen_emo={want_qwen_emo})",
+                flush=True,
+            )
+            return
+
+        # Legacy IndexTTS-2 compiled engine fallback
         import cy_app  # type: ignore
 
         tts = getattr(cy_app, "tts", None)
         if tts is None:
-            raise RuntimeError("cy_app.tts not available")
+            raise RuntimeError("Neither indextts.infer_v2_5 nor cy_app.tts found in INDEXTTS_ROOT")
         STATE["tts"] = tts
+        STATE["engine"] = "indextts2"
+        STATE["version"] = "2.0"
+        STATE["use_qwen_emo"] = True
         STATE["ready"] = True
         STATE["loaded_sec"] = round(time.time() - t0, 1)
         print(f"[tts-server] IndexTTS-2 ready in {STATE['loaded_sec']}s", flush=True)
@@ -70,16 +126,24 @@ def synthesize(payload):
         "output_path": tmp_out,
         "verbose": False,
     }
+    if STATE["version"] == "2.5":
+        kwargs["lang"] = detect_lang_code(text, payload.get("lang") or "")
+        dur_factor = payload.get("duration_factor")
+        if dur_factor is not None:
+            kwargs["duration_factor"] = max(0.5, min(2.0, float(dur_factor)))
+
     if emo_audio and os.path.exists(emo_audio):
         kwargs["emo_audio_prompt"] = emo_audio
         kwargs["emo_alpha"] = float(payload.get("emo_alpha", 0.6))
-    elif emotion and emotion not in ("平静", "neutral"):
+    elif emotion and emotion not in ("平静", "neutral") and STATE["use_qwen_emo"]:
         kwargs["use_emo_text"] = True
         kwargs["emo_text"] = emotion
+
     with LOCK:
         tts.infer(**kwargs)
+
     if not os.path.exists(tmp_out) or os.path.getsize(tmp_out) < 1000:
-        raise RuntimeError("IndexTTS-2 produced no audio")
+        raise RuntimeError(f"IndexTTS-{STATE['version']} produced no audio")
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     shutil.move(tmp_out, out)
     return out
@@ -94,17 +158,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, fmt, *args):  # quieter logs
+    def log_message(self, fmt, *args):
         return
 
     def do_GET(self):
         if self.path.startswith("/health"):
             self._json(200, {
                 "ok": True,
-                "engine": "indextts2",
+                "engine": STATE["engine"],
+                "version": STATE["version"],
                 "ready": STATE["ready"],
                 "error": STATE["error"],
                 "loadedSec": STATE["loaded_sec"],
+                "qwenEmo": STATE["use_qwen_emo"],
             })
         else:
             self._json(404, {"ok": False, "error": "not found"})
@@ -121,7 +187,16 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
             t0 = time.time()
             out = synthesize(payload)
-            self._json(200, {"ok": True, "output_path": out, "elapsedSec": round(time.time() - t0, 2)})
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "engine": STATE["engine"],
+                    "version": STATE["version"],
+                    "output_path": out,
+                    "elapsedSec": round(time.time() - t0, 2),
+                },
+            )
         except Exception as exc:  # noqa
             traceback.print_exc()
             self._json(500, {"ok": False, "error": str(exc)})
@@ -136,7 +211,7 @@ def main():
     STATE["root"] = a.root
     server = ThreadingHTTPServer((a.host, a.port), Handler)
     threading.Thread(target=load_engine, args=(a.root,), daemon=True).start()
-    print(f"[tts-server] listening on http://{a.host}:{a.port} (loading model...)", flush=True)
+    print(f"[tts-server] listening on http://{a.host}:{a.port} (loading IndexTTS-2.5...)", flush=True)
     server.serve_forever()
 
 

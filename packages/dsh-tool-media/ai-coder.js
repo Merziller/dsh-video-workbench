@@ -19,6 +19,7 @@ import { executeGenerateSpeech, matchAllScenesInScript } from '@dsh-video/tool-l
 import { executeVideoLint, executeVideoRender, runTypecheckOnProject, scanAiGeneratedCodeSandbox } from '@dsh-video/tool-video-suite'
 import { importAssets, readAssets } from './asset-manager.js'
 import { buildBeatGrid, mixVideoAudio } from './audio-synth.js'
+import { masterVoiceTracks } from './voice-master.js'
 import { resolvePalette } from './html-generator.js'
 import { callLlmChat, extractJsonFromLlmText, resolveLlmConfig } from './llm-client.js'
 import { syncRemotionPublicAssets, writeRemotionProjectFiles } from './remotion-generator.js'
@@ -471,7 +472,7 @@ export async function runAiStudioPipeline(options = {}) {
   matchAllScenesInScript(absDir, { voiceId: voiceId || 'auto', forceAuto: voiceId === 'auto' })
   let midScript = readScriptJson(absDir).data
 
-  emit('tts', 30, '3/6 正在通过本地音色库合成真人配音并测量精确帧长...')
+  emit('tts', 28, '3/7 正在通过本地 IndexTTS-2.5 音色库合成真人配音...')
   for (let i = 0; i < (midScript.scenes || []).length; i++) {
     const s = midScript.scenes[i]
     const reused = plannedScenes[i]?.audioFile && existsSync(join(absDir, plannedScenes[i].audioFile))
@@ -485,7 +486,7 @@ export async function runAiStudioPipeline(options = {}) {
       text: s.narration,
       emotion: s.emotion || '平静',
       voiceId: s.voiceId || voiceId || 'auto',
-      engine: ttsEngine || process.env.DEFAULT_TTS_ENGINE || 'indextts2',
+      engine: ttsEngine || process.env.DEFAULT_TTS_ENGINE || 'indextts25',
       fps,
       outputPath: join(absDir, 'audio', `${s.id}.wav`),
       scriptPath: absDir,
@@ -494,7 +495,15 @@ export async function runAiStudioPipeline(options = {}) {
     })
   }
 
-  // Re-lock beat grid + full timing contract after ffprobe backfills durations
+  emit('master', 38, `4/7 正在调用大模型 (${llmCfg.model}) 执行人声母带修音与 LUFS 均衡...`)
+  const masteringReport = await masterVoiceTracks({
+    projectDir: absDir,
+    useLlm: true,
+    llmOverride: llmCfg,
+    fetchImpl,
+  })
+
+  // Re-lock beat grid + full timing contract after ffprobe + vocal mastering backfills durations
   let lockedScript = readScriptJson(absDir).data
   const grid = buildBeatGrid(lockedScript.totalDurationSec || 12, bpm)
   lockedScript.bgm = { ...(lockedScript.bgm || {}), beats: grid.beats.map((b) => b.time), bpm }
@@ -508,7 +517,7 @@ export async function runAiStudioPipeline(options = {}) {
     } catch {}
   }
 
-  emit('audio', 44, '4/6 正在生成定制合成配乐与音效母带 (audio/master-audio.wav)...')
+  emit('audio', 46, '5/7 正在生成定制合成配乐与音效母带 (output/master-audio.wav)...')
   await mixVideoAudio({
     projectDir: absDir,
     script: lockedScript,
@@ -540,7 +549,7 @@ export async function runAiStudioPipeline(options = {}) {
   mkdirSync(join(absDir, 'output'), { recursive: true })
   writeFileSync(join(absDir, 'output', 'timing-contract.json'), JSON.stringify(timingContract, null, 2) + '\n', 'utf8')
 
-  emit('coder', 54, `5/6 正在让大模型 (${llmCfg.model}) 编写定制 ${engine === 'remotion' ? 'Remotion TSX' : 'HyperFrames HTML'} 视频源码...`)
+  emit('coder', 56, `6/7 正在让大模型 (${llmCfg.model}) 编写定制 ${engine === 'remotion' ? 'Remotion TSX' : 'HyperFrames HTML'} 视频源码...`)
   const coderPkg =
     engine === 'remotion'
       ? buildRemotionCoderSkillsPrompt({
@@ -616,18 +625,26 @@ export async function runAiStudioPipeline(options = {}) {
     repairHistory: checkResult.repairHistory,
     generatedFiles: Object.keys(checkResult.files),
     audioSpec: lockedScript.audioSpec || null,
+    voiceMastering: masteringReport
+      ? {
+          mode: masteringReport.mode,
+          model: masteringReport.model,
+          engineerSummary: masteringReport.engineerSummary,
+          scenesCount: masteringReport.scenesCount,
+        }
+      : null,
     builtAt: new Date().toISOString(),
   }
   writeFileSync(join(absDir, 'output', 'ai_build_log.json'), JSON.stringify(buildLog, null, 2) + '\n', 'utf8')
 
   let renderResult = null
   if (render !== false) {
-    emit('render', 78, '6/6 正在渲染成片并执行 FFmpeg 自动黑屏/响度质检...')
+    emit('render', 78, '7/7 正在渲染成片并执行 FFmpeg 自动黑屏/响度质检...')
     renderResult = await executeVideoRender({
       projectDir: absDir,
       engine,
       onProgress: ({ frame, totalFrames, pct }) =>
-        emit('render', Math.min(97, 78 + Math.round(pct * 0.19)), `6/6 正在逐帧合成视频 (${frame}/${totalFrames} · ${pct}%)...`),
+        emit('render', Math.min(97, 78 + Math.round(pct * 0.19)), `7/7 正在逐帧合成视频 (${frame}/${totalFrames} · ${pct}%)...`),
     })
   }
 

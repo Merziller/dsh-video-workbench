@@ -37,6 +37,7 @@ import {
   getAiCodingHistory,
   getSafeLlmConfigSummary,
   importAssets,
+  masterVoiceTracks,
   mixVideoAudio,
   planVideoFromAssets,
   produceFullVideo,
@@ -698,13 +699,20 @@ export async function handleWorkbenchApiRequest(req) {
           text: body.text || scene.narration,
           emotion: body.emotion || scene.emotion || '平静',
           voiceId: body.voiceId || scene.voiceId || data.defaultVoiceId || 'auto',
-          engine: body.ttsEngine || process.env.DEFAULT_TTS_ENGINE || 'indextts2',
+          engine: body.ttsEngine || process.env.DEFAULT_TTS_ENGINE || 'indextts25',
           fps: data.fps || 30,
           outputPath: outWav,
           scriptPath: projectDir,
           sceneId: scene.id,
           allowPlaceholder: Boolean(body.allowPlaceholder),
         })
+        if (body.autoMaster) {
+          await masterVoiceTracks({
+            projectDir,
+            sceneIds: [scene.id],
+            useLlm: body.useLlm !== false,
+          })
+        }
         const updated = readScriptJson(projectDir)
         syncProjectCodeFromScript(projectDir, updated.data)
         const mixResult = await mixVideoAudio({ projectDir, script: updated.data })
@@ -724,7 +732,7 @@ export async function handleWorkbenchApiRequest(req) {
               text: scene.narration,
               emotion: scene.emotion || '平静',
               voiceId: scene.voiceId || data.defaultVoiceId || 'auto',
-              engine: body.ttsEngine || process.env.DEFAULT_TTS_ENGINE || 'indextts2',
+              engine: body.ttsEngine || process.env.DEFAULT_TTS_ENGINE || 'indextts25',
               fps: data.fps || 30,
               outputPath: outWav,
               scriptPath: projectDir,
@@ -733,17 +741,46 @@ export async function handleWorkbenchApiRequest(req) {
             })
             results.push(res)
           }
+          let mastering = null
+          if (body.autoMaster) {
+            mastering = await masterVoiceTracks({
+              projectDir,
+              useLlm: body.useLlm !== false,
+              onProgress,
+            })
+          }
           onProgress?.('正在合成配音、音效与背景音乐混音...')
           const updated = readScriptJson(projectDir)
           syncProjectCodeFromScript(projectDir, updated.data)
           const mixResult = await mixVideoAudio({ projectDir, script: updated.data })
-          return { ok: true, action, results, mixResult, script: updated.data }
+          return { ok: true, action, results, mastering, mixResult, script: updated.data }
         }
         if (body.async) {
-          const job = createBackgroundJob('正在启动配音引擎...', runTtsAll)
+          const job = createBackgroundJob('正在启动 IndexTTS-2.5 配音引擎...', runTtsAll)
           return jsonResponse({ ok: true, jobId: job.id })
         }
         return jsonResponse(await runTtsAll())
+      }
+
+      if (action === 'ai-master-voice') {
+        const runMaster = async (onProgress) => {
+          const report = await masterVoiceTracks({
+            projectDir,
+            sceneIds: Array.isArray(body.sceneIds) ? body.sceneIds : [],
+            useLlm: body.useLlm !== false,
+            onProgress,
+          })
+          onProgress?.('正在将 AI 修音人声与音效、背景音乐重新混音...')
+          const updated = readScriptJson(projectDir)
+          syncProjectCodeFromScript(projectDir, updated.data)
+          const mixResult = await mixVideoAudio({ projectDir, script: updated.data })
+          return { ok: true, action, report, mixResult, script: updated.data }
+        }
+        if (body.async) {
+          const job = createBackgroundJob('正在执行配音后 AI 大模型声学修音...', runMaster)
+          return jsonResponse({ ok: true, jobId: job.id })
+        }
+        return jsonResponse(await runMaster())
       }
 
       if (action === 'snapshot') {
@@ -860,6 +897,8 @@ export function apply(ctx) {
     const routes = [
       { path: '/api/video-workbench/state', methods: ['GET'] },
       { path: '/api/video-workbench/jobs', methods: ['GET'] },
+      { path: '/api/video-workbench/llm-config', methods: ['GET', 'POST'] },
+      { path: '/api/video-workbench/llm-test', methods: ['POST'] },
       { path: '/api/video-workbench/voices/preview', methods: ['GET'] },
       { path: '/api/video-workbench/projects', methods: ['POST'] },
       { path: '/api/video-workbench/projects/delete', methods: ['POST'] },
@@ -869,6 +908,10 @@ export function apply(ctx) {
       { path: '/api/video-workbench/assets/delete', methods: ['POST'] },
       { path: '/api/video-workbench/plan', methods: ['POST'] },
       { path: '/api/video-workbench/produce', methods: ['POST'] },
+      { path: '/api/video-workbench/ai-produce', methods: ['POST'] },
+      { path: '/api/video-workbench/ai-refine', methods: ['POST'] },
+      { path: '/api/video-workbench/code', methods: ['GET'] },
+      { path: '/api/video-workbench/qa', methods: ['POST'] },
       { path: '/api/video-workbench/voices/import', methods: ['POST'] },
       { path: '/api/video-workbench/voices/match', methods: ['POST'] },
       { path: '/api/video-workbench/action', methods: ['POST'] },

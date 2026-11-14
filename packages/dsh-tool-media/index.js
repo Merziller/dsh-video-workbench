@@ -27,12 +27,18 @@ import {
 import { buildRichHtmlVideo } from './html-generator.js'
 import { syncRemotionPublicAssets, writeRemotionProjectFiles } from './remotion-generator.js'
 import {
+  WIRE_PROTOCOLS,
+  discoverDshClientConfig,
   getSafeLlmConfigSummary,
   saveLlmConfig,
   testLlmConnection,
   fetchAvailableModels,
   callLlmChat,
 } from './llm-client.js'
+import {
+  masterVoiceTracks,
+  probeVoiceAcousticTelemetry,
+} from './voice-master.js'
 import {
   getAiCodingHistory,
   refineAiScene,
@@ -51,11 +57,15 @@ export {
   generateBgmWav,
   generateSfxWav,
   mixVideoAudio,
+  masterVoiceTracks,
+  probeVoiceAcousticTelemetry,
   planVideoFromAssets,
   syncProjectCodeFromScript,
   buildRichHtmlVideo,
   syncRemotionPublicAssets,
   writeRemotionProjectFiles,
+  WIRE_PROTOCOLS,
+  discoverDshClientConfig,
   getSafeLlmConfigSummary,
   saveLlmConfig,
   testLlmConnection,
@@ -126,7 +136,7 @@ export async function produceFullVideo(options = {}) {
       text: s.narration,
       emotion: s.emotion || '平静',
       voiceId: s.voiceId || voiceId || 'auto',
-      engine: ttsEngine || process.env.DEFAULT_TTS_ENGINE || 'indextts2',
+      engine: ttsEngine || process.env.DEFAULT_TTS_ENGINE || 'indextts25',
       fps: curScript.fps || 30,
       outputPath: join(absDir, 'audio', `${s.id}.wav`),
       scriptPath: absDir,
@@ -334,15 +344,22 @@ export function apply(ctx) {
 
   ctx.tools.register({
     name: 'configure_llm_model',
-    description: 'Save or test any OpenAI-compatible or Anthropic-compatible LLM provider configuration.',
+    description:
+      'Configure model settings: default follows live DSH client configuration (`mode: "follow-dsh"`), or customize any endpoint across all 4 wire protocols (`openai-completions`, `anthropic-messages`, `openai-responses`, `gemini-native`).',
     parameters: {
       type: 'object',
       properties: {
-        provider: { type: 'string', description: 'Preset template ID (custom, anthropic, openai, deepseek, openrouter, gemini, ollama).' },
-        format: { type: 'string', enum: ['auto', 'openai', 'anthropic'], description: 'API wire format.' },
+        mode: { type: 'string', enum: ['follow-dsh', 'custom'], description: 'follow-dsh inherits DSH client active provider/model/key; custom uses plugin fields.' },
+        dshProviderId: { type: 'string', description: 'Optional specific DSH provider ID from cordis.patch.yml (or "active" to track DSH active selection).' },
+        provider: { type: 'string', description: 'Preset template ID (custom, anthropic, openai, gemini, deepseek, openrouter, ollama).' },
+        format: {
+          type: 'string',
+          enum: ['auto', 'openai-completions', 'anthropic-messages', 'openai-responses', 'gemini-native', 'openai', 'anthropic'],
+          description: 'API wire protocol format.',
+        },
         baseUrl: { type: 'string', description: 'LLM API Base URL.' },
         apiKey: { type: 'string', description: 'API Key (never logged or returned).' },
-        model: { type: 'string', description: 'Target model ID string (e.g. claude-opus-4-6, deepseek-chat, etc.).' },
+        model: { type: 'string', description: 'Target model ID string (e.g. claude-opus-5-5, gpt-6.1-sol, gemini-2.5-pro).' },
         maxRepairRounds: { type: 'number', description: 'Max compiler/lint self-repair attempts (1-5).' },
         runTest: { type: 'boolean', description: 'If true, also test endpoint connectivity.' },
       },
@@ -362,9 +379,42 @@ export function apply(ctx) {
   })
 
   ctx.tools.register({
+    name: 'ai_master_voice',
+    description:
+      'Probe acoustic telemetry (LUFS loudness, true peak, crest, silence) on post-TTS scene vocals and use the configured AI LLM (or adaptive studio fallback) + FFmpeg DSP to master every voice track into `audio/mastered/<scene>.wav` and re-mix `output/master-audio.wav`.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectDir: { type: 'string', description: 'Video project directory.' },
+        sceneIds: { type: 'array', items: { type: 'string' }, description: 'Optional subset of scene IDs to master (defaults to all scenes with WAVs).' },
+        useLlm: { type: 'boolean', description: 'Consult configured AI LLM for acoustic mastering EQ/compression/reverb specs (default true).' },
+        remixMasterAudio: { type: 'boolean', description: 'Re-mix mastered vocals + SFX + ducked BGM into output/master-audio.wav (default true).' },
+      },
+      required: ['projectDir'],
+      additionalProperties: false,
+    },
+    output: { schema: { type: 'object', additionalProperties: true } },
+    timeoutMs: 180_000,
+    isConcurrencySafe: () => false,
+    async execute(args) {
+      const report = await masterVoiceTracks({
+        projectDir: args.projectDir,
+        sceneIds: args.sceneIds,
+        useLlm: args.useLlm !== false,
+      })
+      if (args.remixMasterAudio !== false) {
+        const assets = readAssets(args.projectDir)
+        await mixVideoAudio({ projectDir: args.projectDir, script: report.script, assetsManifest: assets })
+        syncRemotionPublicAssets(args.projectDir, report.script)
+      }
+      return report
+    },
+  })
+
+  ctx.tools.register({
     name: 'ai_create_video',
     description:
-      'Use the configured LLM coding model + local IndexTTS-2 voices to author bespoke Remotion TSX or HyperFrames HTML code, custom DSP BGM/SFX, run TypeScript & lint auto-repair (up to 3 rounds), and render + QA the final MP4.',
+      'Use the configured LLM coding model + local IndexTTS-2.5 voices + AI post-TTS voice mastering to author bespoke Remotion TSX or HyperFrames HTML code, custom DSP BGM/SFX, run TypeScript & lint auto-repair (up to 3 rounds), and render + QA the final MP4.',
     parameters: {
       type: 'object',
       properties: {

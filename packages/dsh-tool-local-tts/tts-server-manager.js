@@ -1,10 +1,10 @@
 /**
- * Manages the persistent IndexTTS-2 HTTP server (`scripts/tts-server.py`).
- * The 6GB model is loaded once (~60s) and then every sentence only costs inference time.
+ * Manages the persistent IndexTTS-2.5 / IndexTTS-2 HTTP server (`scripts/tts-server.py`).
+ * The model is loaded once (~15-60s) and then every sentence only costs fast GPU inference time.
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, openSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, openSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { loadEnv, REPO_ROOT, resolveEnvPath } from '@dsh-video/shared'
 
 let startingPromise = null
@@ -28,17 +28,45 @@ export async function getTtsServerHealth(timeoutMs = 2500) {
   }
 }
 
+function collectPythonPathDirs(pythonExe) {
+  const pyDir = dirname(pythonExe)
+  const pyRoot = existsSync(join(pyDir, 'python.exe')) ? pyDir : dirname(pyDir)
+  const dirs = [
+    pyDir,
+    pyRoot,
+    join(pyRoot, 'Scripts'),
+    join(pyRoot, 'Lib', 'site-packages', 'torch', 'lib'),
+    join(pyRoot, 'Library', 'bin'),
+  ]
+  const pyvenvCfg = join(pyRoot, 'pyvenv.cfg')
+  if (existsSync(pyvenvCfg)) {
+    try {
+      const m = /^home\s*=\s*(.+)$/im.exec(readFileSync(pyvenvCfg, 'utf8'))
+      if (m && m[1]) {
+        const baseHome = m[1].trim()
+        dirs.push(
+          baseHome,
+          join(baseHome, 'Scripts'),
+          join(baseHome, 'Lib', 'site-packages', 'torch', 'lib'),
+          join(baseHome, 'Library', 'bin'),
+        )
+      }
+    } catch {}
+  }
+  return dirs.filter(Boolean)
+}
+
 function spawnServer() {
   const root = resolveEnvPath('INDEXTTS_ROOT', '')
   const python = resolveEnvPath('INDEXTTS_PYTHON', '')
   if (!root || !existsSync(root) || !python || !existsSync(python)) {
-    throw new Error('未配置 INDEXTTS_ROOT / INDEXTTS_PYTHON，无法启动本地 IndexTTS-2 服务（请检查 .env）。')
+    throw new Error('未配置 INDEXTTS_ROOT / INDEXTTS_PYTHON，无法启动本地 IndexTTS-2.5 服务（请检查 .env）。')
   }
   const port = new URL(endpoint()).port || '9880'
-  const pyDir = join(python, '..')
   const logDir = join(REPO_ROOT, '.tmp')
   mkdirSync(logDir, { recursive: true })
   const logFd = openSync(join(logDir, 'tts-server.log'), 'a')
+  const pyPaths = collectPythonPathDirs(python)
   const env = {
     ...process.env,
     PYTHONIOENCODING: 'utf-8',
@@ -49,13 +77,7 @@ function spawnServer() {
     TRANSFORMERS_CACHE: join(root, 'tf_download'),
     GRADIO_TEMP_DIR: join(REPO_ROOT, '.tmp', 'gradio'),
     XFORMERS_FORCE_DISABLE_TRITON: '1',
-    PATH: [
-      pyDir,
-      join(pyDir, 'Scripts'),
-      join(pyDir, 'Lib', 'site-packages', 'torch', 'lib'),
-      join(pyDir, 'Library', 'bin'),
-      process.env.PATH || '',
-    ].join(';'),
+    PATH: [...pyPaths, process.env.PATH || ''].join(';'),
   }
   const child = spawn(python, ['-s', join(REPO_ROOT, 'scripts', 'tts-server.py'), '--root', root, '--port', String(port)], {
     cwd: root,
@@ -69,7 +91,7 @@ function spawnServer() {
 }
 
 /**
- * Ensure the IndexTTS-2 server is running and its model is loaded.
+ * Ensure the IndexTTS-2.5 / IndexTTS-2 server is running and its model is loaded.
  */
 export async function ensureTtsServer({ waitMs = 300_000, onWait } = {}) {
   const h = await getTtsServerHealth()
@@ -82,10 +104,10 @@ export async function ensureTtsServer({ waitMs = 300_000, onWait } = {}) {
         await new Promise((r) => setTimeout(r, 3000))
         const cur = await getTtsServerHealth()
         if (cur.reachable && cur.ready) return cur
-        if (cur.reachable && cur.error) throw new Error(`IndexTTS-2 加载失败: ${cur.error}`)
+        if (cur.reachable && cur.error) throw new Error(`IndexTTS-2.5 加载失败: ${cur.error}`)
         onWait?.(Math.round((deadline - Date.now()) / 1000))
       }
-      throw new Error('等待 IndexTTS-2 模型加载超时（详见 .tmp/tts-server.log）')
+      throw new Error('等待 IndexTTS-2.5 模型加载超时（详见 .tmp/tts-server.log）')
     })().finally(() => {
       startingPromise = null
     })

@@ -1,8 +1,8 @@
 /**
  * DSH Video Workbench — Cinema-Grade Theme-Adaptive Studio (`dsh-web-video-workbench`)
  * Dual-Track Creation:
- *   Track A: 0-Token Local Draft & IndexTTS-2 Voice Practice
- *   Track B: Model-Agnostic LLM Coding (Remotion TSX / HyperFrames HTML + DSP Audio + 3-Round Auto-Repair + FFmpeg QA)
+ *   Track A: 0-Token Local Draft & IndexTTS-2.5 Voice Practice
+ *   Track B: DSH-Synced / 4-Protocol Model-Agnostic LLM Coding + Post-TTS AI Voice Mastering + Remotion / HyperFrames HTML + FFmpeg QA
  * Theme Support: Auto (Sync DSH Host / OS), Cinema Dark (Black-Gold Viewfinder), Editorial Light (Warm Archival Studio)
  * Plain ES Module (React.createElement, no JSX build step required).
  */
@@ -32,6 +32,7 @@ window.__ModuleLoader__.load({
       'match_scene_voices',
       'get_llm_config',
       'configure_llm_model',
+      'ai_master_voice',
       'ai_create_video',
       'ai_refine_scene',
       'video_qa',
@@ -463,10 +464,12 @@ window.__ModuleLoader__.load({
       const [availableEmotions, setAvailableEmotions] = useState(['平静', '高兴', '激动', '深沉', '温暖'])
       const [ttsStatus, setTtsStatus] = useState({ reachable: false, ready: false })
 
-      // Model-Agnostic LLM Config
+      // Model-Agnostic LLM Config (Default: follow-dsh; Supports all 4 wire protocols)
       const [llmConfig, setLlmConfig] = useState(null)
       const [showLlmModal, setShowLlmModal] = useState(false)
       const [llmForm, setLlmForm] = useState({
+        mode: 'follow-dsh',
+        dshProviderId: 'active',
         provider: 'custom',
         format: 'auto',
         baseUrl: '',
@@ -600,10 +603,12 @@ window.__ModuleLoader__.load({
         if (!cfg) return
         setLlmConfig(cfg)
         setLlmForm({
+          mode: cfg.mode === 'custom' ? 'custom' : 'follow-dsh',
+          dshProviderId: cfg.dshProviderId || 'active',
           provider: cfg.provider || 'custom',
           format: cfg.format || 'auto',
           baseUrl: cfg.baseUrl || '',
-          apiKey: cfg.hasApiKey ? 'KEEP_EXISTING' : '',
+          apiKey: cfg.mode === 'custom' && cfg.hasApiKey ? 'KEEP_EXISTING' : '',
           model: cfg.model || '',
           maxRepairRounds: Number(cfg.maxRepairRounds) || 3,
         })
@@ -945,11 +950,37 @@ window.__ModuleLoader__.load({
         const tpl = llmConfig?.templates?.find((t) => t.id === providerId)
         setLlmForm((prev) => ({
           ...prev,
+          mode: 'custom',
           provider: providerId,
           format: tpl?.defaultFormat || 'auto',
           baseUrl: tpl?.defaultBaseUrl !== undefined && (prev.baseUrl === '' || prev.provider !== providerId) ? tpl.defaultBaseUrl : prev.baseUrl,
           model: prev.provider !== providerId && tpl?.suggestedModels?.[0] ? tpl.suggestedModels[0] : prev.model,
         }))
+        setLlmTestResult(null)
+      }
+
+      const handleSelectDshProvider = (provId) => {
+        if (provId === 'active') {
+          const defProv = llmConfig?.dshClient?.providers?.find((p) => p.id === llmConfig?.dshClient?.defaultProviderId)
+          setLlmForm((prev) => ({
+            ...prev,
+            mode: 'follow-dsh',
+            dshProviderId: 'active',
+            format: 'auto',
+            model: '',
+            baseUrl: defProv?.baseURL || '',
+          }))
+        } else {
+          const picked = llmConfig?.dshClient?.providers?.find((p) => p.id === provId)
+          setLlmForm((prev) => ({
+            ...prev,
+            mode: 'follow-dsh',
+            dshProviderId: provId,
+            format: picked?.api || 'auto',
+            baseUrl: picked?.baseURL || '',
+            model: picked?.models?.[0]?.id || '',
+          }))
+        }
         setLlmTestResult(null)
       }
 
@@ -1257,6 +1288,47 @@ window.__ModuleLoader__.load({
           setCodeFiles(data.files || [])
           setSelectedCodePath((data.files || [])[0]?.path || '')
           setShowCodeDrawer(true)
+        }
+      }
+
+      const handleAiMasterVoice = async (sceneId = '') => {
+        if (!activeProjectDir) return
+        setBusyProgress(12)
+        setBusyLabel(
+          sceneId
+            ? `正在对分镜 ${sceneId} 执行配音后 AI 大模型声学修音...`
+            : '正在对全片配音执行 AI 大模型声学修音 (LUFS / EQ / 齿音 / 混音)...',
+        )
+        try {
+          const res = await connFetch('/api/video-workbench/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              async: true,
+              action: 'ai-master-voice',
+              projectDir: activeProjectDir,
+              sceneIds: sceneId ? [sceneId] : [],
+              useLlm: true,
+            }),
+          })
+          const initData = await res.json()
+          if (!initData.ok) {
+            notify(`AI 修音失败: ${initData.error}`, 'error')
+            return
+          }
+          const finalData = initData.jobId ? await pollBackgroundJob(initData.jobId) : initData
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          const rpt = finalData.report
+          notify(
+            `配音修音完成 (${rpt?.mode === 'ai-llm' ? `大模型 ${rpt.model}` : '自适应母带'} · 处理 ${rpt?.scenesCount || 0} 幕并重混母带)`,
+            'success',
+          )
+        } catch (err) {
+          notify(`AI 修音失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+          setBusyProgress(0)
         }
       }
 
@@ -1651,13 +1723,19 @@ window.__ModuleLoader__.load({
             'div',
             { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
             h('span', { style: { width: '7px', height: '7px', borderRadius: '50%', background: ttsStatus.ready ? T.accentGreen : '#F59E0B' } }),
-            h('span', null, `本地音色库: ${voiceCatalog.length} 个音色`),
+            h('span', null, `IndexTTS-2.5 音色库: ${voiceCatalog.length} 个`),
           ),
           h(
             'div',
             { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
             h('span', { style: { width: '7px', height: '7px', borderRadius: '50%', background: llmConfig?.configured ? T.accentBlue : T.textMuted } }),
-            h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, llmConfig?.configured ? `大模型: ${llmConfig.model}` : '大模型: 待点击右上角配置'),
+            h(
+              'span',
+              { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+              llmConfig?.configured
+                ? `${llmConfig.mode === 'follow-dsh' ? 'DSH 默认' : '自定义'}: ${llmConfig.model}`
+                : '大模型: 待设置',
+            ),
           ),
         ),
       )
@@ -1771,7 +1849,9 @@ window.__ModuleLoader__.load({
               },
             },
             h(Icon, { name: 'cpu', size: 13 }),
-            llmConfig?.configured ? llmConfig.model : '配置大模型',
+            llmConfig?.configured
+              ? `${llmConfig.mode === 'follow-dsh' ? 'DSH · ' : ''}${llmConfig.model}`
+              : '配置大模型',
           ),
           // 3-Mode Theme Switcher
           h(
@@ -2274,7 +2354,7 @@ window.__ModuleLoader__.load({
                 h(
                   'div',
                   null,
-                  h('div', { style: { fontSize: '11px', color: T.textMuted } }, '本地配音音色库 (IndexTTS-2 零上传隐私配音)'),
+                  h('div', { style: { fontSize: '11px', color: T.textMuted } }, '本地配音音色库 (IndexTTS-2.5 零上传隐私配音)'),
                   h('div', { style: { fontSize: '12px', fontWeight: 700, marginTop: '2px' } }, selectedVoiceLabel),
                 ),
                 h(
@@ -2766,6 +2846,72 @@ window.__ModuleLoader__.load({
                     '重配本幕人声',
                   ),
                 ),
+                // Post-TTS AI Voice Mastering Card
+                h(
+                  'div',
+                  {
+                    style: {
+                      marginTop: '6px',
+                      padding: '11px',
+                      borderRadius: '10px',
+                      background: resolvedDark ? 'rgba(229, 169, 60, 0.08)' : 'rgba(180, 83, 9, 0.05)',
+                      border: `1px solid ${T.accentGoldBorder}`,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px',
+                    },
+                  },
+                  h(
+                    'div',
+                    { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                    h('span', { style: { fontSize: '11.5px', fontWeight: 800, color: T.accentGold } }, '🎚 配音后 AI 大模型声学修音'),
+                    selectedScene.voiceMastering?.applied
+                      ? h(
+                          'span',
+                          { style: { fontSize: '10px', fontFamily: 'Consolas, monospace', color: T.accentGreen } },
+                          `${Number(selectedScene.voiceMastering.beforeLufs || -20).toFixed(1)}→${Number(selectedScene.voiceMastering.afterLufs || -15.5).toFixed(1)} LUFS`,
+                        )
+                      : h('span', { style: { fontSize: '10px', color: T.textMuted } }, '干声待精修'),
+                  ),
+                  selectedScene.voiceMastering?.applied
+                    ? h(
+                        'div',
+                        { style: { fontSize: '10.5px', color: T.textSecondary, lineHeight: 1.45 } },
+                        selectedScene.voiceMastering.eqSummary,
+                        selectedScene.voiceMastering.rationale
+                          ? h('div', { style: { color: T.textMuted, marginTop: '3px' } }, selectedScene.voiceMastering.rationale)
+                          : null,
+                      )
+                    : h(
+                        'div',
+                        { style: { fontSize: '10.5px', color: T.textSecondary, lineHeight: 1.45 } },
+                        'IndexTTS-2.5 合成后由 AI 大模型分析响度/齿音/动态，通过 48kHz 均衡与压限母带提亮人声。',
+                      ),
+                  h(
+                    'div',
+                    { style: { display: 'flex', gap: '6px' } },
+                    h(
+                      'button',
+                      {
+                        className: 'dsh-vw-btn',
+                        disabled: Boolean(busyLabel),
+                        onClick: () => handleAiMasterVoice(selectedScene.id),
+                        style: { ...ghostBtnStyle, flex: 1, justifyContent: 'center', fontSize: '11px', padding: '5px 8px' },
+                      },
+                      '✨ AI 修音本幕',
+                    ),
+                    h(
+                      'button',
+                      {
+                        className: 'dsh-vw-btn',
+                        disabled: Boolean(busyLabel),
+                        onClick: () => handleAiMasterVoice(''),
+                        style: { ...blueBtnStyle, flex: 1.2, justifyContent: 'center', fontSize: '11px', padding: '5px 8px' },
+                      },
+                      '🎛 全片 AI 修音混音',
+                    ),
+                  ),
+                ),
               )
             : null,
         ),
@@ -2956,6 +3102,15 @@ window.__ModuleLoader__.load({
         : null
 
       const activeTemplate = llmConfig?.templates?.find((t) => t.id === llmForm.provider)
+      const dshClient = llmConfig?.dshClient || { available: false, providers: [] }
+      const dshActiveProv = dshClient.providers?.find((p) => p.id === (llmForm.dshProviderId === 'active' ? dshClient.defaultProviderId : llmForm.dshProviderId)) || null
+      const protocolOptions = llmConfig?.protocols || [
+        { id: 'openai-completions', label: 'OpenAI 兼容 Chat · /v1/chat/completions' },
+        { id: 'anthropic-messages', label: 'Anthropic Messages · /v1/messages' },
+        { id: 'openai-responses', label: 'OpenAI Responses · /v1/responses' },
+        { id: 'gemini-native', label: 'Gemini 原生 · /v1beta/models' },
+      ]
+
       const llmModal = showLlmModal
         ? h(
             'div',
@@ -2964,117 +3119,284 @@ window.__ModuleLoader__.load({
               'div',
               {
                 className: 'dsh-vw-scroll',
-                style: { ...panelStyle, width: '620px', maxWidth: '100%', maxHeight: '88vh', overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px' },
+                style: { ...panelStyle, width: '680px', maxWidth: '100%', maxHeight: '88vh', overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px' },
                 onClick: (ev) => ev.stopPropagation(),
               },
               h(
                 'div',
                 { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('h3', { style: { margin: 0, fontSize: '17px', fontWeight: 800 } }, '🤖 接入任意 AI 大模型（模型无关架构）'),
+                h('h3', { style: { margin: 0, fontSize: '17px', fontWeight: 800 } }, '🤖 多模型与四协议设置（默认跟随 DSH 客户端）'),
                 h('button', { onClick: () => setShowLlmModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 17 })),
               ),
-              h('p', { style: { margin: 0, fontSize: '12px', color: T.textSecondary, lineHeight: 1.55 } }, '支持 Claude Opus/Sonnet、DeepSeek、OpenAI、Gemini、OpenRouter、Ollama 或任意第三方中转接口。AI 大模型负责编写动态视觉源码、分镜脚本与编曲参数；配音则始终调用您本机的 IndexTTS-2 零成本音色库。'),
+              h(
+                'p',
+                { style: { margin: 0, fontSize: '12px', color: T.textSecondary, lineHeight: 1.55 } },
+                '默认自动同步 DSH 客户端当前使用的模型与网关凭据；您也可随时在插件内独立切换其它模型或中转，完整支持 OpenAI Chat、Anthropic Messages、OpenAI Responses、Gemini 原生 四种协议。配音则始终由本地 IndexTTS-2.5 合成并支持大模型修音。',
+              ),
+              // 2-Way Source Selector: Follow DSH Client vs Custom Override
               h(
                 'div',
-                { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
-                (llmConfig?.templates || []).map((tpl) => {
-                  const on = llmForm.provider === tpl.id
-                  return h(
-                    'button',
-                    {
-                      key: tpl.id,
-                      className: 'dsh-vw-btn',
-                      onClick: () => handleProviderTemplateChange(tpl.id),
-                      style: {
-                        ...ghostBtnStyle,
-                        padding: '5px 10px',
-                        fontSize: '11px',
-                        background: on ? T.accentBlueBg : T.bgElevated,
-                        borderColor: on ? T.accentBlueBorder : T.borderSubtle,
-                        color: on ? T.accentBlue : T.textSecondary,
-                      },
+                { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
+                h(
+                  'button',
+                  {
+                    className: 'dsh-vw-btn',
+                    onClick: () => {
+                      setLlmForm((p) => ({ ...p, mode: 'follow-dsh' }))
+                      setLlmTestResult(null)
                     },
-                    tpl.id === 'custom' ? '自由填写中转/定制' : tpl.label.split(' ')[0],
-                  )
-                }),
-              ),
-              h(
-                'div',
-                { style: { display: 'grid', gridTemplateColumns: '1fr 160px', gap: '10px' } },
-                h(
-                  'div',
-                  null,
-                  h('label', { style: { fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' } }, 'API 接口地址 (Base URL)'),
-                  h('input', {
-                    value: llmForm.baseUrl,
-                    onChange: (ev) => setLlmForm((p) => ({ ...p, baseUrl: ev.target.value })),
-                    placeholder: 'https://api.anthropic.com 或 任意兼容中转 URL',
-                    style: inputStyle,
-                  }),
-                ),
-                h(
-                  'div',
-                  null,
-                  h('label', { style: { fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' } }, '接口协议格式'),
-                  h(
-                    'select',
-                    {
-                      value: llmForm.format,
-                      onChange: (ev) => setLlmForm((p) => ({ ...p, format: ev.target.value })),
-                      style: inputStyle,
+                    style: {
+                      ...ghostBtnStyle,
+                      justifyContent: 'center',
+                      padding: '10px',
+                      background: llmForm.mode !== 'custom' ? T.accentBlueBg : T.bgElevated,
+                      borderColor: llmForm.mode !== 'custom' ? T.accentBlueBorder : T.borderSubtle,
+                      color: llmForm.mode !== 'custom' ? T.accentBlue : T.textSecondary,
+                      fontWeight: llmForm.mode !== 'custom' ? 800 : 500,
                     },
-                    h('option', { value: 'auto' }, 'Auto 自动识别'),
-                    h('option', { value: 'openai' }, 'OpenAI 兼容'),
-                    h('option', { value: 'anthropic' }, 'Anthropic Claude'),
-                  ),
-                ),
-              ),
-              h(
-                'div',
-                { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } },
-                h(
-                  'div',
-                  null,
-                  h('label', { style: { fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' } }, `API Key ${llmConfig?.hasApiKey ? `(已存: ${llmConfig.maskedApiKey})` : ''}`),
-                  h('input', {
-                    type: 'password',
-                    value: llmForm.apiKey,
-                    onChange: (ev) => setLlmForm((p) => ({ ...p, apiKey: ev.target.value })),
-                    placeholder: llmConfig?.hasApiKey ? '留空即保留原密钥' : 'sk-...',
-                    style: inputStyle,
-                  }),
+                  },
+                  '🔄 跟随 DSH 客户端配置（默认）',
                 ),
                 h(
-                  'div',
-                  null,
-                  h('label', { style: { fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' } }, '模型名称 ID（可自由填写任意模型）'),
-                  h('input', {
-                    value: llmForm.model,
-                    onChange: (ev) => setLlmForm((p) => ({ ...p, model: ev.target.value })),
-                    placeholder: '例如 claude-opus-5-5 / deepseek-chat',
-                    style: inputStyle,
-                  }),
+                  'button',
+                  {
+                    className: 'dsh-vw-btn',
+                    onClick: () => {
+                      setLlmForm((p) => ({ ...p, mode: 'custom' }))
+                      setLlmTestResult(null)
+                    },
+                    style: {
+                      ...ghostBtnStyle,
+                      justifyContent: 'center',
+                      padding: '10px',
+                      background: llmForm.mode === 'custom' ? T.accentGoldBg : T.bgElevated,
+                      borderColor: llmForm.mode === 'custom' ? T.accentGoldBorder : T.borderSubtle,
+                      color: llmForm.mode === 'custom' ? T.accentGold : T.textSecondary,
+                      fontWeight: llmForm.mode === 'custom' ? 800 : 500,
+                    },
+                  },
+                  '🛠 插件独立自定义配置',
                 ),
               ),
-              // Suggested or fetched model chips
-              (activeTemplate?.suggestedModels?.length || llmTestResult?.availableModels?.length)
+              llmForm.mode !== 'custom'
                 ? h(
                     'div',
-                    { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
-                    (llmTestResult?.availableModels?.length ? llmTestResult.availableModels.slice(0, 12) : activeTemplate?.suggestedModels || []).map((m) =>
+                    { style: { display: 'flex', flexDirection: 'column', gap: '12px', padding: '14px', borderRadius: '12px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}` } },
+                    dshClient.available
+                      ? h(
+                          React.Fragment,
+                          null,
+                          h(
+                            'div',
+                            { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' } },
+                            h('span', { style: { fontWeight: 700, color: T.textPrimary } }, `已读取 DSH Profile (${dshClient.profile}) 客户端渠道`),
+                            h('span', { style: { fontSize: '11px', fontFamily: 'Consolas, monospace', color: T.accentBlue } }, `默认: ${dshClient.defaultProviderId || '-'} / ${dshClient.defaultModelId || '-'}`),
+                          ),
+                          h(
+                            'div',
+                            { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
+                            h(
+                              'button',
+                              {
+                                className: 'dsh-vw-btn',
+                                onClick: () => handleSelectDshProvider('active'),
+                                style: {
+                                  ...ghostBtnStyle,
+                                  padding: '5px 10px',
+                                  fontSize: '11px',
+                                  background: llmForm.dshProviderId === 'active' ? T.accentBlueBg : T.bgPanel,
+                                  borderColor: llmForm.dshProviderId === 'active' ? T.accentBlueBorder : T.borderSubtle,
+                                  color: llmForm.dshProviderId === 'active' ? T.accentBlue : T.textPrimary,
+                                },
+                              },
+                              '✨ 实时跟随 DSH 当前默认',
+                            ),
+                            (dshClient.providers || []).map((prov) => {
+                              const on = llmForm.dshProviderId === prov.id
+                              return h(
+                                'button',
+                                {
+                                  key: prov.id,
+                                  className: 'dsh-vw-btn',
+                                  onClick: () => handleSelectDshProvider(prov.id),
+                                  style: {
+                                    ...ghostBtnStyle,
+                                    padding: '5px 10px',
+                                    fontSize: '11px',
+                                    background: on ? T.accentBlueBg : T.bgPanel,
+                                    borderColor: on ? T.accentBlueBorder : T.borderSubtle,
+                                    color: on ? T.accentBlue : T.textSecondary,
+                                  },
+                                },
+                                `${prov.displayName || prov.id} · ${prov.hasApiKey ? '密钥已存' : '无密钥'}`,
+                              )
+                            }),
+                          ),
+                          dshActiveProv
+                            ? h(
+                                'div',
+                                { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '2px' } },
+                                h(
+                                  'div',
+                                  null,
+                                  h('label', { style: { fontSize: '11px', color: T.textMuted, display: 'block', marginBottom: '4px' } }, '接口协议（可单独覆盖 4 种协议）'),
+                                  h(
+                                    'select',
+                                    {
+                                      value: llmForm.format,
+                                      onChange: (ev) => setLlmForm((p) => ({ ...p, format: ev.target.value })),
+                                      style: inputStyle,
+                                    },
+                                    h('option', { value: 'auto' }, `跟随 DSH 配置 (${dshActiveProv.api})`),
+                                    protocolOptions.map((po) => h('option', { key: po.id, value: po.id }, po.label)),
+                                  ),
+                                ),
+                                h(
+                                  'div',
+                                  null,
+                                  h('label', { style: { fontSize: '11px', color: T.textMuted, display: 'block', marginBottom: '4px' } }, '选用模型 ID（留空则跟随 DSH 默认）'),
+                                  h('input', {
+                                    value: llmForm.model,
+                                    onChange: (ev) => setLlmForm((p) => ({ ...p, model: ev.target.value })),
+                                    placeholder: dshClient.defaultModelId || dshActiveProv.models?.[0]?.id || '跟随 DSH 默认模型',
+                                    style: inputStyle,
+                                  }),
+                                ),
+                              )
+                            : null,
+                          dshActiveProv?.models?.length
+                            ? h(
+                                'div',
+                                { style: { display: 'flex', flexWrap: 'wrap', gap: '5px' } },
+                                dshActiveProv.models.slice(0, 14).map((m) => {
+                                  const on = (llmForm.model || dshClient.defaultModelId) === m.id
+                                  return h(
+                                    'button',
+                                    {
+                                      key: m.id,
+                                      className: 'dsh-vw-btn',
+                                      onClick: () => setLlmForm((p) => ({ ...p, model: m.id })),
+                                      style: {
+                                        ...ghostBtnStyle,
+                                        padding: '3px 8px',
+                                        fontSize: '11px',
+                                        fontFamily: 'Consolas, monospace',
+                                        background: on ? T.accentGoldBg : 'transparent',
+                                        borderColor: on ? T.accentGoldBorder : T.borderSubtle,
+                                        color: on ? T.accentGold : T.textSecondary,
+                                      },
+                                    },
+                                    m.id,
+                                  )
+                                }),
+                              )
+                            : null,
+                        )
+                      : h('div', { style: { fontSize: '12px', color: T.textSecondary } }, '未检测到本机 DSH 客户端配置目录 (~/.dsh)，请切换到右侧「插件独立自定义配置」。'),
+                  )
+                : h(
+                    React.Fragment,
+                    null,
+                    h(
+                      'div',
+                      { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
+                      (llmConfig?.templates || []).map((tpl) => {
+                        const on = llmForm.provider === tpl.id
+                        return h(
+                          'button',
+                          {
+                            key: tpl.id,
+                            className: 'dsh-vw-btn',
+                            onClick: () => handleProviderTemplateChange(tpl.id),
+                            style: {
+                              ...ghostBtnStyle,
+                              padding: '5px 10px',
+                              fontSize: '11px',
+                              background: on ? T.accentBlueBg : T.bgElevated,
+                              borderColor: on ? T.accentBlueBorder : T.borderSubtle,
+                              color: on ? T.accentBlue : T.textSecondary,
+                            },
+                          },
+                          tpl.id === 'custom' ? '自由填写中转/定制' : tpl.label.split(' ')[0],
+                        )
+                      }),
+                    ),
+                    h(
+                      'div',
+                      { style: { display: 'grid', gridTemplateColumns: '1fr 240px', gap: '10px' } },
                       h(
-                        'button',
-                        {
-                          key: m,
-                          className: 'dsh-vw-btn',
-                          onClick: () => setLlmForm((p) => ({ ...p, model: m })),
-                          style: { ...ghostBtnStyle, padding: '3px 8px', fontSize: '11px', fontFamily: 'Consolas, monospace' },
-                        },
-                        m,
+                        'div',
+                        null,
+                        h('label', { style: { fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' } }, 'API 接口地址 (Base URL)'),
+                        h('input', {
+                          value: llmForm.baseUrl,
+                          onChange: (ev) => setLlmForm((p) => ({ ...p, baseUrl: ev.target.value })),
+                          placeholder: 'https://api.openai.com/v1 或 任意中转 URL',
+                          style: inputStyle,
+                        }),
+                      ),
+                      h(
+                        'div',
+                        null,
+                        h('label', { style: { fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' } }, '接口协议格式 (4 种协议)'),
+                        h(
+                          'select',
+                          {
+                            value: llmForm.format,
+                            onChange: (ev) => setLlmForm((p) => ({ ...p, format: ev.target.value })),
+                            style: inputStyle,
+                          },
+                          h('option', { value: 'auto' }, 'Auto 自动识别'),
+                          protocolOptions.map((po) => h('option', { key: po.id, value: po.id }, po.label)),
+                        ),
                       ),
                     ),
-                  )
-                : null,
+                    h(
+                      'div',
+                      { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } },
+                      h(
+                        'div',
+                        null,
+                        h('label', { style: { fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' } }, `API Key ${llmConfig?.mode === 'custom' && llmConfig?.hasApiKey ? `(已存: ${llmConfig.maskedApiKey})` : ''}`),
+                        h('input', {
+                          type: 'password',
+                          value: llmForm.apiKey,
+                          onChange: (ev) => setLlmForm((p) => ({ ...p, apiKey: ev.target.value })),
+                          placeholder: llmConfig?.mode === 'custom' && llmConfig?.hasApiKey ? '留空即保留原密钥' : 'sk-...',
+                          style: inputStyle,
+                        }),
+                      ),
+                      h(
+                        'div',
+                        null,
+                        h('label', { style: { fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' } }, '模型名称 ID（可自由填写任意模型）'),
+                        h('input', {
+                          value: llmForm.model,
+                          onChange: (ev) => setLlmForm((p) => ({ ...p, model: ev.target.value })),
+                          placeholder: '例如 claude-opus-5-5 / gpt-6.1-sol / gemini-2.5-pro',
+                          style: inputStyle,
+                        }),
+                      ),
+                    ),
+                    (activeTemplate?.suggestedModels?.length || llmTestResult?.availableModels?.length)
+                      ? h(
+                          'div',
+                          { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
+                          (llmTestResult?.availableModels?.length ? llmTestResult.availableModels.slice(0, 12) : activeTemplate?.suggestedModels || []).map((m) =>
+                            h(
+                              'button',
+                              {
+                                key: m,
+                                className: 'dsh-vw-btn',
+                                onClick: () => setLlmForm((p) => ({ ...p, model: m })),
+                                style: { ...ghostBtnStyle, padding: '3px 8px', fontSize: '11px', fontFamily: 'Consolas, monospace' },
+                              },
+                              m,
+                            ),
+                          ),
+                        )
+                      : null,
+                  ),
               h(
                 'div',
                 { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' } },

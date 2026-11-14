@@ -165,8 +165,8 @@ def try_http_tts(endpoint: str, payload: dict, output_path: str, timeout: float 
     return False
 
 
-def run_indextts_direct(indextts_root: str, ref_audio: str, emo_audio: str, text: str, emotion: str, output_path: str):
-    """Invoke IndexTTS-2 compiled `cy_app` engine directly (matching `_r27_voice/voice/workers/indextts_worker.py`)."""
+def run_indextts_direct(indextts_root: str, ref_audio: str, emo_audio: str, text: str, emotion: str, output_path: str, lang: str = "", duration_factor: float = 1.0):
+    """Invoke IndexTTS-2.5 (`indextts.infer_v2_5`) or legacy IndexTTS-2 (`cy_app`) directly."""
     if not indextts_root or not os.path.isdir(indextts_root):
         raise RuntimeError(f"INDEXTTS_ROOT not found: {indextts_root}")
 
@@ -184,32 +184,62 @@ def run_indextts_direct(indextts_root: str, ref_audio: str, emo_audio: str, text
         staged_ref = stage_ascii_path(ref_audio, "spk") if ref_audio else ""
         staged_emo = stage_ascii_path(emo_audio, "emo") if emo_audio else ""
 
-        import cy_app  # type: ignore
+        infer_v25 = os.path.join(indextts_root, "indextts", "infer_v2_5.py")
+        cfg_yaml = os.path.join(indextts_root, "checkpoints", "config.yaml")
+        if os.path.isfile(infer_v25) and os.path.isfile(cfg_yaml):
+            from indextts.infer_v2_5 import IndexTTS2  # type: ignore
 
-        tts = getattr(cy_app, "tts", None)
-        if tts is None:
-            raise RuntimeError("cy_app.tts instance not available")
+            want_qwen_emo = os.path.isdir(os.path.join(indextts_root, "checkpoints", "qwen0.6bemo4-merge"))
+            tts = IndexTTS2(
+                cfg_path=cfg_yaml,
+                model_dir=os.path.join(indextts_root, "checkpoints"),
+                use_bf16=True,
+                use_qwen_emo=want_qwen_emo,
+            )
+            infer_kwargs = {
+                "spk_audio_prompt": staged_ref or ref_audio,
+                "text": text,
+                "output_path": staged_out,
+                "lang": (lang or "ZH").upper(),
+                "duration_factor": max(0.5, min(2.0, float(duration_factor or 1.0))),
+                "verbose": False,
+            }
+            if staged_emo and os.path.exists(staged_emo):
+                infer_kwargs["emo_audio_prompt"] = staged_emo
+                infer_kwargs["emo_alpha"] = 0.75
+            elif emotion and emotion != "平静" and want_qwen_emo:
+                infer_kwargs["use_emo_text"] = True
+                infer_kwargs["emo_text"] = emotion
+            tts.infer(**infer_kwargs)
+            provider_name = "indextts25-direct"
+        else:
+            import cy_app  # type: ignore
 
-        infer_kwargs = {
-            "spk_audio_prompt": staged_ref or ref_audio,
-            "text": text,
-            "output_path": staged_out,
-            "verbose": False,
-        }
-        if staged_emo and os.path.exists(staged_emo):
-            infer_kwargs["emo_audio_prompt"] = staged_emo
-            infer_kwargs["emo_alpha"] = 0.75
-        elif emotion and emotion != "平静":
-            infer_kwargs["use_emo_text"] = True
-            infer_kwargs["emo_text"] = emotion
+            tts = getattr(cy_app, "tts", None)
+            if tts is None:
+                raise RuntimeError("cy_app.tts instance not available")
 
-        tts.infer(**infer_kwargs)
+            infer_kwargs = {
+                "spk_audio_prompt": staged_ref or ref_audio,
+                "text": text,
+                "output_path": staged_out,
+                "verbose": False,
+            }
+            if staged_emo and os.path.exists(staged_emo):
+                infer_kwargs["emo_audio_prompt"] = staged_emo
+                infer_kwargs["emo_alpha"] = 0.75
+            elif emotion and emotion != "平静":
+                infer_kwargs["use_emo_text"] = True
+                infer_kwargs["emo_text"] = emotion
+            tts.infer(**infer_kwargs)
+            provider_name = "indextts2-cy_app"
+
         if not os.path.exists(staged_out) or os.path.getsize(staged_out) < 100:
-            raise RuntimeError("cy_app.tts.infer did not produce a valid WAV file")
+            raise RuntimeError("IndexTTS infer did not produce a valid WAV file")
 
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         shutil.move(staged_out, output_path)
-        return {"ok": True, "provider": "indextts2-cy_app", "outputPath": os.path.abspath(output_path)}
+        return {"ok": True, "provider": provider_name, "outputPath": os.path.abspath(output_path)}
     finally:
         os.chdir(orig_cwd)
         for p in (staged_ref, staged_emo, staged_out):
@@ -222,10 +252,12 @@ def run_indextts_direct(indextts_root: str, ref_audio: str, emo_audio: str, text
 
 def main():
     parser = argparse.ArgumentParser(description="DSH Video Workbench Local TTS Worker Bridge")
-    parser.add_argument("--engine", default="indextts2", choices=["indextts2", "gptvoice", "auto", "fallback"])
+    parser.add_argument("--engine", default="indextts25", choices=["indextts25", "indextts2", "gptvoice", "auto", "fallback"])
     parser.add_argument("--text", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--emotion", default="平静")
+    parser.add_argument("--lang", default="")
+    parser.add_argument("--duration-factor", default="1.0")
     parser.add_argument("--voice-id", default="auto")
     parser.add_argument("--ref-audio", default="")
     parser.add_argument("--emo-audio", default="")
@@ -251,14 +283,16 @@ def main():
     staged_emo = stage_ascii_path(args.emo_audio, "emo") if args.emo_audio else ""
 
     try:
-        # 1. Try HTTP endpoint first (non-blocking fast path if IndexTTS-2 / GPT-SoVITS server is running)
+        # 1. Try HTTP endpoint first (non-blocking fast path if IndexTTS-2.5 / GPT-SoVITS server is running)
         if args.endpoint:
             payload = {
                 "text": args.text,
-                "text_lang": "zh",
+                "text_lang": (args.lang or "zh").lower(),
+                "lang": args.lang or "",
+                "duration_factor": float(args.duration_factor or 1.0),
                 "ref_audio_path": staged_ref or args.ref_audio,
                 "prompt_text": args.prompt_text,
-                "prompt_lang": "zh",
+                "prompt_lang": (args.lang or "zh").lower(),
                 "emotion": args.emotion,
                 "spk_audio_prompt": staged_ref or args.ref_audio,
                 "emo_audio_prompt": staged_emo or args.emo_audio,
@@ -274,7 +308,7 @@ def main():
                 return
 
         # 2. Optional heavy direct Python inference if explicitly requested
-        if args.allow_direct_python and args.engine in ("indextts2", "auto") and args.engine_root:
+        if args.allow_direct_python and args.engine in ("indextts25", "indextts2", "auto") and args.engine_root:
             try:
                 res = run_indextts_direct(
                     args.engine_root,
@@ -283,6 +317,8 @@ def main():
                     args.text,
                     args.emotion,
                     out_abs,
+                    args.lang,
+                    float(args.duration_factor or 1.0),
                 )
                 print(json.dumps(res, ensure_ascii=False))
                 return
@@ -298,7 +334,7 @@ def main():
             print(json.dumps(res, ensure_ascii=False))
             return
         raise RuntimeError(
-            "本地 TTS 引擎不可用：IndexTTS-2 常驻服务未就绪（请稍候模型加载完成或检查 INDEXTTS_ROOT/INDEXTTS_PYTHON）。"
+            "本地 TTS 引擎不可用：IndexTTS-2.5 常驻服务未就绪（请稍候模型加载完成或检查 INDEXTTS_ROOT/INDEXTTS_PYTHON）。"
         )
     finally:
         for p in (staged_ref, staged_emo):

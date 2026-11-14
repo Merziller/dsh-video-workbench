@@ -24,8 +24,8 @@ import {
 const VOICE_FILENAME_PRESETS = {
   '女主播': {
     id: 'indextts-female-anchor',
-    name: '知性女主播 (IndexTTS-2)',
-    category: 'IndexTTS-2 内置',
+    name: '知性女主播 (IndexTTS-2.5)',
+    category: 'IndexTTS-2.5 内置',
     ageGroup: 'adult',
     gender: 'female',
     tags: ['女主播', '新闻', '科技', '商业', '科普', '清晰', '现代', '产品'],
@@ -34,8 +34,8 @@ const VOICE_FILENAME_PRESETS = {
   },
   '无底噪': {
     id: 'indextts-clean-studio',
-    name: '纯净无底噪旁白 (IndexTTS-2)',
-    category: 'IndexTTS-2 内置',
+    name: '纯净无底噪旁白 (IndexTTS-2.5)',
+    category: 'IndexTTS-2.5 内置',
     ageGroup: 'adult',
     gender: 'neutral',
     tags: ['无底噪', '旁白', '教程', '通用', '演示', '客观', '技术'],
@@ -44,8 +44,8 @@ const VOICE_FILENAME_PRESETS = {
   },
   '苏瑶': {
     id: 'indextts-suyao',
-    name: '苏瑶·温婉叙事女声 (IndexTTS-2)',
-    category: 'IndexTTS-2 内置',
+    name: '苏瑶·温婉叙事女声 (IndexTTS-2.5)',
+    category: 'IndexTTS-2.5 内置',
     ageGroup: 'youth',
     gender: 'female',
     tags: ['苏瑶', '温婉', '故事', '人文', '治愈', '情感', '动漫', '文学'],
@@ -54,8 +54,8 @@ const VOICE_FILENAME_PRESETS = {
   },
   '评书': {
     id: 'indextts-pingshu',
-    name: '传统评书·激昂说书人 (IndexTTS-2)',
-    category: 'IndexTTS-2 内置',
+    name: '传统评书·激昂说书人 (IndexTTS-2.5)',
+    category: 'IndexTTS-2.5 内置',
     ageGroup: 'middle-aged',
     gender: 'male',
     tags: ['评书', '历史', '悬疑', '故事', '激昂', '国风', '传奇', '开场'],
@@ -125,7 +125,7 @@ export function inferVoiceMetadataFromPath(filePath, categoryHint = '') {
 
   // 1. Category determination
   let category = parentName || '本地音色'
-  if (category === 'voices') category = 'IndexTTS-2 内置'
+  if (category === 'voices') category = 'IndexTTS-2.5 内置'
 
   // 2. Gender inference
   let gender = 'neutral'
@@ -235,21 +235,30 @@ function expandEnvPlaceholders(str) {
 }
 
 /**
- * Discover emotion reference WAV files from INDEXTTS_ROOT/情感参考 if available.
+ * Discover emotion reference WAV files from INDEXTTS_ROOT/情感参考 and EXTRA_VOICE_SCAN_DIRS.
  */
 export function discoverEmotionReferences() {
   loadEnv()
-  const idxRoot = resolveEnvPath('INDEXTTS_ROOT', '')
   const emoMap = {}
-  if (!idxRoot || !existsSync(idxRoot)) return emoMap
-
-  const emoDir = join(idxRoot, '情感参考')
-  if (existsSync(emoDir) && statSync(emoDir).isDirectory()) {
+  const candidateDirs = []
+  const idxRoot = resolveEnvPath('INDEXTTS_ROOT', '')
+  if (idxRoot && existsSync(join(idxRoot, '情感参考'))) {
+    candidateDirs.push(join(idxRoot, '情感参考'))
+  }
+  const extraRaw = process.env.EXTRA_VOICE_SCAN_DIRS || ''
+  for (const part of extraRaw.split(';').map((s) => s.trim()).filter(Boolean)) {
+    const abs = isAbsolute(part) ? part : resolve(REPO_ROOT, part)
+    if (existsSync(abs) && (basename(abs).includes('情感') || existsSync(join(abs, '平静.wav')))) {
+      candidateDirs.push(abs)
+    }
+  }
+  for (const emoDir of candidateDirs) {
+    if (!existsSync(emoDir) || !statSync(emoDir).isDirectory()) continue
     for (const entry of readdirSync(emoDir)) {
       const ext = extname(entry).toLowerCase()
       if (['.wav', '.mp3', '.flac'].includes(ext)) {
         const label = basename(entry, ext)
-        emoMap[label] = join(emoDir, entry)
+        if (!emoMap[label]) emoMap[label] = join(emoDir, entry)
       }
     }
   }
@@ -327,7 +336,7 @@ function scanDirectoryRecursive(dir, registerEntry, depth = 0, maxDepth = 4) {
               name: isMale ? `纪录片沉稳男声 (${k})` : `叙事温婉女声 (${k})`,
               category: '纪录片与旁白',
               ageGroup: 'adult',
-              engine: 'indextts2',
+              engine: 'indextts25',
               gender: isMale ? 'male' : 'female',
               tags: isMale
                 ? ['纪录片', '沉稳', '浑厚', '历史', '文化', '宣传片', '大气', '男声']
@@ -413,7 +422,7 @@ export function getVoiceCatalog() {
     try {
       const parsed = JSON.parse(readFileSync(examplePath, 'utf8'))
       for (const v of parsed.voices || []) {
-        registerEntry({ ...v, category: v.category || 'IndexTTS-2 内置' })
+        registerEntry({ ...v, category: v.category || 'IndexTTS-2.5 内置' })
       }
     } catch {}
   }
@@ -510,7 +519,7 @@ export async function importVoicePack(options = {}) {
     name,
     category = '',
     gender = '',
-    engine = 'indextts2',
+    engine = 'indextts25',
     tags = [],
     emotions = ['平静', '高兴'],
     roles = ['narrator'],

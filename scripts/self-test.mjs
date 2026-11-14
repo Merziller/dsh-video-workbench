@@ -149,6 +149,9 @@ async function runSelfTest() {
     'generate_sfx_bgm',
     'plan_video_from_assets',
     'produce_video',
+    'ai_create_video',
+    'ai_master_voice',
+    'configure_llm_model',
     'list_voices',
     'import_voice_pack',
     'match_scene_voices',
@@ -234,9 +237,12 @@ async function runSelfTest() {
   })
   matchAllScenesInScript(tmpHtmlProj, { voiceId: 'auto' })
 
-  // 5. Real IndexTTS-2 Persistent Server Synthesis + ffprobe Duration + Multi-Track Audio Mix
-  console.log(`[5/8] Ensuring persistent IndexTTS-2 HTTP server for REAL speech synthesis...`)
-  await ensureTtsServer({ waitMs: 300_000 })
+  // 5. Real IndexTTS-2.5 Persistent Server Synthesis + ffprobe Duration + Multi-Track Audio Mix
+  console.log(`[5/8] Ensuring persistent IndexTTS-2.5 HTTP server for REAL speech synthesis...`)
+  const ttsHealth = await ensureTtsServer({ waitMs: 300_000 })
+  if (ttsHealth?.engine !== 'indextts25') {
+    throw new Error(`Expected IndexTTS-2.5 server engine 'indextts25', got: ${JSON.stringify(ttsHealth)}`)
+  }
   const reReadHtml = await import('../packages/shared/index.js').then((m) => m.readScriptJson(tmpHtmlProj))
   const twoScenes = reReadHtml.data.scenes.slice(0, 2)
   reReadHtml.data.scenes = twoScenes
@@ -413,13 +419,55 @@ async function runSelfTest() {
   scaffoldVideoProject(tmpAiProj, { title: 'LLM Auto-Repair Test', engine: 'remotion' })
 
   let llmCallCounter = 0
+  let brokenCodeEmitted = false
   const mockLlmFetch = async (url, init) => {
     llmCallCounter++
     const body = JSON.parse(init?.body || '{}')
+    const sysPrompt = String(body?.system || '')
     const userPrompt = String(body?.messages?.[body.messages.length - 1]?.content || '')
 
+    // Voice Mastering call (after TTS, before audio mix & codegen)
+    if (sysPrompt.includes('声学') || userPrompt.includes('integratedLufs') || userPrompt.includes('tracks')) {
+      const vmReply = JSON.stringify({
+        engineerSummary: 'Mock AI Studio Broadcast Vocal Master -14 LUFS',
+        globalPreset: 'broadcast-clean',
+        tracks: [
+          {
+            sceneId: 'scene-01',
+            preset: 'broadcast-clean',
+            hpfHz: 85,
+            presenceGainDb: 2.0,
+            deEssDb: -3.0,
+            compRatio: 3.0,
+            targetLufs: -14,
+            reverbWet: 0.04,
+            reason: 'Clear vocal presence',
+          },
+        ],
+      })
+      return new Response(JSON.stringify({ model: 'mock-opus', content: [{ type: 'text', text: vmReply }] }), { status: 200 })
+    }
+
+    // Initial Codegen call: deliberately emit invalid TSX (CSS transition + TypeScript error) to trigger auto-repair!
+    if ((userPrompt.includes('生成定制 Remotion TSX') || userPrompt.includes('生成定制 HTML')) && !brokenCodeEmitted) {
+      brokenCodeEmitted = true
+      const brokenTsx = `import React from 'react';
+import { AbsoluteFill, Audio, staticFile } from 'remotion';
+export const VideoComposition: React.FC = () => {
+  const broken: number = "bad_type_string";
+  return <AbsoluteFill style={{ transition: 'all 0.3s' }}><Audio src={staticFile('master-audio.wav')} />{broken}</AbsoluteFill>;
+};`
+      const brokenReply = JSON.stringify({
+        files: {
+          'src/theme.ts': `export const THEME = { accent: '#E5A93C' };`,
+          'src/VideoComposition.tsx': brokenTsx,
+        },
+      })
+      return new Response(JSON.stringify({ model: 'mock-opus', content: [{ type: 'text', text: brokenReply }] }), { status: 200 })
+    }
+
     // Call 1: Director Architect returning 9:16 portrait plan + custom audioSpec + synth_sfx
-    if (llmCallCounter === 1) {
+    if (!brokenCodeEmitted) {
       const directorReply = JSON.stringify({
         title: 'AI 编程测试短片',
         style: 'cinematic',
@@ -464,24 +512,7 @@ async function runSelfTest() {
       return new Response(JSON.stringify({ model: 'mock-opus', content: [{ type: 'text', text: directorReply }] }), { status: 200 })
     }
 
-    // Call 2: Deliberately emit invalid TSX (CSS transition + TypeScript error) to trigger auto-repair!
-    if (llmCallCounter === 2) {
-      const brokenTsx = `import React from 'react';
-import { AbsoluteFill, Audio, staticFile } from 'remotion';
-export const VideoComposition: React.FC = () => {
-  const broken: number = "bad_type_string";
-  return <AbsoluteFill style={{ transition: 'all 0.3s' }}><Audio src={staticFile('master-audio.wav')} />{broken}</AbsoluteFill>;
-};`
-      const brokenReply = JSON.stringify({
-        files: {
-          'src/theme.ts': `export const THEME = { accent: '#E5A93C' };`,
-          'src/VideoComposition.tsx': brokenTsx,
-        },
-      })
-      return new Response(JSON.stringify({ model: 'mock-opus', content: [{ type: 'text', text: brokenReply }] }), { status: 200 })
-    }
-
-    // Call 3: Receive exact tsc + lint diagnostics -> emit valid fixed TSX using shotcraft primitives!
+    // Auto-repair call: receive exact tsc + lint diagnostics -> emit valid fixed TSX using shotcraft primitives!
     if (!userPrompt.includes('transition') && !userPrompt.includes('TS2322') && !userPrompt.includes('number')) {
       throw new Error(`Auto-repair prompt missing compiler/lint diagnostics: ${userPrompt.slice(0, 200)}`)
     }
@@ -549,10 +580,193 @@ export const VideoComposition: React.FC = () => {
     throw new Error('Workbench /code API failed to list generated TSX files')
   }
   console.log(
-    `[9/10] Dimensions Auto-Detection + tsc --noEmit (${remTsc.skipped ? 'skipped' : '0 errors'}) + Mocked LLM 3-Round Self-Repair (repaired cleanly in ${aiPipeRes.buildLog.repairRoundsUsed} round) + Custom audioSpec/synth_sfx OK!`,
+    `[9/11] Dimensions Auto-Detection + tsc --noEmit (${remTsc.skipped ? 'skipped' : '0 errors'}) + Mocked LLM 3-Round Self-Repair (repaired cleanly in ${aiPipeRes.buildLog.repairRoundsUsed} round) + Custom audioSpec/synth_sfx OK!`,
   )
 
-  // 10. Re-scaffold clean starter demos + Open-Source Hygiene Scan
+  // 10. Follow-DSH Discovery + All 4 Wire Protocols + IndexTTS-2.5 Health + AI Voice Mastering
+  const { discoverDshClientConfig, callLlmChat, WIRE_PROTOCOLS } = await import(
+    '../packages/dsh-tool-media/llm-client.js'
+  )
+  const { masterVoiceTracks } = await import('../packages/dsh-tool-media/voice-master.js')
+  const { getTtsServerHealth } = await import('../packages/dsh-tool-local-tts/tts-server-manager.js')
+
+  const mockDshDir = join(REPO_ROOT, '.tmp', 'mock-dsh-home')
+  rmSync(mockDshDir, { recursive: true, force: true })
+  mkdirSync(join(mockDshDir, 'profiles', 'desktop'), { recursive: true })
+  mkdirSync(join(mockDshDir, 'storages', 'session_projcache', 'sessions'), { recursive: true })
+  writeFileSync(
+    join(mockDshDir, 'profiles', 'desktop', 'cordis.patch.yml'),
+    [
+      '- id: llm-pi-ai',
+      '  config:',
+      '    providers:',
+      '      mock_resp:',
+      '        displayName: MockResponses',
+      '        api: openai-responses',
+      '        baseURL: https://mock-gateway.invalid/v1',
+      '        apiKeyEnv: MOCK_RESP_KEY',
+      '        models:',
+      '          - id: gpt-6.1-sol',
+      '            name: GPT 6.1 Sol',
+      '- id: llm-deepseek',
+      '  config:',
+      '    baseURL: https://mock-ds.invalid/v1',
+      '    models:',
+      '      - id: deepseek-v4.1-flash',
+    ].join('\n'),
+    'utf8',
+  )
+  writeFileSync(
+    join(mockDshDir, '.credentials.yaml'),
+    'refs:\n  MOCK_RESP_KEY: sk-mock-secret-987654321\n',
+    'utf8',
+  )
+  writeFileSync(
+    join(mockDshDir, 'storages', 'session_projcache', 'sessions', 'session-1.json'),
+    JSON.stringify({
+      rows: { modelSelection: { val: { pending: { provider: 'mock_resp', model: 'gpt-6.1-sol' } } } },
+    }),
+    'utf8',
+  )
+  const dshDisc = discoverDshClientConfig(mockDshDir)
+  rmSync(mockDshDir, { recursive: true, force: true })
+  if (
+    !dshDisc.available ||
+    dshDisc.defaultProviderId !== 'mock_resp' ||
+    dshDisc.defaultProtocol !== 'openai-responses' ||
+    dshDisc.defaultModelId !== 'gpt-6.1-sol' ||
+    !dshDisc.providers[0]?.hasApiKey ||
+    JSON.stringify(dshDisc).includes('987654321')
+  ) {
+    throw new Error(`Follow-DSH discovery check failed: ${JSON.stringify(dshDisc)}`)
+  }
+
+  if (!Array.isArray(WIRE_PROTOCOLS) || WIRE_PROTOCOLS.length !== 4) {
+    throw new Error(`Expected 4 WIRE_PROTOCOLS, got ${JSON.stringify(WIRE_PROTOCOLS)}`)
+  }
+  const capturedCalls = []
+  const protoCases = [
+    {
+      format: 'openai-completions',
+      baseUrl: 'https://mock-openai.invalid/v1',
+      model: 'gpt-test',
+      expectUrl: 'https://mock-openai.invalid/v1/chat/completions',
+      expectAuthHeader: 'authorization',
+      replyPayload: { choices: [{ message: { content: 'ok-chat-comp' } }], usage: { total_tokens: 10 } },
+      expectText: 'ok-chat-comp',
+    },
+    {
+      format: 'anthropic-messages',
+      baseUrl: 'https://mock-anth.invalid',
+      model: 'claude-opus-5-5',
+      expectUrl: 'https://mock-anth.invalid/v1/messages',
+      expectAuthHeader: 'x-api-key',
+      replyPayload: { content: [{ type: 'text', text: 'ok-anth-msg' }], usage: { output_tokens: 8 } },
+      expectText: 'ok-anth-msg',
+    },
+    {
+      format: 'openai-responses',
+      baseUrl: 'https://mock-resp.invalid/v1',
+      model: 'gpt-6.1-sol',
+      expectUrl: 'https://mock-resp.invalid/v1/responses',
+      expectAuthHeader: 'authorization',
+      replyPayload: { output_text: 'ok-oai-resp', usage: { total_tokens: 12 } },
+      expectText: 'ok-oai-resp',
+    },
+    {
+      format: 'gemini-native',
+      baseUrl: 'https://mock-gem.invalid',
+      model: 'gemini-2.5-pro',
+      expectUrl: 'https://mock-gem.invalid/v1beta/models/gemini-2.5-pro:generateContent',
+      expectAuthHeader: 'x-goog-api-key',
+      replyPayload: { candidates: [{ content: { parts: [{ text: 'ok-gem-nat' }] } }] },
+      expectText: 'ok-gem-nat',
+    },
+  ]
+  for (const tc of protoCases) {
+    const res = await callLlmChat({
+      system: 'sys',
+      messages: [{ role: 'user', content: 'hello' }],
+      overrideConfig: {
+        mode: 'custom',
+        provider: 'custom',
+        format: tc.format,
+        baseUrl: tc.baseUrl,
+        apiKey: 'mock-proto-key',
+        model: tc.model,
+      },
+      fetchImpl: async (url, init) => {
+        capturedCalls.push({ format: tc.format, url, headers: init.headers })
+        const hdrLower = Object.fromEntries(
+          Object.entries(init.headers || {}).map(([k, v]) => [k.toLowerCase(), v]),
+        )
+        if (!hdrLower[tc.expectAuthHeader]) {
+          throw new Error(`Protocol ${tc.format} missing header ${tc.expectAuthHeader}`)
+        }
+        if (url !== tc.expectUrl) {
+          throw new Error(`Protocol ${tc.format} endpoint mismatch: ${url} !== ${tc.expectUrl}`)
+        }
+        return new Response(JSON.stringify(tc.replyPayload), { status: 200 })
+      },
+    })
+    if (res.text !== tc.expectText) {
+      throw new Error(`Protocol ${tc.format} text mismatch: ${res.text} !== ${tc.expectText}`)
+    }
+  }
+
+  const liveHealth = await getTtsServerHealth()
+  if (!liveHealth?.ok || liveHealth.engine !== 'indextts25' || liveHealth.version !== '2.5') {
+    throw new Error(`IndexTTS-2.5 health assertion failed: ${JSON.stringify(liveHealth)}`)
+  }
+  const vmDspRes = await masterVoiceTracks({ projectDir: tmpHtmlProj, useLlm: false })
+  if (!vmDspRes.ok || vmDspRes.scenesCount < 1 || !existsSync(join(tmpHtmlProj, 'output', 'voice_mastering_report.json'))) {
+    throw new Error(`Telemetry DSP voice mastering failed: ${JSON.stringify(vmDspRes)}`)
+  }
+  const vmLlmRes = await masterVoiceTracks({
+    projectDir: tmpHtmlProj,
+    useLlm: true,
+    llmOverride: {
+      provider: 'anthropic',
+      format: 'anthropic-messages',
+      baseUrl: 'https://mock-anth.invalid',
+      apiKey: 'mock-vm-key',
+      model: 'mock-opus',
+    },
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                engineerSummary: 'Mock AI Broadcast Vocal Master -14 LUFS',
+                globalPreset: 'broadcast-clean',
+                tracks: twoScenes.map((sc) => ({
+                  sceneId: sc.id,
+                  preset: 'broadcast-clean',
+                  hpfHz: 85,
+                  presenceGainDb: 2.2,
+                  deEssDb: -3.0,
+                  compRatio: 3.0,
+                  targetLufs: -14,
+                  reverbWet: 0.04,
+                  reason: 'Clean clarity',
+                })),
+              }),
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+  })
+  if (!vmLlmRes.ok || !existsSync(join(tmpHtmlProj, 'audio', 'mastered', `${twoScenes[0].id}.wav`))) {
+    throw new Error(`AI LLM voice mastering failed: ${JSON.stringify(vmLlmRes)}`)
+  }
+  console.log(
+    `[10/11] Follow-DSH Discovery + All 4 Wire Protocols (${protoCases.map((c) => c.format).join(', ')}) + IndexTTS-2.5 v${liveHealth.version} + AI Voice Mastering (${vmLlmRes.scenesCount} tracks) OK!`,
+  )
+
+  // 11. Re-scaffold clean starter demos + Open-Source Hygiene Scan
   const demoDir = join(REPO_ROOT, 'examples', 'demo-html-project')
   const demoRemotionDir = join(REPO_ROOT, 'examples', 'demo-remotion-project')
   scaffoldVideoProject(demoDir, {
@@ -571,7 +785,7 @@ export const VideoComposition: React.FC = () => {
     throw new Error(`Hardcoded machine paths found in tracked files: ${violations.join(', ')}`)
   }
   console.log(
-    `[10/10] Starter Demos reset & 0 hardcoded personal paths/keys across all tracked files!`,
+    `[11/11] Starter Demos reset & 0 hardcoded personal paths/keys across all tracked files!`,
   )
   console.log('======================================================================')
 }

@@ -114,8 +114,13 @@ export async function mixVideoAudio({ projectDir, script, assetsManifest, output
   for (const scene of script.scenes || []) {
     const startSec = Number(scene.startSec || 0)
     const leadSec = Number.isFinite(Number(scene.voiceLeadSec)) ? Number(scene.voiceLeadSec) : 0.3
-    if (scene.audioFile) {
-      const absAudio = isAbsolute(scene.audioFile) ? scene.audioFile : resolve(absDir, scene.audioFile)
+    const chosenRelVoice =
+      scene.masteredAudioFile &&
+      existsSync(isAbsolute(scene.masteredAudioFile) ? scene.masteredAudioFile : resolve(absDir, scene.masteredAudioFile))
+        ? scene.masteredAudioFile
+        : scene.audioFile
+    if (chosenRelVoice) {
+      const absAudio = isAbsolute(chosenRelVoice) ? chosenRelVoice : resolve(absDir, chosenRelVoice)
       if (existsSync(absAudio)) {
         voiceEvents.push({ path: absAudio, delayMs: Math.max(0, Math.round((startSec + leadSec) * 1000)) })
       }
