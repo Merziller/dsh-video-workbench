@@ -175,6 +175,7 @@ async function main() {
   <div id="root"></div>
   <script type="module">
     import React from 'https://esm.sh/react@18.3.1';
+    import * as ReactDOM from 'https://esm.sh/react-dom@18.3.1';
     import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
 
     window.__DSH_STANDALONE__ = true;
@@ -183,6 +184,7 @@ async function main() {
       load: async ({ factory }) => {
         const plugin = await factory((mod) => {
           if (mod === 'react') return React;
+          if (mod === 'react-dom') return ReactDOM;
           return null;
         });
         const ctx = {

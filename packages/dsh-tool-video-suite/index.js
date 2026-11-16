@@ -519,6 +519,60 @@ export async function executeVideoSnapshot(args = {}) {
 }
 
 /**
+ * Extract fast per-scene keyframe JPEG thumbnails directly from rendered `output/final.mp4`
+ * so Step 3 storyboard cards & Warroom filmstrip always reflect the exact rendered pixels.
+ */
+export async function extractSceneThumbnails(projectDir, scriptInput = null, { force = false } = {}) {
+  const absDir = isAbsolute(projectDir || '.')
+    ? resolve(projectDir)
+    : resolve(REPO_ROOT, projectDir || '.')
+  const mp4Path = join(absDir, 'output', 'final.mp4')
+  if (!existsSync(mp4Path)) {
+    return { ok: false, reason: 'final.mp4 not rendered yet', thumbs: {} }
+  }
+  const script = scriptInput || readScriptJson(absDir).data
+  const scenes = Array.isArray(script?.scenes) ? script.scenes : []
+  const fps = Math.max(1, Number(script?.fps) || 30)
+  const thumbDir = join(absDir, 'output', 'scene-thumbs')
+  mkdirSync(thumbDir, { recursive: true })
+  const mp4Mtime = statSync(mp4Path).mtimeMs
+  const { ffmpeg } = resolveBinaries()
+  const thumbs = {}
+  let cursorSec = 0
+
+  for (let i = 0; i < scenes.length; i++) {
+    const sc = scenes[i] || {}
+    const sid = String(sc.id || `scene-${String(i + 1).padStart(2, '0')}`).replace(/[^a-zA-Z0-9._-]/g, '_')
+    const startSec = Number.isFinite(Number(sc.startFrame)) ? Number(sc.startFrame) / fps : cursorSec
+    const durSec = Math.max(0.4, Number(sc.durationSec) || (Number(sc.durationInFrames) ? Number(sc.durationInFrames) / fps : 3))
+    cursorSec = startSec + durSec
+    const sampleSec = Math.max(0.05, Number((startSec + Math.min(durSec * 0.48, 0.85)).toFixed(3)))
+    const outFile = join(thumbDir, `${sid}.jpg`)
+    const rel = `output/scene-thumbs/${sid}.jpg`
+
+    let fresh = false
+    if (!force && existsSync(outFile)) {
+      try {
+        if (statSync(outFile).mtimeMs >= mp4Mtime && statSync(outFile).size > 200) fresh = true
+      } catch {}
+    }
+    if (!fresh) {
+      try {
+        await runCommandRedirected(
+          ffmpeg,
+          ['-y', '-ss', String(sampleSec), '-i', mp4Path, '-frames:v', '1', '-vf', 'scale=320:-2', '-q:v', '5', outFile],
+          { timeoutMs: 12_000 },
+        )
+      } catch {}
+    }
+    if (existsSync(outFile)) {
+      thumbs[sid] = rel
+    }
+  }
+  return { ok: true, thumbs }
+}
+
+/**
  * 3. `video_render` — True full-FPS Dual-Engine Render + Multi-Track Audio Mix (Voice + SFX + Ducked BGM) -> H.264 MP4
  */
 export async function executeVideoRender(args = {}) {
@@ -631,6 +685,11 @@ export async function executeVideoRender(args = {}) {
   })
 
   const fileSizeBytes = statSync(outPath).size
+  if (outPath === join(targetDir, 'output', 'final.mp4')) {
+    try {
+      await extractSceneThumbnails(targetDir, script, { force: true })
+    } catch {}
+  }
   return {
     ok: true,
     engine,

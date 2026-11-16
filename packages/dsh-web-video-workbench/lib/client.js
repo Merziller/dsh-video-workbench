@@ -9,6 +9,14 @@ window.__ModuleLoader__?.load({
   factory: (resolveModule) => {
     const ReactMod = resolveModule('react')
     const React = ReactMod?.default || ReactMod
+    const ReactDomMod = (() => {
+      try {
+        return resolveModule('react-dom')
+      } catch {
+        return null
+      }
+    })()
+    const createPortal = ReactDomMod?.createPortal || ReactDomMod?.default?.createPortal || null
     const { useState, useEffect, useRef, useMemo, useCallback } = React
     const h = React.createElement
 
@@ -480,32 +488,145 @@ window.__ModuleLoader__?.load({
     function CinemaSelect({ value, options = [], onChange, placeholder = '请选择', T, style = {}, menuWidth = 'auto', compact = false, disabled = false }) {
       const [open, setOpen] = useState(false)
       const [dropUp, setDropUp] = useState(false)
+      const [menuRect, setMenuRect] = useState(null)
       const rootRef = useRef(null)
+      const menuRef = useRef(null)
 
       useEffect(() => {
         if (!open) return undefined
-        const rect = rootRef.current?.getBoundingClientRect()
-        if (rect) {
-          const spaceBelow = window.innerHeight - rect.bottom
-          setDropUp(spaceBelow < 240 && rect.top > 240)
+        const syncRect = () => {
+          const rect = rootRef.current?.getBoundingClientRect()
+          if (!rect) return
+          const spaceBelow = Math.max(80, window.innerHeight - rect.bottom - 12)
+          const spaceAbove = Math.max(80, rect.top - 12)
+          const shouldFlip = spaceBelow < 220 && spaceAbove > spaceBelow
+          setDropUp(shouldFlip)
+          const maxH = Math.min(280, Math.max(120, Math.floor(shouldFlip ? spaceAbove : spaceBelow)))
+          const targetW = menuWidth === 'auto' ? Math.max(rect.width, 180) : menuWidth
+          const clampedLeft = Math.max(8, Math.min(rect.left, window.innerWidth - (typeof targetW === 'number' ? targetW : rect.width) - 8))
+          setMenuRect({
+            left: Math.round(clampedLeft),
+            minWidth: typeof targetW === 'number' ? Math.round(targetW) : targetW,
+            top: shouldFlip ? undefined : Math.round(rect.bottom + 6),
+            bottom: shouldFlip ? Math.round(window.innerHeight - rect.top + 6) : undefined,
+            maxHeight: maxH,
+          })
         }
+        syncRect()
         const onDocClick = (ev) => {
-          if (rootRef.current && !rootRef.current.contains(ev.target)) setOpen(false)
+          if (rootRef.current?.contains(ev.target) || menuRef.current?.contains(ev.target)) return
+          setOpen(false)
         }
         const onEsc = (ev) => {
           if (ev.key === 'Escape') setOpen(false)
         }
+        const onViewportMove = (ev) => {
+          if (menuRef.current && ev?.target instanceof Node && menuRef.current.contains(ev.target)) return
+          syncRect()
+        }
         document.addEventListener('mousedown', onDocClick)
         document.addEventListener('click', onDocClick)
         window.addEventListener('keydown', onEsc)
+        window.addEventListener('resize', syncRect)
+        window.addEventListener('scroll', onViewportMove, true)
         return () => {
           document.removeEventListener('mousedown', onDocClick)
           document.removeEventListener('click', onDocClick)
           window.removeEventListener('keydown', onEsc)
+          window.removeEventListener('resize', syncRect)
+          window.removeEventListener('scroll', onViewportMove, true)
         }
-      }, [open])
+      }, [open, menuWidth])
 
       const activeOpt = options.find((o) => String(o.value) === String(value))
+      const menuNode = open
+        ? h(
+            'div',
+            {
+              ref: menuRef,
+              className: 'dsh-vw-scroll dsh-vw-popover-in',
+              style: {
+                ...(createPortal && menuRect && typeof document !== 'undefined' && document.body
+                  ? {
+                      position: 'fixed',
+                      left: `${menuRect.left}px`,
+                      ...(menuRect.top !== undefined ? { top: `${menuRect.top}px` } : { bottom: `${menuRect.bottom}px` }),
+                      width: typeof menuRect.minWidth === 'number' ? `${menuRect.minWidth}px` : menuRect.minWidth,
+                      maxWidth: 'calc(100vw - 16px)',
+                      maxHeight: `${menuRect.maxHeight}px`,
+                      zIndex: 9999,
+                    }
+                  : {
+                      position: 'absolute',
+                      left: 0,
+                      right: menuWidth === 'auto' ? 0 : 'auto',
+                      minWidth: menuWidth === 'auto' ? '100%' : menuWidth,
+                      ...(dropUp ? { bottom: 'calc(100% + 6px)' } : { top: 'calc(100% + 6px)' }),
+                      maxHeight: '280px',
+                      zIndex: 4200,
+                    }),
+                overflowY: 'auto',
+                overscrollBehavior: 'contain',
+                padding: '6px',
+                borderRadius: '12px',
+                background: T.bgPanelSolid,
+                border: `1px solid ${T.borderStrong}`,
+                boxShadow: T.shadowPopover,
+                backdropFilter: 'blur(22px)',
+                boxSizing: 'border-box',
+                fontFamily: '"Noto Sans SC", system-ui, sans-serif',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '3px',
+              },
+            },
+            options.length === 0
+              ? h('div', { style: { padding: '12px', fontSize: '13px', color: T.textMuted, textAlign: 'center' } }, '暂无可选项')
+              : options.map((opt) => {
+                  const isSel = String(opt.value) === String(value)
+                  return h(
+                    'button',
+                    {
+                      key: String(opt.value),
+                      type: 'button',
+                      onClick: () => {
+                        setOpen(false)
+                        onChange(opt.value)
+                      },
+                      style: {
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '10px',
+                        padding: '9px 11px',
+                        borderRadius: '9px',
+                        border: 'none',
+                        background: isSel ? T.accentBlueBg : 'transparent',
+                        color: isSel ? T.accentBlue : T.textPrimary,
+                        fontSize: '13.5px',
+                        fontWeight: isSel ? 700 : 500,
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                      },
+                    },
+                    h(
+                      'div',
+                      { style: { minWidth: 0, flex: 1 } },
+                      h(
+                        'div',
+                        { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '7px' } },
+                        opt.badgeColor ? h('span', { style: { width: '9px', height: '9px', borderRadius: '50%', background: opt.badgeColor, flexShrink: 0 } }) : null,
+                        opt.label,
+                      ),
+                      opt.sub ? h('div', { style: { fontSize: '12px', color: T.textMuted, marginTop: '2px' } }, opt.sub) : null,
+                    ),
+                    isSel ? h(Icon, { name: 'check', size: 15, color: T.accentBlue }) : null,
+                  )
+                }),
+          )
+        : null
+
       return h(
         'div',
         { ref: rootRef, style: { position: 'relative', minWidth: 0, width: style.width || '100%', ...style } },
@@ -542,77 +663,7 @@ window.__ModuleLoader__?.load({
           ),
           h(Icon, { name: 'chevron-down', size: 15, color: open ? T.accentBlue : T.textMuted }),
         ),
-        open
-          ? h(
-              'div',
-              {
-                className: 'dsh-vw-scroll dsh-vw-popover-in',
-                style: {
-                  position: 'absolute',
-                  left: 0,
-                  right: menuWidth === 'auto' ? 0 : 'auto',
-                  minWidth: menuWidth === 'auto' ? '100%' : menuWidth,
-                  ...(dropUp ? { bottom: 'calc(100% + 6px)' } : { top: 'calc(100% + 6px)' }),
-                  maxHeight: '280px',
-                  overflowY: 'auto',
-                  padding: '6px',
-                  borderRadius: '12px',
-                  background: T.bgPanelSolid,
-                  border: `1px solid ${T.borderStrong}`,
-                  boxShadow: T.shadowPopover,
-                  backdropFilter: 'blur(22px)',
-                  zIndex: 4200,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '3px',
-                },
-              },
-              options.length === 0
-                ? h('div', { style: { padding: '12px', fontSize: '13px', color: T.textMuted, textAlign: 'center' } }, '暂无可选项')
-                : options.map((opt) => {
-                    const isSel = String(opt.value) === String(value)
-                    return h(
-                      'button',
-                      {
-                        key: String(opt.value),
-                        type: 'button',
-                        onClick: () => {
-                          setOpen(false)
-                          onChange(opt.value)
-                        },
-                        style: {
-                          width: '100%',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: '10px',
-                          padding: '9px 11px',
-                          borderRadius: '9px',
-                          border: 'none',
-                          background: isSel ? T.accentBlueBg : 'transparent',
-                          color: isSel ? T.accentBlue : T.textPrimary,
-                          fontSize: '13.5px',
-                          fontWeight: isSel ? 700 : 500,
-                          textAlign: 'left',
-                          cursor: 'pointer',
-                        },
-                      },
-                      h(
-                        'div',
-                        { style: { minWidth: 0, flex: 1 } },
-                        h(
-                          'div',
-                          { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '7px' } },
-                          opt.badgeColor ? h('span', { style: { width: '9px', height: '9px', borderRadius: '50%', background: opt.badgeColor, flexShrink: 0 } }) : null,
-                          opt.label,
-                        ),
-                        opt.sub ? h('div', { style: { fontSize: '12px', color: T.textMuted, marginTop: '2px' } }, opt.sub) : null,
-                      ),
-                      isSel ? h(Icon, { name: 'check', size: 15, color: T.accentBlue }) : null,
-                    )
-                  }),
-            )
-          : null,
+        menuNode ? (createPortal && typeof document !== 'undefined' && document.body ? createPortal(menuNode, document.body) : menuNode) : null,
       )
     }
 
@@ -894,7 +945,155 @@ window.__ModuleLoader__?.load({
     // =========================================================================
     // 5. MAIN APPLICATION
     // =========================================================================
-    function VideoWorkbenchApp({ ctx, isMainSlot = false }) {
+    let hostLayoutSvc = null
+    const hostLayoutListeners = new Set()
+    const notifyHostLayout = () => {
+      for (const cb of hostLayoutListeners) {
+        try {
+          cb()
+        } catch {}
+      }
+    }
+    const attachHostLayout = (layout) => {
+      if (!layout || hostLayoutSvc === layout) return
+      hostLayoutSvc = layout
+      notifyHostLayout()
+      try {
+        layout.panelInfo?.subscribe?.(notifyHostLayout)
+      } catch {}
+    }
+
+    function useWindowTitlebarRect() {
+      const [rect, setRect] = useState({ top: 4, height: 38 })
+      useEffect(() => {
+        if (typeof navigator === 'undefined') return undefined
+        const overlay = navigator.windowControlsOverlay
+        if (!overlay?.getTitlebarAreaRect) return undefined
+        const sync = () => {
+          try {
+            if (overlay.visible === false) return
+            const r = overlay.getTitlebarAreaRect()
+            if (r && Number.isFinite(r.height) && r.height > 12) {
+              setRect({ top: Number(r.top) || 0, height: Number(r.height) })
+            }
+          } catch {}
+        }
+        sync()
+        overlay.addEventListener?.('geometrychange', sync)
+        return () => overlay.removeEventListener?.('geometrychange', sync)
+      }, [])
+      return rect
+    }
+
+    function TopTitlebarSwitcherOverlay() {
+      const [, setTick] = useState(0)
+      const [darkMode, setDarkMode] = useState(() => detectDshThemeIsDark())
+      const titlebarRect = useWindowTitlebarRect()
+      useEffect(() => {
+        const listener = () => setTick((t) => t + 1)
+        hostLayoutListeners.add(listener)
+        return () => hostLayoutListeners.delete(listener)
+      }, [])
+      useEffect(() => {
+        const updateTheme = () => setDarkMode(detectDshThemeIsDark())
+        updateTheme()
+        const obs = new MutationObserver(updateTheme)
+        obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
+        if (document.body) obs.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
+        return () => obs.disconnect()
+      }, [])
+
+      if (!hostLayoutSvc || typeof hostLayoutSvc.selectPanel !== 'function') return null
+      const activePanelId = hostLayoutSvc.panelInfo?.getSnapshot?.()?.activePanelId
+      const inVideo = activePanelId === 'video-workbench'
+      const pillTop = Math.max(3, Math.round((titlebarRect.top || 0) + Math.max(0, (titlebarRect.height - 28) / 2)))
+      const bg = darkMode ? 'rgba(13, 18, 30, 0.90)' : 'rgba(255, 255, 255, 0.94)'
+      const border = darkMode ? '1px solid rgba(148, 163, 184, 0.28)' : '1px solid rgba(15, 23, 42, 0.14)'
+      const muted = darkMode ? '#CBD5E1' : '#475569'
+      const activeChatBg = darkMode ? 'rgba(34, 211, 238, 0.2)' : 'rgba(2, 132, 199, 0.14)'
+      const activeChatFg = darkMode ? '#22D3EE' : '#0369A1'
+      const activeVidBg = darkMode ? 'rgba(245, 185, 66, 0.22)' : 'rgba(217, 119, 6, 0.15)'
+      const activeVidFg = darkMode ? '#F5B942' : '#B45309'
+
+      return h(
+        'div',
+        {
+          'data-dsh-video-topbar-switcher': '1',
+          style: {
+            position: 'fixed',
+            top: `${pillTop}px`,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 4500,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '3px',
+            padding: '2px 4px',
+            height: '28px',
+            borderRadius: '999px',
+            background: bg,
+            border,
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.18)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            maxWidth: 'calc(100vw - 320px)',
+            WebkitAppRegion: 'no-drag',
+            appRegion: 'no-drag',
+            pointerEvents: 'auto',
+            fontFamily: '"Noto Sans SC", system-ui, sans-serif',
+          },
+        },
+        h(
+          'button',
+          {
+            type: 'button',
+            onClick: () => hostLayoutSvc.selectPanel(null),
+            style: {
+              padding: '3px 11px',
+              borderRadius: '999px',
+              border: 'none',
+              cursor: 'pointer',
+              background: !inVideo ? activeChatBg : 'transparent',
+              color: !inVideo ? activeChatFg : muted,
+              fontSize: '12px',
+              fontWeight: !inVideo ? 800 : 600,
+              whiteSpace: 'nowrap',
+              lineHeight: 1.2,
+            },
+          },
+          '💬 DeepSeek 对话',
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            onClick: () => hostLayoutSvc.selectPanel('video-workbench'),
+            style: {
+              padding: '3px 11px',
+              borderRadius: '999px',
+              border: 'none',
+              cursor: 'pointer',
+              background: inVideo ? activeVidBg : 'transparent',
+              color: inVideo ? activeVidFg : muted,
+              fontSize: '12px',
+              fontWeight: inVideo ? 800 : 600,
+              whiteSpace: 'nowrap',
+              lineHeight: 1.2,
+            },
+          },
+          '🎬 AI 视频工坊',
+        ),
+      )
+    }
+
+    function VideoWorkbenchApp({ ctx, isMainSlot = false, layoutService = null }) {
+      const [, setHostLayoutRev] = useState(0)
+      useEffect(() => {
+        const listener = () => setHostLayoutRev((r) => r + 1)
+        hostLayoutListeners.add(listener)
+        return () => hostLayoutListeners.delete(listener)
+      }, [])
+      const getHostLayout = () => layoutService || ctx?.layout || hostLayoutSvc
       const connFetch = useMemo(
         () =>
           typeof ctx?.connection?.fetch === 'function'
@@ -962,6 +1161,8 @@ window.__ModuleLoader__?.load({
       const [hasMp4, setHasMp4] = useState(false)
       const [hasSnapshot, setHasSnapshot] = useState(false)
       const [hasMasterAudio, setHasMasterAudio] = useState(false)
+      const [sceneThumbs, setSceneThumbs] = useState({})
+      const [step3MonitorSource, setStep3MonitorSource] = useState('html-draft') // 'final-video' | 'html-draft'
       const [qaReport, setQaReport] = useState(null)
       const [buildLog, setBuildLog] = useState(null)
       const [historyCount, setHistoryCount] = useState(0)
@@ -1137,12 +1338,16 @@ window.__ModuleLoader__?.load({
 
       // DOM & Stream Refs
       const initialLoadedRef = useRef(false)
+      const prevProjectDirRef = useRef('')
+      const thumbRequestedRef = useRef(new Set())
       const iframeRef = useRef(null)
+      const step3VideoRef = useRef(null)
       const stageAudioRef = useRef(null)
       const previewAudioRef = useRef(null)
       const fileInputRef = useRef(null)
       const folderInputRef = useRef(null)
       const bgmInputRef = useRef(null)
+      const teleImportRef = useRef(null)
       const cloneFileInputRef = useRef(null)
       const skinFileInputRef = useRef(null)
       const avatarBaseInputRef = useRef(null)
@@ -1325,6 +1530,8 @@ window.__ModuleLoader__?.load({
 
             if (data.activeProject) {
               const ap = data.activeProject
+              const isNewProjectSelection = prevProjectDirRef.current !== ap.projectDir
+              prevProjectDirRef.current = ap.projectDir
               setActiveProjectDir(ap.projectDir)
               setScript(ap.script)
               setProjectAssets(ap.assets || [])
@@ -1332,10 +1539,35 @@ window.__ModuleLoader__?.load({
               setHasMp4(Boolean(ap.hasMp4))
               setHasSnapshot(Boolean(ap.hasSnapshot))
               setHasMasterAudio(Boolean(ap.hasMasterAudio))
+              setSceneThumbs(ap.sceneThumbs || {})
               setQaReport(ap.qaReport || null)
               setBuildLog(ap.buildLog || null)
               setHistoryCount(Number(ap.historyCount) || 0)
               setScriptDirty(false)
+
+              const isRemotionAi = ap.script?.engine === 'remotion' && ap.script?.authoringMode === 'ai-coded'
+              if (isNewProjectSelection) {
+                setStep3MonitorSource(ap.hasMp4 && isRemotionAi ? 'final-video' : 'html-draft')
+              } else if (ap.hasMp4 && isRemotionAi && step3MonitorSource !== 'html-draft') {
+                setStep3MonitorSource('final-video')
+              }
+              if (
+                ap.hasMp4 &&
+                Object.keys(ap.sceneThumbs || {}).length === 0 &&
+                !thumbRequestedRef.current.has(ap.projectDir)
+              ) {
+                thumbRequestedRef.current.add(ap.projectDir)
+                connFetch('/api/video-workbench/action', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ projectDir: ap.projectDir, action: 'extract-scene-thumbs' }),
+                })
+                  .then((r) => r.json())
+                  .then((td) => {
+                    if (td?.ok && td.sceneThumbs) setSceneThumbs(td.sceneThumbs)
+                  })
+                  .catch(() => {})
+              }
 
               if (ap.script?.avatarClip) {
                 setAvatarCfg((prev) => ({
@@ -1353,24 +1585,24 @@ window.__ModuleLoader__?.load({
 
               setDirectorForm((prev) => ({
                 ...prev,
-                topic: ap.script?.topic || prev.topic || '',
-                style: UNIFIED_STYLES.some((s) => s.id === ap.script?.style) ? ap.script.style : prev.style || 'tech',
-                engine: ap.script?.engine || prev.engine || 'remotion',
-                creationMode: ap.script?.creationMode || prev.creationMode || 'ai-coded',
-                bgmMode: ap.script?.bgmMode || ap.script?.audioSpec?.bgmMode || prev.bgmMode || 'llm-coded',
-                narrationMode: ap.script?.narrationMode || prev.narrationMode || 'tts',
-                pacingMode: ap.script?.pacingMode || prev.pacingMode || 'auto',
-                targetPlatform: ap.script?.targetPlatform || prev.targetPlatform || 'universal',
-                aspectRatio: ap.script?.requestedAspectRatio || ap.script?.aspectRatio || prev.aspectRatio || 'auto',
-                quality: ap.script?.quality || prev.quality || '1080p',
+                topic: ap.script?.topic ?? (isNewProjectSelection ? ap.script?.goal || '' : prev.topic || ''),
+                style: UNIFIED_STYLES.some((s) => s.id === ap.script?.style) ? ap.script.style : isNewProjectSelection ? 'tech' : prev.style || 'tech',
+                engine: ap.script?.engine || (isNewProjectSelection ? 'remotion' : prev.engine || 'remotion'),
+                creationMode: ap.script?.creationMode || (isNewProjectSelection ? 'ai-coded' : prev.creationMode || 'ai-coded'),
+                bgmMode: ap.script?.bgmMode || ap.script?.audioSpec?.bgmMode || (isNewProjectSelection ? 'llm-coded' : prev.bgmMode || 'llm-coded'),
+                narrationMode: ap.script?.narrationMode || (isNewProjectSelection ? 'tts' : prev.narrationMode || 'tts'),
+                pacingMode: ap.script?.pacingMode || (isNewProjectSelection ? 'auto' : prev.pacingMode || 'auto'),
+                targetPlatform: ap.script?.targetPlatform || (isNewProjectSelection ? 'universal' : prev.targetPlatform || 'universal'),
+                aspectRatio: ap.script?.requestedAspectRatio || ap.script?.aspectRatio || (isNewProjectSelection ? 'auto' : prev.aspectRatio || 'auto'),
+                quality: ap.script?.quality || (isNewProjectSelection ? '1080p' : prev.quality || '1080p'),
                 customWidth: Number(ap.script?.width) || prev.customWidth || 1080,
                 customHeight: Number(ap.script?.height) || prev.customHeight || 1920,
                 aiBadge: ap.script?.aiBadge !== undefined ? Boolean(ap.script.aiBadge) : true,
                 aiBadgeEnabled: ap.script?.aiBadgeEnabled !== undefined ? Boolean(ap.script.aiBadgeEnabled) : (ap.script?.aiBadge !== false),
-                aiBadgePosition: ap.script?.aiBadgePosition || prev.aiBadgePosition || 'top-right',
-                aiBadgeText: ap.script?.aiBadgeText || prev.aiBadgeText || '',
-                fps: Number(ap.script?.fps) || prev.fps || 30,
-                voiceId: ap.script?.defaultVoiceId || prev.voiceId || 'auto',
+                aiBadgePosition: ap.script?.aiBadgePosition || (isNewProjectSelection ? 'top-right' : prev.aiBadgePosition || 'top-right'),
+                aiBadgeText: ap.script?.aiBadgeText || (isNewProjectSelection ? '' : prev.aiBadgeText || ''),
+                fps: Number(ap.script?.fps) || 30,
+                voiceId: ap.script?.defaultVoiceId || (isNewProjectSelection ? 'auto' : prev.voiceId || 'auto'),
               }))
 
               if (!initialLoadedRef.current) {
@@ -1427,7 +1659,7 @@ window.__ModuleLoader__?.load({
       }, [activeProjectDir, connFetch])
 
       const activeProjectTaskRuns = useMemo(
-        () => taskRuns.filter((r) => !activeProjectDir || !r.projectDir || r.projectDir === activeProjectDir),
+        () => taskRuns.filter((r) => activeProjectDir && r.projectDir === activeProjectDir),
         [taskRuns, activeProjectDir],
       )
 
@@ -1488,16 +1720,27 @@ window.__ModuleLoader__?.load({
         [connFetch],
       )
 
-      // Monitor Seek & Audio Sync
+      // Monitor Seek & Audio Sync (supports both Real Rendered MP4 Timeline and HTML5 Interactive Canvas)
+      const isRemotionAiCoded = Boolean(script?.engine === 'remotion' && script?.authoringMode === 'ai-coded')
+      const usingFinalVideoPreview = Boolean(hasMp4 && step3MonitorSource === 'final-video')
+
       const seekToFrame = useCallback(
         (frame, syncAudio = true) => {
           const fps = Number(script?.fps) || 30
           const total = Math.max(1, Number(script?.totalDurationInFrames) || 300)
           const clamped = Math.max(0, Math.min(total - 1, Math.floor(frame)))
           setCurrentFrame(clamped)
+          const targetSec = clamped / fps
+          if (usingFinalVideoPreview && step3VideoRef.current) {
+            try {
+              if (Math.abs((step3VideoRef.current.currentTime || 0) - targetSec) > 0.08) {
+                step3VideoRef.current.currentTime = targetSec
+              }
+            } catch {}
+            return
+          }
           if (syncAudio && stageAudioRef.current) {
             try {
-              const targetSec = clamped / fps
               if (Math.abs((stageAudioRef.current.currentTime || 0) - targetSec) > 0.12) {
                 stageAudioRef.current.currentTime = targetSec
               }
@@ -1513,14 +1756,27 @@ window.__ModuleLoader__?.load({
             }
           }
         },
-        [script],
+        [script, usingFinalVideoPreview],
       )
 
       useEffect(() => {
         const previewActive = (activeNav === 'studio' && studioStep === 3) || (activeNav === 'warroom' && warCenterTab === 'preview')
+        if (usingFinalVideoPreview && step3VideoRef.current && previewActive) {
+          try {
+            stageAudioRef.current?.pause()
+          } catch {}
+          const vid = step3VideoRef.current
+          if (isPlaying) {
+            vid.play().catch(() => setIsPlaying(false))
+          } else {
+            vid.pause()
+          }
+          return undefined
+        }
         if (!isPlaying || !previewActive) {
           try {
             stageAudioRef.current?.pause()
+            step3VideoRef.current?.pause()
           } catch {}
           return undefined
         }
@@ -1553,7 +1809,7 @@ window.__ModuleLoader__?.load({
         }
         rafId = requestAnimationFrame(tick)
         return () => cancelAnimationFrame(rafId)
-      }, [isPlaying, activeNav, studioStep, warCenterTab, script, hasMasterAudio, seekToFrame])
+      }, [isPlaying, activeNav, studioStep, warCenterTab, script, hasMasterAudio, usingFinalVideoPreview, seekToFrame])
 
       // Derived Values
       const scenes = useMemo(() => script?.scenes || [], [script])
@@ -2036,6 +2292,7 @@ window.__ModuleLoader__?.load({
               aiBadgePosition: directorForm.aiBadgePosition || 'top-right',
               aiBadgeText: directorForm.aiBadgeText || '',
               pacingMode: directorForm.pacingMode || 'auto',
+              narrationMode: directorForm.narrationMode || 'tts',
               bgmMode: directorForm.bgmMode,
               targetPlatform: directorForm.targetPlatform,
               fps: directorForm.fps,
@@ -2542,27 +2799,68 @@ window.__ModuleLoader__?.load({
       const handleStartWebcam = async () => {
         setCamError('')
         if (!navigator.mediaDevices?.getUserMedia) {
-          setCamError('当前环境不支持摄像头或麦克风访问 (MediaDevices 不可用)')
+          setCamError('当前内置窗口不支持直接调起摄像头 (MediaDevices 不可用)，请点击下方「复制浏览器地址」或「直接导入已录视频」')
           return
         }
+        let deviceHint = ''
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({
+          if (navigator.mediaDevices.enumerateDevices) {
+            const devs = await navigator.mediaDevices.enumerateDevices()
+            const cams = devs.filter((d) => d.kind === 'videoinput').length
+            const mics = devs.filter((d) => d.kind === 'audioinput').length
+            if (cams === 0 && mics === 0) deviceHint = '（未检测到任何可用摄像头或麦克风设备）'
+          }
+        } catch {}
+
+        const tryStream = async (constraints) => navigator.mediaDevices.getUserMedia(constraints)
+        let stream = null
+        let modeNote = ''
+        try {
+          stream = await tryStream({
             video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
             audio: { echoCancellation: true, noiseSuppression: true },
           })
-          camStreamRef.current = stream
-          setCamStreaming(true)
-          startCamAudioMeter(stream)
-          setTimeout(() => {
-            if (camVideoRef.current) {
-              camVideoRef.current.srcObject = stream
-              camVideoRef.current.play().catch(() => {})
+        } catch (errAll) {
+          // Retry relaxing resolution/facingMode first
+          try {
+            stream = await tryStream({ video: true, audio: true })
+          } catch {
+            // Try video-only if mic denied or absent
+            try {
+              stream = await tryStream({ video: true, audio: false })
+              modeNote = '⚠ 仅摄像头画面已开启（麦克风未获权限，录制后将搭配 AI 配音/克隆声纹）'
+            } catch {
+              // Try audio-only teleprompter mode if camera blocked/missing
+              try {
+                stream = await tryStream({ video: false, audio: true })
+                modeNote = '🎙 已切换为纯麦克风提词配音模式（摄像头被系统或客户端权限拦截）'
+              } catch (errFinal) {
+                const msg = errFinal?.message || errAll?.message || 'Permission denied'
+                const isDenied = /denied|permission|notallowed/i.test(`${errAll?.name} ${msg}`)
+                const humanErr = isDenied
+                  ? `摄像头与麦克风权限被拦截 (${msg})${deviceHint}：\n1) DeepSeek Harness 桌面端内置浏览框架可能未授予网页摄像头权限；\n2) 请检查 Windows「设置 → 隐私和安全性 → 相机/麦克风 → 允许桌面应用访问」；\n3) 也可直接点击下方在系统浏览器打开或直接上传本机视频！`
+                  : `无法开启摄像头 (${msg})${deviceHint}`
+                setCamError(humanErr)
+                notify(isDenied ? '摄像头被系统或 DSH 桌面端权限拦截，已提供浏览器直开与本地上传替代方案' : `摄像头打开失败: ${msg}`, 'error')
+                return
+              }
             }
-          }, 40)
-        } catch (err) {
-          setCamError(`无法开启摄像头: ${err.message}`)
-          notify(`摄像头打开失败: ${err.message}`, 'error')
+          }
         }
+
+        camStreamRef.current = stream
+        setCamStreaming(true)
+        if (modeNote) {
+          setCamError(modeNote)
+          notify(modeNote, 'info')
+        }
+        startCamAudioMeter(stream)
+        setTimeout(() => {
+          if (camVideoRef.current && stream.getVideoTracks().length > 0) {
+            camVideoRef.current.srcObject = stream
+            camVideoRef.current.play().catch(() => {})
+          }
+        }, 40)
       }
 
       const beginActualCamRecording = () => {
@@ -2874,7 +3172,13 @@ window.__ModuleLoader__?.load({
             })
           }, 1000)
         } catch (err) {
-          notify(`无法开启麦克风: ${err.message}`, 'error')
+          const isDenied = /denied|permission|notallowed/i.test(`${err?.name} ${err?.message}`)
+          notify(
+            isDenied
+              ? '麦克风权限被当前桌面端或 Windows 隐私拦截，请点下方「上传本地干声音频」或先检查 Windows 隐私→麦克风权限'
+              : `无法开启麦克风: ${err.message}`,
+            'error',
+          )
         }
       }
 
@@ -3275,6 +3579,17 @@ window.__ModuleLoader__?.load({
             ev.target.value = ''
           },
         }),
+        h('input', {
+          ref: teleImportRef,
+          type: 'file',
+          accept: 'video/*,audio/*,.mp4,.mov,.webm,.mkv,.wav,.mp3',
+          onChange: (ev) => {
+            if (ev.target.files?.length) {
+              handleUploadFiles(ev.target.files, camTargetRole || 'host_video')
+            }
+            ev.target.value = ''
+          },
+        }),
       )
 
       // =======================================================================
@@ -3297,43 +3612,51 @@ window.__ModuleLoader__?.load({
             zIndex: 40,
           },
         },
-        // Left: DSH Mode Capsule + Brand + Project Switcher Pill
+        // Left: DSH <-> Video Workbench Capsule Switcher + Project Switcher Pill
         h(
           'div',
           { style: { display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flexShrink: 0 } },
-          !isMainSlot
-            ? h(
-                'div',
-                {
-                  style: {
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    flexShrink: 0,
-                    padding: '3px',
-                    borderRadius: '999px',
-                    background: T.bgInput,
-                    border: `1px solid ${T.borderStrong}`,
-                  },
+          h(
+            'div',
+            {
+              style: {
+                display: 'inline-flex',
+                alignItems: 'center',
+                flexShrink: 0,
+                padding: '3px',
+                borderRadius: '999px',
+                background: T.bgInput,
+                border: `1px solid ${T.borderStrong}`,
+              },
+            },
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsh-vw-btn',
+                title: '返回 DeepSeek Harness 主对话界面',
+                onClick: () => {
+                  const hl = getHostLayout()
+                  if (isMainSlot && typeof hl?.selectPanel === 'function') {
+                    hl.selectPanel(null)
+                  } else if (!isMainSlot) {
+                    switchWorkbenchMode('chat')
+                  } else {
+                    notify('请点击顶部居中「💬 DeepSeek 对话」或左侧边栏返回 DeepSeek 对话', 'info')
+                  }
                 },
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dsh-vw-btn',
-                    onClick: () => switchWorkbenchMode('chat'),
-                    style: { padding: '5px 11px', borderRadius: '999px', border: 'none', background: 'transparent', color: T.textSecondary, fontSize: '12.5px', fontWeight: 600, whiteSpace: 'nowrap' },
-                  },
-                  'DeepSeek Harness',
-                ),
-                h(
-                  'span',
-                  {
-                    style: { padding: '5px 11px', borderRadius: '999px', background: T.accentGoldBg, color: T.accentGold, fontSize: '12.5px', fontWeight: 800, whiteSpace: 'nowrap' },
-                  },
-                  'HTML 视频',
-                ),
-              )
-            : null,
+                style: { padding: '5px 11px', borderRadius: '999px', border: 'none', background: 'transparent', color: T.textSecondary, fontSize: '12.5px', fontWeight: 700, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '5px' },
+              },
+              '← DeepSeek 对话',
+            ),
+            h(
+              'span',
+              {
+                style: { padding: '5px 11px', borderRadius: '999px', background: T.accentGoldBg, color: T.accentGold, fontSize: '12.5px', fontWeight: 800, whiteSpace: 'nowrap' },
+              },
+              '🎬 AI 视频工坊',
+            ),
+          ),
           h(
             'button',
             {
@@ -3629,7 +3952,8 @@ window.__ModuleLoader__?.load({
                 { style: { display: 'flex', gap: '14px', fontSize: '13px', color: T.textSecondary, fontFamily: 'Consolas, monospace', fontVariantNumeric: 'tabular-nums' } },
                 h('span', null, `画幅: ${curW}×${curH}`),
                 h('span', null, `分镜: ${scenes.length} 幕`),
-                currentTaskRun ? h('span', null, `耗时: ${Math.round(Number(currentTaskRun.elapsedMs || 0) / 1000)}s`) : null,
+                script?.totalDurationSec ? h('span', null, `片长: ${Number(script.totalDurationSec).toFixed(1)}s`) : null,
+                hasLiveTask && currentTaskRun ? h('span', { style: { color: T.accentBlue } }, `已运行: ${Math.round(Number(currentTaskRun.elapsedMs || 0) / 1000)}s`) : null,
               ),
             ),
             h(
@@ -3713,7 +4037,7 @@ window.__ModuleLoader__?.load({
                 ? h(
                     'div',
                     { style: { flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', minHeight: '310px' } },
-                    previewHtmlUrl
+                    previewHtmlUrl || usingFinalVideoPreview
                       ? h(
                           React.Fragment,
                           null,
@@ -3722,7 +4046,7 @@ window.__ModuleLoader__?.load({
                             { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
                             h(
                               'div',
-                              { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+                              { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
                               h(
                                 'button',
                                 {
@@ -3770,6 +4094,21 @@ window.__ModuleLoader__?.load({
                                 },
                                 '下一幕 ▶',
                               ),
+                              hasMp4
+                                ? h(SegmentedPills, {
+                                    value: step3MonitorSource,
+                                    onChange: (src) => {
+                                      setIsPlaying(false)
+                                      setStep3MonitorSource(src)
+                                    },
+                                    T,
+                                    size: 'sm',
+                                    options: [
+                                      { id: 'final-video', label: '🎬 成片原画' },
+                                      { id: 'html-draft', label: '⚡ HTML5 骨架' },
+                                    ],
+                                  })
+                                : null,
                             ),
                             h(
                               'span',
@@ -3777,18 +4116,41 @@ window.__ModuleLoader__?.load({
                               `第 ${activePlayingSceneIdx + 1}/${Math.max(1, scenes.length)} 幕 · ${scenes[activePlayingSceneIdx]?.title || ''} · ${Math.round(currentFrame)}f / ${Number(script?.totalDurationInFrames) || 0}f`,
                             ),
                           ),
-                          h('iframe', {
-                            ref: iframeRef,
-                            src: previewHtmlUrl,
-                            onLoad: () => seekToFrame(currentFrame, false),
-                            style: { width: '100%', height: '270px', borderRadius: '14px', border: `1px solid ${T.borderStrong}`, background: '#000' },
-                          }),
+                          usingFinalVideoPreview
+                            ? h('video', {
+                                ref: step3VideoRef,
+                                key: mp4Url,
+                                src: mp4Url,
+                                preload: 'metadata',
+                                controls: true,
+                                onTimeUpdate: (ev) => {
+                                  const fps = Number(script?.fps) || 30
+                                  setCurrentFrame(Math.floor((ev.currentTarget.currentTime || 0) * fps))
+                                },
+                                onPlay: () => setIsPlaying(true),
+                                onPause: () => setIsPlaying(false),
+                                style: { width: '100%', height: '270px', borderRadius: '14px', border: `1px solid ${T.borderStrong}`, background: '#000', objectFit: 'contain' },
+                              })
+                            : h(
+                                'div',
+                                { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+                                isRemotionAiCoded
+                                  ? h('div', { style: { fontSize: '12px', color: T.accentGold, padding: '5px 10px', borderRadius: '8px', background: T.accentGoldBg, border: `1px solid ${T.accentGoldBorder}` } }, 'ℹ 当前显示 HTML5 骨架估算（Remotion AI 定制 TSX 真实画面请切换上方「🎬 成片原画」或点击渲染 MP4 查看）')
+                                  : null,
+                                h('iframe', {
+                                  ref: iframeRef,
+                                  src: previewHtmlUrl,
+                                  onLoad: () => seekToFrame(currentFrame, false),
+                                  style: { width: '100%', height: '270px', borderRadius: '14px', border: `1px solid ${T.borderStrong}`, background: '#000' },
+                                }),
+                              ),
                           scenes.length > 0
                             ? h(
                                 'div',
                                 { className: 'dsh-vw-scroll', style: { display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' } },
                                 scenes.map((sc, sIdx) => {
                                   const isAct = sIdx === activePlayingSceneIdx
+                                  const thumbRel = sceneThumbs[sc.id] || ''
                                   return h(
                                     'button',
                                     {
@@ -3800,7 +4162,7 @@ window.__ModuleLoader__?.load({
                                         seekToFrame(Number(sc.startFrame || 0), true)
                                       },
                                       style: {
-                                        padding: '5px 10px',
+                                        padding: '4px 9px',
                                         borderRadius: '8px',
                                         border: `1px solid ${isAct ? T.accentGoldBorder : T.borderSubtle}`,
                                         background: isAct ? T.accentGoldBg : T.bgElevated,
@@ -3809,8 +4171,12 @@ window.__ModuleLoader__?.load({
                                         fontWeight: isAct ? 800 : 600,
                                         whiteSpace: 'nowrap',
                                         flexShrink: 0,
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
                                       },
                                     },
+                                    thumbRel ? h('img', { src: `/api/video-workbench/asset?projectDir=${encodeURIComponent(activeProjectDir)}&rel=${encodeURIComponent(thumbRel)}&v=${assetVersion}`, style: { width: '28px', height: '18px', borderRadius: '4px', objectFit: 'cover' } }) : null,
                                     `${String(sIdx + 1).padStart(2, '0')} · ${(sc.title || '').slice(0, 10)}`,
                                   )
                                 }),
@@ -3939,8 +4305,9 @@ window.__ModuleLoader__?.load({
                                     : h('video', { src: `/api/video-workbench/asset?projectDir=${encodeURIComponent(activeProjectDir)}&rel=${encodeURIComponent(a.path)}&v=${assetVersion}`, muted: true, style: { width: '100%', height: '100%', objectFit: 'cover' } }),
                                 ),
                               ),
-                              scenes.slice(0, 12).map((sc, idx) =>
-                                h(
+                              scenes.map((sc, idx) => {
+                                const thumbRel = sceneThumbs[sc.id] || ''
+                                return h(
                                   'div',
                                   {
                                     key: sc.id || idx,
@@ -3951,20 +4318,28 @@ window.__ModuleLoader__?.load({
                                     },
                                     title: '点击直接在互动分镜预览中定位该幕；点右侧「去精修分镜」改写单幕',
                                     style: {
-                                      padding: '6px 11px',
+                                      padding: '5px 10px',
                                       borderRadius: '8px',
                                       background: T.bgElevated,
                                       border: `1px solid ${T.borderSubtle}`,
                                       fontSize: '12.5px',
                                       cursor: 'pointer',
                                       flexShrink: 0,
-                                      maxWidth: '170px',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '8px',
+                                      maxWidth: '215px',
                                     },
                                   },
-                                  h('div', { style: { fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: T.accentBlue } }, `${sc.id || `S0${idx + 1}`} · ${sc.title}`),
-                                  h('div', { style: { fontSize: '12px', color: T.textMuted } }, `${Number(sc.durationSec || 3).toFixed(1)}s`),
-                                ),
-                              ),
+                                  thumbRel ? h('img', { src: `/api/video-workbench/asset?projectDir=${encodeURIComponent(activeProjectDir)}&rel=${encodeURIComponent(thumbRel)}&v=${assetVersion}`, style: { width: '42px', height: '28px', borderRadius: '5px', objectFit: 'cover', flexShrink: 0, border: '1px solid rgba(255,255,255,0.12)' } }) : null,
+                                  h(
+                                    'div',
+                                    { style: { minWidth: 0 } },
+                                    h('div', { style: { fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: T.accentBlue } }, `${sc.id || `S0${idx + 1}`} · ${sc.title}`),
+                                    h('div', { style: { fontSize: '11.5px', color: T.textMuted } }, `${Number(sc.durationSec || 3).toFixed(1)}s`),
+                                  ),
+                                )
+                              }),
                             )
                           : h('div', { style: { fontSize: '13px', color: T.textMuted } }, '导入素材或点击下方「加载新手演示素材」后，每帧成果都会在这里实时浮现'),
                       ),
@@ -4242,6 +4617,23 @@ window.__ModuleLoader__?.load({
                 }),
               ),
             ),
+            h(
+              'div',
+              null,
+              h('div', { style: { fontSize: '12.5px', fontWeight: 700, color: T.textMuted, marginBottom: '5px' } }, '🥁 配音与卡点节奏模式 (控制是否合成 TTS 旁白)'),
+              h(SegmentedPills, {
+                value: directorForm.narrationMode || 'tts',
+                onChange: (nm) => setDirectorForm((p) => ({ ...p, narrationMode: nm })),
+                T,
+                fullWidth: true,
+                size: 'sm',
+                options: [
+                  { id: 'tts', label: '🗣️ AI 真人配音' },
+                  { id: 'tts-beat-sync', label: '⚡ 配音+踩拍切镜' },
+                  { id: 'subtitle-mv', label: '🔥 纯音乐卡点 (免TTS)' },
+                ],
+              }),
+            ),
           ),
 
           // CARD 3: 发车前体检与一键启动出片
@@ -4265,13 +4657,29 @@ window.__ModuleLoader__?.load({
                 h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '7px' } }, h('span', { style: { width: '9px', height: '9px', borderRadius: '50%', background: aiBrainReady ? T.accentGreen : T.accentGold } }), 'AI 创作大脑'),
                 h('span', { style: { color: aiBrainReady ? T.accentBlue : T.accentGold, fontWeight: 700 } }, isAiMode ? (llmConfig?.configured ? `${llmConfig.model || '已连接'} ✓` : '点此填密钥 →') : '本地规则模式 ✓'),
               ),
-              // Check 2: Audio / BGM
+              // Check 2: Audio / BGM / Narration Mode
               h(
                 'div',
-                { onClick: () => goToStudioStep(2), style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px', cursor: 'pointer' } },
+                { onClick: () => goToStudioStep(2), style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px', cursor: 'pointer', gap: '8px' } },
                 h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '7px' } }, h('span', { style: { width: '9px', height: '9px', borderRadius: '50%', background: T.accentGreen } }), '配音与配乐'),
-                h('span', { style: { color: T.textSecondary, fontWeight: 600 } }, mountedBgmItem ? '自传配乐 ✓' : directorForm.bgmMode === 'llm-coded' ? 'AI 现写配乐' : 'TTS 氛围音景'),
+                h(
+                  'span',
+                  { style: { color: directorForm.narrationMode === 'subtitle-mv' ? T.accentGold : T.textSecondary, fontWeight: 700, textAlign: 'right' } },
+                  `${directorForm.narrationMode === 'subtitle-mv' ? '🔥 纯音乐免TTS' : directorForm.narrationMode === 'tts-beat-sync' ? '⚡ AI配音+踩拍' : '🗣️ AI配音'} · ${mountedBgmItem ? '自传配乐 ✓' : directorForm.bgmMode === 'llm-coded' ? 'AI编曲' : 'TTS音景'}`,
+                ),
               ),
+              !hasVisualAssets && mountedBgmItem && directorForm.narrationMode !== 'subtitle-mv'
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dsh-vw-btn',
+                      onClick: () => setDirectorForm((p) => ({ ...p, narrationMode: 'subtitle-mv', bgmMode: 'uploaded', pacingMode: p.pacingMode === 'auto' ? 'dynamic' : p.pacingMode })),
+                      style: { ...ghostBtnStyle, width: '100%', padding: '5px 8px', fontSize: '12px', color: T.accentGold, borderColor: T.accentGoldBorder, justifyContent: 'center' },
+                    },
+                    '💡 检测到无实拍图且已上传 BGM，点此切为「纯音乐动画卡点 (免 TTS)」',
+                  )
+                : null,
               // Check 3: Visual Assets / Optional Avatar
               h(
                 'div',
@@ -4440,9 +4848,44 @@ window.__ModuleLoader__?.load({
                     !camStreaming
                       ? h(
                           'div',
-                          { style: { height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', color: '#94A3B8', padding: '24px', textAlign: 'center' } },
-                          h(Icon, { name: 'camera', size: 32, color: '#22D3EE' }),
-                          h('div', { style: { fontSize: '14.5px', fontWeight: 700, color: '#E2E8F0' } }, camError || '点击右侧「开启摄像头预演」即可测试麦克风并开始拍摄'),
+                          { style: { height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', color: '#94A3B8', padding: '18px 22px', textAlign: 'center' } },
+                          h(Icon, { name: 'camera', size: 30, color: camError ? '#FB7185' : '#22D3EE' }),
+                          h('div', { style: { fontSize: '13.5px', fontWeight: 700, color: camError ? '#FCA5A5' : '#E2E8F0', whiteSpace: 'pre-line', lineHeight: 1.55, maxWidth: '460px' } }, camError || '点击右侧「开启摄像头预演」即可测试麦克风并开始拍摄'),
+                          h(
+                            'div',
+                            { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', marginTop: '4px' } },
+                            h(
+                              'button',
+                              {
+                                type: 'button',
+                                className: 'dsh-vw-btn',
+                                onClick: () => teleImportRef.current?.click(),
+                                style: { ...goldBtnStyle, padding: '6px 12px', fontSize: '12.5px' },
+                              },
+                              '📁 直接上传本机已录视频/音频入库',
+                            ),
+                            h(
+                              'button',
+                              {
+                                type: 'button',
+                                className: 'dsh-vw-btn',
+                                onClick: () => {
+                                  const standUrl = /^https?:\/\/127\.0\.0\.1|^https?:\/\/localhost/i.test(window.location?.origin || '')
+                                    ? window.location.origin
+                                    : 'http://127.0.0.1:4399'
+                                  try {
+                                    navigator.clipboard?.writeText?.(standUrl)
+                                  } catch {}
+                                  try {
+                                    window.open(standUrl, '_blank', 'noopener,noreferrer')
+                                  } catch {}
+                                  notify(`已打开并复制浏览器直通地址 ${standUrl}（系统 Chrome/Edge 可正常弹出摄像头授权提示）`, 'info')
+                                },
+                                style: { ...ghostBtnStyle, padding: '6px 12px', fontSize: '12.5px', color: '#E2E8F0', borderColor: 'rgba(148,163,184,0.35)' },
+                              },
+                              '🌐 在系统浏览器中打开自拍',
+                            ),
+                          ),
                         )
                       : null,
                     // 3-2-1 Countdown Overlay
@@ -4669,14 +5112,87 @@ window.__ModuleLoader__?.load({
           h(
             'div',
             null,
-            h('label', { style: { display: 'block', fontSize: '13.5px', fontWeight: 700, marginBottom: '6px' } }, '创作主题与核心文案指令'),
+            h(
+              'div',
+              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' } },
+              h('label', { style: { fontSize: '13.5px', fontWeight: 700 } }, '创作主题与核心文案指令'),
+              h(
+                'div',
+                { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+                h(
+                  'button',
+                  { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(polishingTopic) || Boolean(busyLabel), onClick: handlePolishTopic, style: { ...blueBtnStyle, padding: '4px 10px', fontSize: '12px', borderRadius: '999px' } },
+                  h(Icon, { name: 'sparkles', size: 12 }),
+                  polishingTopic ? 'AI 润色中...' : '✨ AI 一键润色提示词',
+                ),
+                unpolishedTopicBackup
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'dsh-vw-btn',
+                        onClick: () => {
+                          setDirectorForm((p) => ({ ...p, topic: unpolishedTopicBackup }))
+                          setUnpolishedTopicBackup('')
+                        },
+                        style: { ...ghostBtnStyle, padding: '4px 9px', fontSize: '12px', borderRadius: '999px' },
+                      },
+                      '↩ 恢复原句',
+                    )
+                  : null,
+              ),
+            ),
             h('textarea', {
               rows: 4,
               value: directorForm.topic,
               onChange: (ev) => setDirectorForm((p) => ({ ...p, topic: ev.target.value })),
-              placeholder: '写清楚目标受众、想讲的核心卖点、节奏情绪...',
+              placeholder: '写一句需求即可（点右上「✨ AI 一键润色提示词」可自动扩写并覆盖为专业导演指令）...',
               style: { ...inputStyle, fontSize: '14.5px', lineHeight: 1.6, resize: 'vertical' },
             }),
+          ),
+          h(
+            'div',
+            { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } },
+            h(
+              'div',
+              null,
+              h('label', { style: { display: 'block', fontSize: '12.5px', fontWeight: 700, marginBottom: '5px' } }, '节奏适配方案'),
+              h(CinemaSelect, {
+                compact: true,
+                value: directorForm.pacingMode || 'auto',
+                onChange: (v) => setDirectorForm((p) => ({ ...p, pacingMode: v })),
+                T,
+                options: [
+                  { value: 'auto', label: '🧠 AI 依题材智能适配' },
+                  { value: 'calm', label: '🍃 舒缓叙事 (4~7s/镜)' },
+                  { value: 'balanced', label: '⚖️ 稳健解说 (3~5s/镜)' },
+                  { value: 'dynamic', label: '⚡ 高燃踩点 (0.5~3s/镜)' },
+                ],
+              }),
+            ),
+            h(
+              'div',
+              null,
+              h('label', { style: { display: 'block', fontSize: '12.5px', fontWeight: 700, marginBottom: '5px' } }, 'AI 辅助创作角标'),
+              h(CinemaSelect, {
+                compact: true,
+                value: directorForm.aiBadgeEnabled ? (directorForm.aiBadgePosition || 'top-right') : 'off',
+                onChange: (v) =>
+                  setDirectorForm((p) =>
+                    v === 'off'
+                      ? { ...p, aiBadge: false, aiBadgeEnabled: false }
+                      : { ...p, aiBadge: true, aiBadgeEnabled: true, aiBadgePosition: v },
+                  ),
+                T,
+                options: [
+                  { value: 'top-right', label: '↗ 右上角展示（推荐）' },
+                  { value: 'top-left', label: '↖ 左上角展示' },
+                  { value: 'bottom-right', label: '↘ 右下角展示' },
+                  { value: 'bottom-left', label: '↙ 左下角展示' },
+                  { value: 'off', label: '🚫 关闭不添加' },
+                ],
+              }),
+            ),
           ),
           h(
             'div',
@@ -5059,6 +5575,21 @@ window.__ModuleLoader__?.load({
               { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
               h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setIsPlaying((v) => !v), style: blueBtnStyle }, h(Icon, { name: isPlaying ? 'pause' : 'play', size: 15 }), isPlaying ? '暂停' : '播放预览'),
               h('span', { style: { fontFamily: 'Consolas, monospace', fontSize: '13.5px', fontWeight: 700, padding: '6px 10px', borderRadius: '8px', background: T.bgInput } }, `${fmtTimecode(currentFrame, script?.fps)} / ${fmtTimecode(script?.totalDurationInFrames || 0, script?.fps)}`),
+              hasMp4
+                ? h(SegmentedPills, {
+                    value: step3MonitorSource,
+                    onChange: (src) => {
+                      setIsPlaying(false)
+                      setStep3MonitorSource(src)
+                    },
+                    T,
+                    size: 'sm',
+                    options: [
+                      { id: 'final-video', label: '🎬 成片原画时间轴' },
+                      { id: 'html-draft', label: '⚡ HTML5 交互骨架' },
+                    ],
+                  })
+                : null,
               h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowSafeGuides((v) => !v), style: { ...ghostBtnStyle, color: showSafeGuides ? T.accentGold : T.textSecondary, borderColor: showSafeGuides ? T.accentGoldBorder : T.borderSubtle } }, h(Icon, { name: 'eye', size: 14 }), showSafeGuides ? '隐藏平台防遮挡线' : '显示防遮挡安全线'),
             ),
             h(
@@ -5090,9 +5621,37 @@ window.__ModuleLoader__?.load({
                   boxShadow: '0 24px 60px rgba(0,0,0,0.65)',
                 },
               },
-              previewHtmlUrl
-                ? h('iframe', { ref: iframeRef, src: previewHtmlUrl, style: { width: '100%', height: '100%', border: 'none', display: 'block', background: '#000' }, onLoad: () => seekToFrame(currentFrame, false) })
-                : h('div', { style: { color: '#94A3B8', fontSize: '14.5px', padding: '48px', textAlign: 'center' } }, '还没有生成好的动态预览，请回作战大屏点击「一键出片」或在 02 步生成草稿'),
+              usingFinalVideoPreview
+                ? h('video', {
+                    ref: step3VideoRef,
+                    key: mp4Url,
+                    src: mp4Url,
+                    preload: 'metadata',
+                    controls: true,
+                    onTimeUpdate: (ev) => {
+                      const fps = Number(script?.fps) || 30
+                      setCurrentFrame(Math.floor((ev.currentTarget.currentTime || 0) * fps))
+                    },
+                    onPlay: () => setIsPlaying(true),
+                    onPause: () => setIsPlaying(false),
+                    style: { width: '100%', height: '100%', border: 'none', display: 'block', background: '#000', objectFit: 'contain' },
+                  })
+                : previewHtmlUrl
+                  ? h(
+                      React.Fragment,
+                      null,
+                      h('iframe', { ref: iframeRef, src: previewHtmlUrl, style: { width: '100%', height: '100%', border: 'none', display: 'block', background: '#000' }, onLoad: () => seekToFrame(currentFrame, false) }),
+                      isRemotionAiCoded
+                        ? h(
+                            'div',
+                            { style: { position: 'absolute', top: '10px', left: '12px', right: '12px', zIndex: 14, padding: '6px 11px', borderRadius: '8px', background: 'rgba(15, 23, 42, 0.88)', border: `1px solid ${T.accentGoldBorder}`, color: '#FDE68A', fontSize: '12px', fontWeight: 700, pointerEvents: 'none' } },
+                            hasMp4
+                              ? 'ℹ 当前显示 HTML5 骨架稿（点击上方「🎬 成片原画时间轴」可看 Remotion AI 定制 TSX 真实画面）'
+                              : 'ℹ 当前显示 HTML5 文案/节奏骨架；Remotion AI 定制 TSX 真实画面将在点击右侧「渲染 MP4」后生成成片与分镜实拍缩略图',
+                          )
+                        : null,
+                    )
+                  : h('div', { style: { color: '#94A3B8', fontSize: '14.5px', padding: '48px', textAlign: 'center' } }, '还没有生成好的动态预览，请回作战大屏点击「一键出片」或在 02 步生成草稿'),
               showSafeGuides
                 ? h(
                     'div',
@@ -5136,6 +5695,7 @@ window.__ModuleLoader__?.load({
                 scenes.map((sc, idx) => {
                   const sel = idx === selectedSceneIdx
                   const playingNow = isPlaying && idx === activePlayingSceneIdx
+                  const thumbRel = sceneThumbs[sc.id] || ''
                   return h(
                     'div',
                     {
@@ -5147,16 +5707,24 @@ window.__ModuleLoader__?.load({
                       },
                       style: {
                         flex: `${Math.max(1, Number(sc.durationSec) || 3)} 1 0`,
-                        minWidth: '128px',
-                        padding: '7px 11px',
+                        minWidth: thumbRel ? '156px' : '128px',
+                        padding: '6px 10px',
                         borderRadius: '9px',
                         cursor: 'pointer',
                         background: sel ? T.accentGoldBg : playingNow ? T.accentBlueBg : T.bgElevated,
                         border: `1.5px solid ${sel ? T.accentGold : playingNow ? T.accentBlue : T.borderSubtle}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
                       },
                     },
-                    h('div', { style: { fontSize: '12px', fontWeight: 800, color: sel ? T.accentGold : T.accentBlue } }, `${sc.id || `S0${idx + 1}`} · ${Number(sc.durationSec || 3).toFixed(1)}s`),
-                    h('div', { style: { fontSize: '13px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' } }, sc.title || `第 ${idx + 1} 幕`),
+                    thumbRel ? h('img', { src: `/api/video-workbench/asset?projectDir=${encodeURIComponent(activeProjectDir)}&rel=${encodeURIComponent(thumbRel)}&v=${assetVersion}`, style: { width: '48px', height: '32px', borderRadius: '6px', objectFit: 'cover', flexShrink: 0, border: '1px solid rgba(255,255,255,0.14)' } }) : null,
+                    h(
+                      'div',
+                      { style: { minWidth: 0 } },
+                      h('div', { style: { fontSize: '12px', fontWeight: 800, color: sel ? T.accentGold : T.accentBlue } }, `${sc.id || `S0${idx + 1}`} · ${Number(sc.durationSec || 3).toFixed(1)}s`),
+                      h('div', { style: { fontSize: '13px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' } }, sc.title || `第 ${idx + 1} 幕`),
+                    ),
                   )
                 }),
               ),
@@ -5230,6 +5798,21 @@ window.__ModuleLoader__?.load({
                   { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
                   h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleSynthesizeSceneTts(selectedScene), style: ghostBtnStyle }, '🎙 重配此幕配音'),
                   h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleAiMasterVoice(selectedScene.id), style: ghostBtnStyle }, '🎛 AI 声学修音'),
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-vw-btn',
+                    onClick: () => {
+                      setVoiceModalTarget(selectedScene.id)
+                      setVoiceModalTab('library')
+                      setShowVoiceModal(true)
+                    },
+                    style: { ...ghostBtnStyle, width: '100%', justifyContent: 'space-between', fontSize: '12.5px' },
+                  },
+                  h('span', null, '🎤 本幕音色'),
+                  h('span', { style: { color: T.accentBlue, fontWeight: 700 } }, voiceCatalog.find((v) => v.id === selectedScene.voiceId)?.name || selectedScene.voiceId || '跟随全局 →'),
                 ),
                 scriptDirty ? h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleSaveScriptEdits, style: { ...goldBtnStyle, width: '100%' } }, '💾 保存并刷新预演画面') : null,
                 h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleRenderMp4(false), style: { ...goldBtnStyle, width: '100%', marginTop: '6px' } }, '🎬 满意了！渲染 1080P 成品 MP4 →'),
@@ -6107,7 +6690,11 @@ window.__ModuleLoader__?.load({
     }
 
     function MainVideoWorkbenchPanel() {
-      return h(PanelBoundary, null, h(VideoWorkbenchApp, { isMainSlot: true }))
+      return h(PanelBoundary, null, h(VideoWorkbenchApp, { isMainSlot: true, layoutService: hostLayoutSvc }))
+    }
+
+    function TopTitlebarSwitcherHost() {
+      return h(PanelBoundary, null, h(TopTitlebarSwitcherOverlay))
     }
 
     function ToolViewCard(props) {
@@ -6118,6 +6705,12 @@ window.__ModuleLoader__?.load({
       name: '@dsh-video/web-video-workbench',
       inject: ['slots'],
       apply(ctx) {
+        if (ctx?.layout) attachHostLayout(ctx.layout)
+        if (typeof ctx?.inject === 'function') {
+          try {
+            ctx.inject(['layout'], (scoped) => attachHostLayout(scoped?.layout))
+          } catch {}
+        }
         if (typeof ctx?.slots?.inject === 'function') {
           ctx.slots.inject('main', () =>
             ctx.slots.register(
@@ -6125,9 +6718,15 @@ window.__ModuleLoader__?.load({
               MainVideoWorkbenchPanel,
             ),
           )
+          ctx.slots.inject('shell.overlay', () =>
+            ctx.slots.register(
+              { name: 'shell.overlay', id: 'video-workbench-topbar-switcher', label: 'DeepSeek / 视频工坊切换' },
+              TopTitlebarSwitcherHost,
+            ),
+          )
           ctx.slots.inject('sidebar.panellist', () =>
             ctx.slots.register(
-              { name: 'sidebar.panellist', id: 'video-workbench', label: 'AI 视频工坊', order: 65 },
+              { name: 'sidebar.panellist', id: 'video-workbench', label: 'AI 视频工坊', order: 85 },
               SidebarVideoIcon,
             ),
           )

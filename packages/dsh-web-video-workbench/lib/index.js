@@ -43,6 +43,7 @@ import {
   executeVideoLint,
   executeVideoRender,
   executeVideoSnapshot,
+  extractSceneThumbnails,
   runPostRenderQa,
 } from '@dsh-video/tool-video-suite'
 import {
@@ -188,6 +189,21 @@ export function listVideoProjects() {
     } catch {}
   }
   return { workspaceRoot: wsRoot, projects }
+}
+
+function collectSceneThumbMap(projectDir) {
+  const thumbDir = join(resolve(projectDir), 'output', 'scene-thumbs')
+  const map = {}
+  if (!existsSync(thumbDir)) return map
+  try {
+    for (const file of readdirSync(thumbDir)) {
+      if (/\.(jpg|jpeg|png|webp)$/i.test(file)) {
+        const key = file.replace(/\.[^.]+$/, '')
+        map[key] = `output/scene-thumbs/${file}`
+      }
+    }
+  } catch {}
+  return map
 }
 
 /**
@@ -431,6 +447,7 @@ export async function handleWorkbenchApiRequest(req) {
           hasSnapshot: existsSync(join(requestedProject, 'output', 'snapshot-3x3.png')),
           hasMasterAudio: existsSync(join(requestedProject, 'output', 'master-audio.wav')),
           hasAvatarClip: Boolean(data?.avatarClip?.path),
+          sceneThumbs: collectSceneThumbMap(requestedProject),
           qaReport: readOptionalJson(join(requestedProject, 'output', 'qa_report.json')),
           buildLog: readOptionalJson(join(requestedProject, 'output', 'ai_build_log.json')),
           historyCount: getAiCodingHistory(requestedProject).length,
@@ -532,6 +549,7 @@ export async function handleWorkbenchApiRequest(req) {
         aiBadgePosition: body.aiBadgePosition || 'top-right',
         aiBadgeText: body.aiBadgeText || '',
         pacingMode: body.pacingMode || 'auto',
+        narrationMode: body.narrationMode || 'tts',
         targetPlatform: body.targetPlatform || 'universal',
         bgmMode: body.bgmMode || 'auto',
         creationMode: body.creationMode || 'ai-coded',
@@ -1075,6 +1093,15 @@ export async function handleWorkbenchApiRequest(req) {
         const { data } = readScriptJson(projectDir)
         const result = await mixVideoAudio({ projectDir, script: data })
         return jsonResponse({ ok: true, action, result, script: data })
+      }
+
+      if (action === 'extract-scene-thumbs') {
+        const res = await extractSceneThumbnails(projectDir, null, { force: Boolean(body.force) })
+        return jsonResponse({
+          ok: true,
+          action,
+          sceneThumbs: res.thumbs || collectSceneThumbMap(projectDir),
+        })
       }
 
       if (action === 'tts-scene') {

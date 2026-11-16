@@ -1652,7 +1652,7 @@ export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = {
   let capturedLoaderDef = null
   const mockReact = {
     createElement: (type, props, ...children) => ({ type, props, children }),
-    Component: class {},
+    Component: class { constructor(props) { this.props = props || {} } },
     useState: (v) => [typeof v === 'function' ? v() : v, () => {}],
     useEffect: () => {},
     useRef: (v) => ({ current: v }),
@@ -1682,6 +1682,16 @@ export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = {
     throw new Error('DSH client factory must be synchronous for desktop __ModuleLoader__')
   }
   const registeredSlots = []
+  let activePanelMock = 'video-workbench'
+  const mockLayoutService = {
+    panelInfo: {
+      getSnapshot: () => ({ activePanelId: activePanelMock }),
+      subscribe: () => () => {},
+    },
+    selectPanel: (next) => {
+      activePanelMock = next
+    },
+  }
   const clientPlugin = capturedLoaderDef.factory((m) => (m === 'react' ? mockReact : {}))
   clientPlugin.apply({
     slots: {
@@ -1691,25 +1701,100 @@ export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = {
         return () => {}
       },
     },
+    inject: (_deps, fn) => fn({ layout: mockLayoutService }),
   })
   const hasMainSlot = registeredSlots.some((s) => s.opts?.name === 'main' && s.opts?.key === 'video-workbench')
+  const overlayEntry = registeredSlots.find((s) => s.opts?.name === 'shell.overlay' && s.opts?.id === 'video-workbench-topbar-switcher')
   const sidebarEntry = registeredSlots.find((s) => s.opts?.name === 'sidebar.panellist' && s.opts?.id === 'video-workbench')
   const toolViewCount = registeredSlots.filter((s) => s.opts?.name === 'tool.call.toolview' && typeof s.opts?.key === 'string').length
   const sidebarSvg = sidebarEntry?.Comp?.({ size: 20, active: true })
+  const overlayEl = overlayEntry?.Comp?.({})
+  // Check top titlebar overlay returns capsule when layout service attached and toggles back to DeepSeek chat (`null`)
+  const findButtons = (node, acc = [], depth = 0) => {
+    if (!node || depth > 12) return acc
+    if (Array.isArray(node)) {
+      for (const c of node) findButtons(c, acc, depth + 1)
+      return acc
+    }
+    if (typeof node !== 'object') return acc
+    if (typeof node.type === 'function') {
+      const compProps = { ...(node.props || {}), children: node.children?.length === 1 ? node.children[0] : node.children }
+      const rendered = node.type.prototype && typeof node.type.prototype.render === 'function'
+        ? new node.type(compProps).render()
+        : node.type(compProps)
+      return findButtons(rendered, acc, depth + 1)
+    }
+    if (node.type === 'button') acc.push(node)
+    if (Array.isArray(node.ch || node.children)) {
+      for (const c of node.ch || node.children) findButtons(c, acc, depth + 1)
+    }
+    if (node.props?.children) {
+      findButtons(node.props.children, acc, depth + 1)
+    }
+    return acc
+  }
+  const overlayBtns = findButtons(overlayEl)
+  const backChatBtn = overlayBtns.find((b) => JSON.stringify(b).includes('DeepSeek 对话'))
+  backChatBtn?.props?.onClick?.()
   if (
     !hasMainSlot ||
+    !overlayEntry ||
+    activePanelMock !== null ||
     !sidebarEntry ||
     sidebarSvg?.type !== 'svg' ||
     toolViewCount < 5 ||
     !wbClientSrc.includes('AI 一键润色提示词') ||
-    !wbClientSrc.includes('上一幕') ||
-    !wbClientSrc.includes('下一幕')
+    !wbClientSrc.includes('纯音乐卡点 (免TTS)') ||
+    !wbClientSrc.includes('直接上传本机已录视频/音频入库') ||
+    !wbClientSrc.includes('成片原画时间轴')
   ) {
-    throw new Error(`DSH client slot / UI check failed: main=${hasMainSlot}, toolViews=${toolViewCount}, svg=${sidebarSvg?.type}`)
+    throw new Error(`DSH client slot / UI check failed: main=${hasMainSlot}, overlay=${Boolean(overlayEntry)}, panelAfterClick=${activePanelMock}, toolViews=${toolViewCount}`)
   }
 
+  // 16f. Per-scene keyframe thumbnail extraction (`output/scene-thumbs/*.jpg`) & state integration
+  const { extractSceneThumbnails } = await import('../packages/dsh-tool-video-suite/index.js')
+  const tmpThumbProj = join(REPO_ROOT, '.tmp', 'v7-scene-thumbs')
+  rmSync(tmpThumbProj, { recursive: true, force: true })
+  scaffoldVideoProject(tmpThumbProj, { title: 'ThumbExtractTest', engine: 'remotion', style: 'tech' })
+  const thumbScript = readScriptJson(tmpThumbProj).data
+  thumbScript.scenes = [
+    { id: 'scene-01', title: 'S1', startFrame: 0, durationSec: 1.2, durationInFrames: 36, narration: '第一幕' },
+    { id: 'scene-02', title: 'S2', startFrame: 36, durationSec: 1.2, durationInFrames: 36, narration: '第二幕' },
+  ]
+  thumbScript.totalDurationSec = 2.4
+  thumbScript.totalDurationInFrames = 72
+  writeScriptJson(tmpThumbProj, thumbScript)
+  mkdirSync(join(tmpThumbProj, 'output'), { recursive: true })
+  await runCommandRedirected(
+    bins.ffmpeg,
+    ['-y', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-t', '2.5', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', join(tmpThumbProj, 'output', 'final.mp4')],
+    { timeoutMs: 25_000 },
+  )
+  const thumbActRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1/api/video-workbench/action', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectDir: tmpThumbProj, action: 'extract-scene-thumbs', force: true }),
+    }),
+  )
+  const thumbActJson = await thumbActRes.json()
+  const thumbStateJson = await (
+    await handleWorkbenchApiRequest(new Request(`http://127.0.0.1/api/video-workbench/state?projectDir=${encodeURIComponent(tmpThumbProj)}`))
+  ).json()
+  if (
+    typeof extractSceneThumbnails !== 'function' ||
+    !thumbActJson.ok ||
+    !thumbActJson.sceneThumbs?.['scene-01'] ||
+    !thumbActJson.sceneThumbs?.['scene-02'] ||
+    !existsSync(join(tmpThumbProj, 'output', 'scene-thumbs', 'scene-01.jpg')) ||
+    !thumbStateJson.activeProject?.sceneThumbs?.['scene-02']
+  ) {
+    throw new Error(`Scene thumbnail extraction test failed: ${JSON.stringify(thumbActJson)}`)
+  }
+  rmSync(tmpThumbProj, { recursive: true, force: true })
+
   console.log(
-    `[16/16] v7 Fixes Verified (Topic Polish API, Avatar Secret Masking, 4-Corner AI Badge, Adaptive Pacing, Sync DSH Client Slots [${registeredSlots.length}] & Warroom Preview Controls)!`,
+    `[16/16] v7 Fixes Verified (Topic Polish API, Avatar Secret Masking, 4-Corner AI Badge, Adaptive Pacing, Top Titlebar Switcher + Sync Slots [${registeredSlots.length}], NarrationMode UI & Scene Thumbs)!`,
   )
   console.log('======================================================================')
 }
