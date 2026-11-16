@@ -257,7 +257,7 @@ window.__ModuleLoader__?.load({
       {
         id: 'audio',
         name: '配音混音 Agent',
-        role: 'IndexTTS-2.5 · 人声闪避',
+        role: '多引擎配音 · 人声闪避',
         stepTarget: 2,
         icon: 'mic',
         color: '#34D399',
@@ -453,7 +453,9 @@ window.__ModuleLoader__?.load({
       )
     }
 
-    class PanelBoundary extends React.Component {
+    const ReactComponentBase = React && typeof React.Component === 'function' ? React.Component : class { constructor(props) { this.props = props || {} } }
+
+    class PanelBoundary extends ReactComponentBase {
       constructor(props) {
         super(props)
         this.state = { error: null }
@@ -964,7 +966,7 @@ window.__ModuleLoader__?.load({
     }
 
     function useWindowTitlebarRect() {
-      const [rect, setRect] = useState({ top: 4, height: 38 })
+      const [rect, setRect] = useState({ top: 4, height: 38, left: null })
       useEffect(() => {
         if (typeof navigator === 'undefined') return undefined
         const overlay = navigator.windowControlsOverlay
@@ -974,7 +976,10 @@ window.__ModuleLoader__?.load({
             if (overlay.visible === false) return
             const r = overlay.getTitlebarAreaRect()
             if (r && Number.isFinite(r.height) && r.height > 12) {
-              setRect({ top: Number(r.top) || 0, height: Number(r.height) })
+              const cx = Number.isFinite(r.x) && Number.isFinite(r.width) && r.width > 120
+                ? Math.round(r.x + r.width / 2)
+                : null
+              setRect({ top: Number(r.top) || 0, height: Number(r.height), left: cx })
             }
           } catch {}
         }
@@ -1022,7 +1027,7 @@ window.__ModuleLoader__?.load({
           style: {
             position: 'fixed',
             top: `${pillTop}px`,
-            left: '50%',
+            left: titlebarRect.left ? `${titlebarRect.left}px` : '50%',
             transform: 'translateX(-50%)',
             zIndex: 4500,
             display: 'inline-flex',
@@ -1093,14 +1098,24 @@ window.__ModuleLoader__?.load({
         hostLayoutListeners.add(listener)
         return () => hostLayoutListeners.delete(listener)
       }, [])
-      const getHostLayout = () => layoutService || ctx?.layout || hostLayoutSvc
-      const connFetch = useMemo(
-        () =>
-          typeof ctx?.connection?.fetch === 'function'
-            ? ctx.connection.fetch.bind(ctx.connection)
-            : (url, init = {}) => window.fetch(url, { credentials: 'same-origin', ...init }),
-        [ctx],
-      )
+      const getHostLayout = () => {
+        if (layoutService) return layoutService
+        if (hostLayoutSvc) return hostLayoutSvc
+        try {
+          if (typeof ctx?.get === 'function') return ctx.get('layout') || null
+        } catch {}
+        try {
+          return ctx?.layout || null
+        } catch {}
+        return null
+      }
+      const connFetch = useMemo(() => {
+        try {
+          const conn = typeof ctx?.get === 'function' ? ctx.get('connection') : ctx?.connection
+          if (typeof conn?.fetch === 'function') return conn.fetch.bind(conn)
+        } catch {}
+        return (url, init = {}) => window.fetch(url, { credentials: 'same-origin', ...init })
+      }, [ctx])
 
       // Host Mode & Theme
       const [mode, setMode] = useState('video')
@@ -1168,7 +1183,42 @@ window.__ModuleLoader__?.load({
       const [historyCount, setHistoryCount] = useState(0)
       const [voiceCatalog, setVoiceCatalog] = useState([])
       const [availableEmotions, setAvailableEmotions] = useState(['平静', '昂扬', '温和', '严肃', '兴奋', '深沉'])
-      const [ttsStatus, setTtsStatus] = useState({ reachable: false, ready: false, engine: 'IndexTTS-2.5' })
+      const [ttsStatus, setTtsStatus] = useState({ reachable: false, ready: false, engine: 'indextts25', engineName: 'IndexTTS-2.5' })
+      const [ttsConfig, setTtsConfig] = useState({ activeEngineId: 'indextts25', engines: [], templates: [] })
+      const [showTtsModal, setShowTtsModal] = useState(false)
+      const [ttsModalTab, setTtsModalTab] = useState('engines') // 'engines' | 'add' | 'import'
+      const [builtinTtsForm, setBuiltinTtsForm] = useState({
+        indextts25Endpoint: 'http://127.0.0.1:9880',
+        indexttsRootDir: '',
+        indexttsPythonBin: '',
+        gptvoiceEndpoint: 'http://127.0.0.1:9881',
+        gptvoiceRootDir: '',
+        gptvoicePythonBin: '',
+        gptvoiceTextLang: 'zh',
+        gptvoicePromptLang: 'zh',
+      })
+      const [customTtsForm, setCustomTtsForm] = useState({
+        id: '',
+        name: '',
+        kind: 'openai-tts',
+        vramBadge: '自定义模型 / 低配友好',
+        endpoint: 'http://127.0.0.1:8080/v1/audio/speech',
+        method: 'POST',
+        apiKey: '',
+        model: 'fish-speech-1.5',
+        voice: 'default',
+        responseFormat: 'wav',
+        speed: 1.0,
+        responseType: 'binary',
+        responseAudioPath: 'audio',
+        payloadTemplateText: '{\n  "text": "{{text}}",\n  "voice": "{{voiceName}}",\n  "lang": "{{lang}}",\n  "speed": "{{speed}}"\n}',
+        command: 'edge-tts',
+        argsTemplate: '--text {{text}} --voice {{voice}} --write-media {{output}}',
+        outputExt: '.mp3',
+      })
+      const [ttsImportJsonText, setTtsImportJsonText] = useState('')
+      const [ttsTesting, setTtsTesting] = useState(false)
+      const [ttsTestResult, setTtsTestResult] = useState(null)
 
       // Director & Production Configuration
       const [directorForm, setDirectorForm] = useState({
@@ -1470,6 +1520,7 @@ window.__ModuleLoader__?.load({
             setShowNewModal(false)
             setShowVoiceModal(false)
             setShowLlmModal(false)
+            setShowTtsModal(false)
             setShowCodeDrawer(false)
             setShowSkinModal(false)
             setShowVendorModal(false)
@@ -1496,6 +1547,33 @@ window.__ModuleLoader__?.load({
         })
       }
 
+      const syncTtsFormFromSummary = (cfg) => {
+        if (!cfg) return
+        setTtsConfig(cfg)
+        const list = cfg.engines || []
+        const idx25 = list.find((e) => e.id === 'indextts25') || {}
+        const gsv = list.find((e) => e.id === 'gptvoice') || {}
+        setBuiltinTtsForm({
+          indextts25Endpoint: idx25.endpoint || 'http://127.0.0.1:9880',
+          indexttsRootDir: idx25.rootDir || '',
+          indexttsPythonBin: idx25.pythonBin || '',
+          gptvoiceEndpoint: gsv.endpoint || 'http://127.0.0.1:9881',
+          gptvoiceRootDir: gsv.rootDir || '',
+          gptvoicePythonBin: gsv.pythonBin || '',
+          gptvoiceTextLang: gsv.textLang || 'zh',
+          gptvoicePromptLang: gsv.promptLang || 'zh',
+        })
+      }
+
+      const activeTtsEngineObj =
+        (ttsConfig?.engines || []).find((e) => e.id === ttsConfig?.activeEngineId) || {
+          id: 'indextts25',
+          shortName: 'IndexTTS-2.5',
+          name: 'IndexTTS-2.5',
+          vramBadge: '推荐 8GB+ 显存',
+        }
+      const activeTtsLabel = activeTtsEngineObj.shortName || activeTtsEngineObj.name || 'IndexTTS-2.5'
+
       const refreshState = useCallback(
         async (targetDir = activeProjectDir) => {
           try {
@@ -1512,6 +1590,7 @@ window.__ModuleLoader__?.load({
               setAvailableEmotions(data.availableEmotions)
             }
             setTtsStatus(data.ttsStatus || { reachable: false, ready: false })
+            if (data.ttsConfig) syncTtsFormFromSummary(data.ttsConfig)
             if (data.llmConfig) syncLlmFormFromSummary(data.llmConfig)
             if (Array.isArray(data.avatarTemplates)) setAvatarTemplates(data.avatarTemplates)
             if (data.avatarProvider) {
@@ -2442,7 +2521,7 @@ window.__ModuleLoader__?.load({
 
       const handleSynthesizeSceneTts = async (scene) => {
         if (!activeProjectDir || !scene) return
-        setBusyLabel(`IndexTTS-2.5 正在配音「${scene.title}」...`)
+        setBusyLabel(`${activeTtsLabel} 正在配音「${scene.title}」...`)
         try {
           if (scriptDirty) await handleSaveScriptEdits()
           const res = await connFetch('/api/video-workbench/action', {
@@ -2705,7 +2784,7 @@ window.__ModuleLoader__?.load({
 
       const handleTtsComposeBgm = async () => {
         if (!activeProjectDir) return
-        setBusyLabel('IndexTTS-2.5 正在合成沉浸式氛围音景 BGM...')
+        setBusyLabel(`${activeTtsLabel} 正在合成沉浸式氛围音景 BGM...`)
         try {
           const res = await connFetch('/api/video-workbench/audio/tts-compose', {
             method: 'POST',
@@ -2728,7 +2807,7 @@ window.__ModuleLoader__?.load({
           setBgmComposePreviewUrl(d.previewUrl || '')
           setAssetVersion((v) => v + 1)
           await refreshState(activeProjectDir)
-          notify('IndexTTS-2.5 氛围音景已绑定为主配乐', 'success')
+          notify(`${activeTtsLabel} 氛围音景已绑定为主配乐`, 'success')
         } catch (err) {
           notify(`作曲失败: ${err.message}`, 'error')
         } finally {
@@ -3242,7 +3321,7 @@ window.__ModuleLoader__?.load({
           cloneAuditionVoiceId ||
           voiceCatalog.find((v) => v.isCloned || v.id?.startsWith('clone-') || v.category === '专属声纹克隆')?.id ||
           'auto'
-        setBusyLabel('IndexTTS-2.5 正在即时合成克隆试听音频...')
+        setBusyLabel(`${activeTtsLabel} 正在即时合成克隆试听音频...`)
         try {
           const res = await connFetch('/api/video-workbench/voices/clone-preview', {
             method: 'POST',
@@ -3398,6 +3477,226 @@ window.__ModuleLoader__?.load({
           notify(`已生效：${d.config?.label || d.config?.model || '大模型接口'}`, 'success')
         } finally {
           setBusyLabel('')
+        }
+      }
+
+      // TTS Engine Config, GPT-SoVITS & Custom Model Import Handlers
+      const handleSelectTtsEngine = async (engineId) => {
+        setBusyLabel(`正在切换配音引擎至 ${engineId}...`)
+        setTtsTestResult(null)
+        try {
+          const res = await connFetch('/api/video-workbench/tts-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'select', activeEngineId: engineId }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`切换配音引擎失败: ${d.error}`, 'error')
+            return
+          }
+          if (d.config) syncTtsFormFromSummary(d.config)
+          if (d.ttsStatus) setTtsStatus(d.ttsStatus)
+          notify(`已切换配音引擎：${d.config?.activeEngine?.name || engineId}`, 'success')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleSaveBuiltinTts = async () => {
+        setBusyLabel('正在保存本地配音引擎配置...')
+        try {
+          const res = await connFetch('/api/video-workbench/tts-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'save',
+              builtins: {
+                indextts25: {
+                  endpoint: builtinTtsForm.indextts25Endpoint,
+                  rootDir: builtinTtsForm.indexttsRootDir,
+                  pythonBin: builtinTtsForm.indexttsPythonBin,
+                },
+                indextts2: {
+                  endpoint: builtinTtsForm.indextts25Endpoint,
+                  rootDir: builtinTtsForm.indexttsRootDir,
+                  pythonBin: builtinTtsForm.indexttsPythonBin,
+                },
+                gptvoice: {
+                  endpoint: builtinTtsForm.gptvoiceEndpoint,
+                  rootDir: builtinTtsForm.gptvoiceRootDir,
+                  pythonBin: builtinTtsForm.gptvoicePythonBin,
+                  textLang: builtinTtsForm.gptvoiceTextLang || 'zh',
+                  promptLang: builtinTtsForm.gptvoicePromptLang || 'zh',
+                },
+              },
+            }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`保存失败: ${d.error}`, 'error')
+            return
+          }
+          if (d.config) syncTtsFormFromSummary(d.config)
+          if (d.ttsStatus) setTtsStatus(d.ttsStatus)
+          notify('内置配音引擎参数已保存（GPT-SoVITS / IndexTTS）', 'success')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const applyTtsQuickTemplate = (tpl) => {
+        const eng = tpl?.engine || {}
+        setCustomTtsForm({
+          id: eng.id || `custom-${Date.now().toString(36)}`,
+          name: eng.name || tpl?.label || '',
+          kind: eng.kind || 'openai-tts',
+          vramBadge: eng.vramBadge || '自定义模型',
+          endpoint: eng.endpoint || '',
+          method: eng.method || 'POST',
+          apiKey: '',
+          model: eng.model || '',
+          voice: eng.voice || eng.defaultVoice || 'default',
+          responseFormat: eng.responseFormat || 'wav',
+          speed: eng.speed || 1.0,
+          responseType: eng.responseType || 'binary',
+          responseAudioPath: eng.responseAudioPath || 'audio',
+          payloadTemplateText: eng.payloadTemplate ? JSON.stringify(eng.payloadTemplate, null, 2) : '{\n  "text": "{{text}}"\n}',
+          command: eng.command || '',
+          argsTemplate: eng.argsTemplate || '',
+          outputExt: eng.outputExt || '.wav',
+        })
+        setTtsTestResult(null)
+        notify(`已载入模板「${tpl?.label || eng.name}」，可按需修改后点击保存启用`, 'info')
+      }
+
+      const handleSaveCustomTts = async () => {
+        if (!customTtsForm.name.trim()) {
+          notify('请填写自定义配音模型名称', 'error')
+          return
+        }
+        let parsedPayload = undefined
+        if (customTtsForm.kind === 'http-json') {
+          try {
+            parsedPayload = customTtsForm.payloadTemplateText?.trim() ? JSON.parse(customTtsForm.payloadTemplateText) : { text: '{{text}}' }
+          } catch (err) {
+            notify(`HTTP JSON 请求体模板不是合法 JSON: ${err.message}`, 'error')
+            return
+          }
+        }
+        setBusyLabel('正在保存并启用自定义配音模型...')
+        try {
+          const res = await connFetch('/api/video-workbench/tts-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'add-custom',
+              engine: {
+                id: customTtsForm.id || undefined,
+                name: customTtsForm.name.trim(),
+                kind: customTtsForm.kind,
+                vramBadge: customTtsForm.vramBadge.trim() || '自定义模型',
+                endpoint: customTtsForm.endpoint.trim(),
+                method: customTtsForm.method,
+                apiKey: customTtsForm.apiKey,
+                model: customTtsForm.model.trim(),
+                voice: customTtsForm.voice.trim(),
+                defaultVoice: customTtsForm.voice.trim(),
+                responseFormat: customTtsForm.responseFormat || 'wav',
+                speed: Number(customTtsForm.speed) || 1.0,
+                responseType: customTtsForm.responseType || 'binary',
+                responseAudioPath: customTtsForm.responseAudioPath || 'audio',
+                payloadTemplate: parsedPayload,
+                command: customTtsForm.command.trim(),
+                argsTemplate: customTtsForm.argsTemplate.trim(),
+                outputExt: customTtsForm.outputExt || '.wav',
+                activate: true,
+              },
+            }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`添加配音模型失败: ${d.error}`, 'error')
+            return
+          }
+          if (d.config) syncTtsFormFromSummary(d.config)
+          if (d.ttsStatus) setTtsStatus(d.ttsStatus)
+          setTtsModalTab('engines')
+          notify(`已添加并启用配音模型：${d.config?.activeEngine?.name}`, 'success')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleRemoveCustomTts = async (id) => {
+        setBusyLabel('正在删除自定义配音模型...')
+        try {
+          const res = await connFetch('/api/video-workbench/tts-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'remove-custom', id }),
+          })
+          const d = await res.json()
+          if (d.ok && d.config) syncTtsFormFromSummary(d.config)
+          if (d.ok && d.ttsStatus) setTtsStatus(d.ttsStatus)
+          notify('已移除自定义配音模型', 'info')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleImportTtsJson = async () => {
+        if (!ttsImportJsonText.trim()) {
+          notify('请先粘贴或导入配音模型 JSON 配置', 'error')
+          return
+        }
+        setBusyLabel('正在导入外部配音模型配置...')
+        try {
+          const res = await connFetch('/api/video-workbench/tts-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'import-json', jsonText: ttsImportJsonText }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`导入失败: ${d.error}`, 'error')
+            return
+          }
+          if (d.config) syncTtsFormFromSummary(d.config)
+          if (d.ttsStatus) setTtsStatus(d.ttsStatus)
+          setTtsImportJsonText('')
+          setTtsModalTab('engines')
+          notify(`已成功导入并切换至：${d.config?.activeEngine?.name}`, 'success')
+        } catch (err) {
+          notify(`JSON 解析失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleTestTtsEngine = async (engineId = '') => {
+        setTtsTesting(true)
+        setTtsTestResult(null)
+        try {
+          const res = await connFetch('/api/video-workbench/tts-test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              engineId: engineId || ttsConfig?.activeEngineId || 'indextts25',
+              voiceId: directorForm.voiceId || 'auto',
+              text: '你好，这是双引擎视频工作台的实时配音引擎测试音频。',
+            }),
+          })
+          const d = await res.json()
+          setTtsTestResult(d)
+          if (d.ok && d.audioDataUrl && previewAudioRef.current) {
+            previewAudioRef.current.src = dataUrlSafe(d.audioDataUrl)
+            previewAudioRef.current.play().catch(() => {})
+          }
+        } catch (err) {
+          setTtsTestResult({ ok: false, error: err.message })
+        } finally {
+          setTtsTesting(false)
         }
       }
 
@@ -3732,10 +4031,27 @@ window.__ModuleLoader__?.load({
           }),
         ),
 
-        // Right: Model Config · Skin · Theme Toggle
+        // Right: TTS Engine · Model Config · Skin · Theme Toggle
         h(
           'div',
           { style: { display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 } },
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dsh-vw-btn',
+              title: '切换 IndexTTS-2.5 / GPT-SoVITS (低显存) / 添加或导入其他配音模型',
+              onClick: () => setShowTtsModal(true),
+              style: {
+                ...ghostBtnStyle,
+                padding: '7px 12px',
+                borderColor: ttsStatus.ready ? T.borderStrong : T.accentGoldBorder,
+                color: ttsStatus.ready ? T.accentGreen : T.accentGold,
+              },
+            },
+            h(Icon, { name: 'mic', size: 15 }),
+            `配音: ${activeTtsLabel}`,
+          ),
           h(
             'button',
             {
@@ -4243,7 +4559,7 @@ window.__ModuleLoader__?.load({
                                 'div',
                                 { style: { minWidth: 0 } },
                                 h('div', { style: { fontSize: '14.5px', fontWeight: 800, color: T.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, meta.name),
-                                h('div', { style: { fontSize: '12px', color: T.textMuted, marginTop: '2px' } }, `0${idx + 1} · ${meta.role}`),
+                                h('div', { style: { fontSize: '12px', color: T.textMuted, marginTop: '2px' } }, `0${idx + 1} · ${meta.id === 'audio' ? `${activeTtsLabel} · 人声闪避` : meta.role}`),
                               ),
                             ),
                             h(
@@ -4352,7 +4668,7 @@ window.__ModuleLoader__?.load({
                           'div',
                           { style: { display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: hasMasterAudio || hasLiveTask ? T.accentGreen : T.textMuted, marginBottom: '4px', fontWeight: 700 } },
                           h('span', null, hasMasterAudio ? '✓ 48kHz 混音母带就绪' : hasLiveTask ? '● 音轨协同合成中' : '音频频谱待命'),
-                          h('span', { style: { fontFamily: 'Consolas, monospace' } }, mountedBgmItem ? mountedBgmItem.name.slice(0, 14) : directorForm.bgmMode === 'llm-coded' ? 'AI 编写配乐' : 'IndexTTS 音景'),
+                          h('span', { style: { fontFamily: 'Consolas, monospace' } }, mountedBgmItem ? mountedBgmItem.name.slice(0, 14) : directorForm.bgmMode === 'llm-coded' ? 'AI 编写配乐' : `${activeTtsLabel} 音景`),
                         ),
                         h(AudioWaveformCanvas, { active: hasLiveTask || Boolean(busyLabel), isPlaying, dark: resolvedDark, height: 34 }),
                       ),
@@ -4657,15 +4973,29 @@ window.__ModuleLoader__?.load({
                 h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '7px' } }, h('span', { style: { width: '9px', height: '9px', borderRadius: '50%', background: aiBrainReady ? T.accentGreen : T.accentGold } }), 'AI 创作大脑'),
                 h('span', { style: { color: aiBrainReady ? T.accentBlue : T.accentGold, fontWeight: 700 } }, isAiMode ? (llmConfig?.configured ? `${llmConfig.model || '已连接'} ✓` : '点此填密钥 →') : '本地规则模式 ✓'),
               ),
-              // Check 2: Audio / BGM / Narration Mode
+              // Check 2: Audio / BGM / Narration Mode + Active TTS Engine
               h(
                 'div',
-                { onClick: () => goToStudioStep(2), style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px', cursor: 'pointer', gap: '8px' } },
-                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '7px' } }, h('span', { style: { width: '9px', height: '9px', borderRadius: '50%', background: T.accentGreen } }), '配音与配乐'),
+                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px', gap: '8px' } },
+                h('span', { onClick: () => goToStudioStep(2), style: { display: 'inline-flex', alignItems: 'center', gap: '7px', cursor: 'pointer' } }, h('span', { style: { width: '9px', height: '9px', borderRadius: '50%', background: T.accentGreen } }), '配音与配乐'),
                 h(
-                  'span',
-                  { style: { color: directorForm.narrationMode === 'subtitle-mv' ? T.accentGold : T.textSecondary, fontWeight: 700, textAlign: 'right' } },
-                  `${directorForm.narrationMode === 'subtitle-mv' ? '🔥 纯音乐免TTS' : directorForm.narrationMode === 'tts-beat-sync' ? '⚡ AI配音+踩拍' : '🗣️ AI配音'} · ${mountedBgmItem ? '自传配乐 ✓' : directorForm.bgmMode === 'llm-coded' ? 'AI编曲' : 'TTS音景'}`,
+                  'div',
+                  { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
+                  h(
+                    'span',
+                    { onClick: () => goToStudioStep(2), style: { color: directorForm.narrationMode === 'subtitle-mv' ? T.accentGold : T.textSecondary, fontWeight: 700, cursor: 'pointer' } },
+                    `${directorForm.narrationMode === 'subtitle-mv' ? '🔥 纯音乐免TTS' : directorForm.narrationMode === 'tts-beat-sync' ? '⚡ AI配音+踩拍' : `🗣️ ${activeTtsLabel}`} · ${mountedBgmItem ? '自传配乐 ✓' : directorForm.bgmMode === 'llm-coded' ? 'AI编曲' : 'TTS音景'}`,
+                  ),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dsh-vw-btn',
+                      onClick: () => setShowTtsModal(true),
+                      style: { padding: '2px 7px', borderRadius: '6px', border: `1px solid ${T.borderStrong}`, background: T.bgPanel, color: T.accentBlue, fontSize: '11.5px', fontWeight: 700 },
+                    },
+                    '换配音模型',
+                  ),
                 ),
               ),
               !hasVisualAssets && mountedBgmItem && directorForm.narrationMode !== 'subtitle-mv'
@@ -5388,29 +5718,103 @@ window.__ModuleLoader__?.load({
             }),
           ),
 
-          // Voice Selection Card
+          // Voice & Multi-Engine TTS Selection Card (IndexTTS-2.5 / IndexTTS-2 / GPT-SoVITS / Custom Imported Models)
           h(
             'div',
-            { style: { padding: '14px', borderRadius: '12px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' } },
+            { style: { padding: '14px', borderRadius: '12px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '10px' } },
             h(
               'div',
-              null,
-              h('div', { style: { fontSize: '12.5px', color: T.textMuted } }, `IndexTTS-2.5 配音引擎 · ${ttsStatus.ready ? '✓ 已就绪' : '待连接'}`),
-              h('div', { style: { fontSize: '14.5px', fontWeight: 800, marginTop: '3px' } }, voiceCatalog.find((v) => v.id === directorForm.voiceId)?.name || (directorForm.voiceId === 'auto' ? 'AI 自动智能匹配音色' : directorForm.voiceId)),
+              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
+              h(
+                'div',
+                null,
+                h(
+                  'div',
+                  { style: { fontSize: '12.5px', color: T.textMuted, display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
+                  h('span', null, `${activeTtsLabel} 配音引擎 · ${ttsStatus.ready ? '✓ 已就绪' : '待连接'}`),
+                  activeTtsEngineObj?.vramBadge ? h('span', { style: { padding: '1px 7px', borderRadius: '999px', background: T.accentBlueBg, color: T.accentBlue, fontSize: '11px', fontWeight: 700 } }, activeTtsEngineObj.vramBadge) : null,
+                ),
+                h('div', { style: { fontSize: '14.5px', fontWeight: 800, marginTop: '3px' } }, voiceCatalog.find((v) => v.id === directorForm.voiceId)?.name || (directorForm.voiceId === 'auto' ? 'AI 自动智能匹配音色' : directorForm.voiceId)),
+              ),
+              h(
+                'div',
+                { style: { display: 'flex', gap: '7px', flexWrap: 'wrap' } },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-vw-btn',
+                    onClick: () => setShowTtsModal(true),
+                    style: { ...ghostBtnStyle, borderColor: T.accentGoldBorder, color: T.accentGold },
+                  },
+                  '⚙ 切换/添加配音模型',
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-vw-btn',
+                    onClick: () => {
+                      setVoiceModalTarget('global')
+                      setShowVoiceModal(true)
+                    },
+                    style: ghostBtnStyle,
+                  },
+                  h(Icon, { name: 'mic', size: 15 }),
+                  '选音色 / 克隆我的声音',
+                ),
+              ),
             ),
             h(
-              'button',
-              {
-                type: 'button',
-                className: 'dsh-vw-btn',
-                onClick: () => {
-                  setVoiceModalTarget('global')
-                  setShowVoiceModal(true)
+              'div',
+              { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' } },
+              ((ttsConfig?.engines?.length ? ttsConfig.engines : [
+                { id: 'indextts25', shortName: 'IndexTTS-2.5' },
+                { id: 'indextts2', shortName: 'IndexTTS-2' },
+                { id: 'gptvoice', shortName: 'GPT-SoVITS (低显存)' },
+              ])).map((eng) => {
+                const isAct = (ttsConfig?.activeEngineId || 'indextts25') === eng.id
+                return h(
+                  'button',
+                  {
+                    key: eng.id,
+                    type: 'button',
+                    className: 'dsh-vw-btn',
+                    onClick: () => handleSelectTtsEngine(eng.id),
+                    style: {
+                      padding: '4px 10px',
+                      borderRadius: '999px',
+                      fontSize: '12px',
+                      fontWeight: isAct ? 800 : 600,
+                      border: `1px solid ${isAct ? T.accentBlueBorder : T.borderSubtle}`,
+                      background: isAct ? T.accentBlueBg : T.bgPanel,
+                      color: isAct ? T.accentBlue : T.textSecondary,
+                    },
+                  },
+                  isAct ? `✓ ${eng.shortName || eng.name}` : (eng.shortName || eng.name),
+                )
+              }),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-vw-btn',
+                  onClick: () => {
+                    setTtsModalTab('add')
+                    setShowTtsModal(true)
+                  },
+                  style: {
+                    padding: '4px 10px',
+                    borderRadius: '999px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    border: `1px dashed ${T.accentGoldBorder}`,
+                    background: 'transparent',
+                    color: T.accentGold,
+                  },
                 },
-                style: ghostBtnStyle,
-              },
-              h(Icon, { name: 'mic', size: 15 }),
-              '选音色 / 克隆我的声音',
+                '+ 添加/导入其他模型',
+              ),
             ),
           ),
 
@@ -6245,6 +6649,227 @@ window.__ModuleLoader__?.load({
           )
         : null
 
+      const ttsConfigModal = showTtsModal
+        ? h(
+            'div',
+            { style: modalBackdropStyle, onClick: () => setShowTtsModal(false) },
+            h(
+              'div',
+              { className: 'dsh-vw-scroll', onClick: (ev) => ev.stopPropagation(), style: { ...panelStyle, width: '780px', maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' } },
+              h(
+                'div',
+                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' } },
+                h(
+                  'div',
+                  null,
+                  h('h3', { style: { margin: 0, fontSize: '18px', fontWeight: 800 } }, '🎙 多引擎配音中心 (IndexTTS-2.5 / 2 · GPT-SoVITS · 自定义模型)'),
+                  h('div', { style: { fontSize: '12.5px', color: T.textMuted, marginTop: '3px' } }, '低显存电脑可选 GPT-SoVITS 或导入纯 CPU / 云端配音模型，自由切换不绑定单一模型'),
+                ),
+                h('button', { type: 'button', onClick: () => setShowTtsModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 18 })),
+              ),
+              h(SegmentedPills, {
+                value: ttsModalTab,
+                onChange: setTtsModalTab,
+                T,
+                fullWidth: true,
+                options: [
+                  { id: 'engines', label: '🎛 选择引擎与 GPT-SoVITS / IndexTTS 配置' },
+                  { id: 'add', label: '➕ 添加自定义配音模型 (CPU / OpenAI / HTTP)' },
+                  { id: 'import', label: '📤 JSON 导入 / 导出分享' },
+                ],
+              }),
+              ttsModalTab === 'engines'
+                ? h(
+                    'div',
+                    { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
+                    h(
+                      'div',
+                      { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } },
+                      (ttsConfig?.engines || []).map((eng) => {
+                        const isAct = (ttsConfig?.activeEngineId || 'indextts25') === eng.id
+                        return h(
+                          'div',
+                          {
+                            key: eng.id,
+                            onClick: () => handleSelectTtsEngine(eng.id),
+                            style: {
+                              padding: '13px',
+                              borderRadius: '12px',
+                              cursor: 'pointer',
+                              background: isAct ? T.accentBlueBg : T.bgElevated,
+                              border: `1.5px solid ${isAct ? T.accentBlueBorder : T.borderSubtle}`,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '6px',
+                            },
+                          },
+                          h(
+                            'div',
+                            { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' } },
+                            h('span', { style: { fontSize: '14px', fontWeight: 800, color: isAct ? T.accentBlue : T.textPrimary } }, isAct ? `✓ ${eng.name}` : eng.name),
+                            !eng.builtin
+                              ? h(
+                                  'button',
+                                  {
+                                    type: 'button',
+                                    className: 'dsh-vw-btn',
+                                    onClick: (ev) => {
+                                      ev.stopPropagation()
+                                      handleRemoveCustomTts(eng.id)
+                                    },
+                                    style: { padding: '2px 7px', borderRadius: '6px', border: 'none', background: T.accentRedBg, color: T.accentRed, fontSize: '11.5px', fontWeight: 700 },
+                                  },
+                                  '删除',
+                                )
+                              : null,
+                          ),
+                          h(
+                            'div',
+                            { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
+                            eng.vramBadge ? h('span', { style: { padding: '1px 7px', borderRadius: '999px', background: T.accentGoldBg, color: T.accentGold, fontSize: '11px', fontWeight: 700 } }, eng.vramBadge) : null,
+                            h('span', { style: { fontSize: '11.5px', color: T.textMuted, fontFamily: 'Consolas, monospace' } }, eng.kind),
+                          ),
+                          eng.description ? h('div', { style: { fontSize: '12px', color: T.textSecondary, lineHeight: 1.45 } }, eng.description) : null,
+                          eng.endpoint || eng.command ? h('div', { style: { fontSize: '11.5px', color: T.textMuted, fontFamily: 'Consolas, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, eng.endpoint || `${eng.command} ${eng.argsTemplate || ''}`) : null,
+                        )
+                      }),
+                    ),
+                    // Built-in GPT-SoVITS & IndexTTS Connection Configs
+                    h(
+                      'div',
+                      { style: { padding: '14px', borderRadius: '12px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '10px' } },
+                      h('div', { style: { fontSize: '13.5px', fontWeight: 800, color: T.accentGold } }, '⚡ GPT-SoVITS (低显存推荐) 与 IndexTTS 本地参数'),
+                      h(
+                        'div',
+                        { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' } },
+                        h('div', null, h('div', { style: { fontSize: '12px', color: T.textMuted, marginBottom: '4px' } }, 'GPT-SoVITS API 地址 (api_v2.py)'), h('input', { value: builtinTtsForm.gptvoiceEndpoint, onChange: (ev) => setBuiltinTtsForm((p) => ({ ...p, gptvoiceEndpoint: ev.target.value })), placeholder: 'http://127.0.0.1:9881', style: inputStyle })),
+                        h('div', null, h('div', { style: { fontSize: '12px', color: T.textMuted, marginBottom: '4px' } }, 'IndexTTS-2.5 / 2 HTTP 地址'), h('input', { value: builtinTtsForm.indextts25Endpoint, onChange: (ev) => setBuiltinTtsForm((p) => ({ ...p, indextts25Endpoint: ev.target.value })), placeholder: 'http://127.0.0.1:9880', style: inputStyle })),
+                      ),
+                      h(
+                        'div',
+                        { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' } },
+                        h('div', null, h('div', { style: { fontSize: '12px', color: T.textMuted, marginBottom: '4px' } }, '可选：GPT-SoVITS 根目录 (自动拉起)'), h('input', { value: builtinTtsForm.gptvoiceRootDir, onChange: (ev) => setBuiltinTtsForm((p) => ({ ...p, gptvoiceRootDir: ev.target.value })), placeholder: '留空则直连上方已启动的 HTTP 地址', style: inputStyle })),
+                        h('div', null, h('div', { style: { fontSize: '12px', color: T.textMuted, marginBottom: '4px' } }, '可选：GPT-SoVITS Python 路径'), h('input', { value: builtinTtsForm.gptvoicePythonBin, onChange: (ev) => setBuiltinTtsForm((p) => ({ ...p, gptvoicePythonBin: ev.target.value })), placeholder: '例如 D:/GPT-SoVITS/runtime/python.exe', style: inputStyle })),
+                      ),
+                      h(
+                        'div',
+                        { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' } },
+                        h('div', null, h('div', { style: { fontSize: '12px', color: T.textMuted, marginBottom: '4px' } }, '可选：IndexTTS 根目录'), h('input', { value: builtinTtsForm.indexttsRootDir, onChange: (ev) => setBuiltinTtsForm((p) => ({ ...p, indexttsRootDir: ev.target.value })), placeholder: 'INDEXTTS_ROOT 覆盖路径', style: inputStyle })),
+                        h('div', null, h('div', { style: { fontSize: '12px', color: T.textMuted, marginBottom: '4px' } }, '可选：IndexTTS Python 路径'), h('input', { value: builtinTtsForm.indexttsPythonBin, onChange: (ev) => setBuiltinTtsForm((p) => ({ ...p, indexttsPythonBin: ev.target.value })), placeholder: 'INDEXTTS_PYTHON 覆盖路径', style: inputStyle })),
+                      ),
+                      h(
+                        'div',
+                        { style: { display: 'flex', justifyContent: 'flex-end', gap: '9px' } },
+                        h('button', { type: 'button', className: 'dsh-vw-btn', disabled: ttsTesting, onClick: () => handleTestTtsEngine(ttsConfig?.activeEngineId), style: ghostBtnStyle }, ttsTesting ? '正在合成测试音频...' : `🔊 试听测试 (${activeTtsLabel})`),
+                        h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleSaveBuiltinTts, style: goldBtnStyle }, '保存本地接口设置'),
+                      ),
+                    ),
+                  )
+                : ttsModalTab === 'add'
+                  ? h(
+                      'div',
+                      { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
+                      h('div', { style: { fontSize: '13px', fontWeight: 700, color: T.textSecondary } }, '⚡ 一键填充常用轻量化 / 第三方配音模型模板：'),
+                      h(
+                        'div',
+                        { style: { display: 'flex', flexWrap: 'wrap', gap: '7px' } },
+                        (ttsConfig?.templates || []).map((tpl) =>
+                          h(
+                            'button',
+                            {
+                              key: tpl.templateId,
+                              type: 'button',
+                              className: 'dsh-vw-btn',
+                              onClick: () => applyTtsQuickTemplate(tpl),
+                              style: { ...ghostBtnStyle, padding: '6px 11px', fontSize: '12.5px', borderColor: T.accentBlueBorder, color: T.accentBlue },
+                            },
+                            tpl.label,
+                          ),
+                        ),
+                      ),
+                      h(
+                        'div',
+                        { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '9px' } },
+                        h('input', { value: customTtsForm.name, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, name: ev.target.value })), placeholder: '模型名称 (如 Edge-TTS 纯CPU)', style: inputStyle }),
+                        h('input', { value: customTtsForm.vramBadge, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, vramBadge: ev.target.value })), placeholder: '配置标识 (如 0GB纯CPU)', style: inputStyle }),
+                        h(CinemaSelect, {
+                          compact: true,
+                          value: customTtsForm.kind,
+                          onChange: (k) => setCustomTtsForm((p) => ({ ...p, kind: k })),
+                          T,
+                          options: [
+                            { value: 'openai-tts', label: 'OpenAI /v1/audio/speech 协议' },
+                            { value: 'http-json', label: '通用 HTTP JSON / GET API' },
+                            { value: 'cli-command', label: '本地命令行 / Python (免HTTP)' },
+                          ],
+                        }),
+                      ),
+                      customTtsForm.kind === 'cli-command'
+                        ? h(
+                            'div',
+                            { style: { display: 'flex', flexDirection: 'column', gap: '9px', padding: '12px', borderRadius: '11px', background: T.bgElevated } },
+                            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 120px', gap: '9px' } }, h('input', { value: customTtsForm.command, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, command: ev.target.value })), placeholder: '可执行命令 (如 edge-tts 或 D:/py/python.exe)', style: inputStyle }), h('input', { value: customTtsForm.outputExt, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, outputExt: ev.target.value })), placeholder: '.wav / .mp3', style: inputStyle })),
+                            h('input', { value: customTtsForm.argsTemplate, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, argsTemplate: ev.target.value })), placeholder: '参数模板，如 --text {{text}} --voice {{voice}} --write-media {{output}}', style: { ...inputStyle, fontFamily: 'Consolas, monospace' } }),
+                            h('input', { value: customTtsForm.voice, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, voice: ev.target.value })), placeholder: '默认 {{voice}} 变量值 (如 zh-CN-YunxiNeural)', style: inputStyle }),
+                          )
+                        : customTtsForm.kind === 'openai-tts'
+                          ? h(
+                              'div',
+                              { style: { display: 'flex', flexDirection: 'column', gap: '9px', padding: '12px', borderRadius: '11px', background: T.bgElevated } },
+                              h('input', { value: customTtsForm.endpoint, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, endpoint: ev.target.value })), placeholder: '接口地址 (如 http://127.0.0.1:8080/v1/audio/speech)', style: inputStyle }),
+                              h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '9px' } }, h('input', { value: customTtsForm.model, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, model: ev.target.value })), placeholder: 'model (如 kokoro / fish-speech-1.5)', style: inputStyle }), h('input', { value: customTtsForm.voice, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, voice: ev.target.value })), placeholder: 'voice (如 alloy / zf_xiaoxiao)', style: inputStyle }), h('input', { type: 'password', value: customTtsForm.apiKey, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, apiKey: ev.target.value })), placeholder: '可选 Bearer API Key', style: inputStyle })),
+                            )
+                          : h(
+                              'div',
+                              { style: { display: 'flex', flexDirection: 'column', gap: '9px', padding: '12px', borderRadius: '11px', background: T.bgElevated } },
+                              h('div', { style: { display: 'grid', gridTemplateColumns: '100px 1fr 150px', gap: '9px' } }, h(CinemaSelect, { compact: true, value: customTtsForm.method, onChange: (v) => setCustomTtsForm((p) => ({ ...p, method: v })), T, options: [{ value: 'POST', label: 'POST' }, { value: 'GET', label: 'GET' }] }), h('input', { value: customTtsForm.endpoint, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, endpoint: ev.target.value })), placeholder: 'http://127.0.0.1:9882/tts', style: inputStyle }), h(CinemaSelect, { compact: true, value: customTtsForm.responseType, onChange: (v) => setCustomTtsForm((p) => ({ ...p, responseType: v })), T, options: [{ value: 'binary', label: '直接返回音频流' }, { value: 'json_base64', label: 'JSON base64' }, { value: 'json_url', label: 'JSON 音频URL' }] })),
+                              h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' } }, h('input', { value: customTtsForm.responseAudioPath, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, responseAudioPath: ev.target.value })), placeholder: 'JSON 返回音频字段名 (如 data.audio)', style: inputStyle }), h('input', { type: 'password', value: customTtsForm.apiKey, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, apiKey: ev.target.value })), placeholder: '可选 Bearer API Key', style: inputStyle })),
+                              h('textarea', { value: customTtsForm.payloadTemplateText, onChange: (ev) => setCustomTtsForm((p) => ({ ...p, payloadTemplateText: ev.target.value })), rows: 4, style: { ...inputStyle, fontFamily: 'Consolas, monospace', fontSize: '12.5px' }, placeholder: 'JSON 请求体模板，可用变量：{{text}} {{lang}} {{voiceName}} {{refAudio}} {{promptText}} {{speed}}' }),
+                            ),
+                      h(
+                        'div',
+                        { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
+                        h('span', { style: { fontSize: '12px', color: T.textMuted } }, '支持占位符：{{text}} {{output}} {{voice}} {{voiceName}} {{lang}} {{speed}} {{refAudio}} {{promptText}}'),
+                        h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleSaveCustomTts, style: goldBtnStyle }, '💾 保存并启用该模型'),
+                      ),
+                    )
+                  : h(
+                      'div',
+                      { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
+                      h('div', { style: { fontSize: '13px', color: T.textSecondary } }, '可将网上或朋友分享的配音模型配置 JSON 直接粘贴导入；也可复制下方当前配置分享：'),
+                      h('textarea', { value: ttsImportJsonText, onChange: (ev) => setTtsImportJsonText(ev.target.value), rows: 6, style: { ...inputStyle, fontFamily: 'Consolas, monospace', fontSize: '12.5px' }, placeholder: '{\n  "id": "my-tts",\n  "name": "我的轻量语音模型",\n  "kind": "openai-tts",\n  "endpoint": "http://127.0.0.1:8080/v1/audio/speech",\n  "model": "kokoro",\n  "voice": "zf_xiaoxiao"\n}' }),
+                      h(
+                        'div',
+                        { style: { display: 'flex', justifyContent: 'space-between', gap: '10px' } },
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'dsh-vw-btn',
+                            onClick: () => {
+                              const { apiKeyMasked, hasApiKey, ...safeCopy } = activeTtsEngineObj || {}
+                              setTtsImportJsonText(JSON.stringify(safeCopy, null, 2))
+                              notify('已将当前引擎结构导出到输入框（已自动脱敏剔除密钥）', 'info')
+                            },
+                            style: ghostBtnStyle,
+                          },
+                          '📥 导出当前模型到文本框',
+                        ),
+                        h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleImportTtsJson, style: goldBtnStyle }, '📤 一键导入并启用'),
+                      ),
+                    ),
+              ttsTestResult
+                ? h(
+                    'div',
+                    { style: { padding: '11px 14px', borderRadius: '10px', background: ttsTestResult.ok ? T.accentGreenBg : T.accentRedBg, color: ttsTestResult.ok ? T.accentGreen : T.accentRed, display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' } },
+                    h('div', null, ttsTestResult.ok ? `✓ 试听合成成功 (${ttsTestResult.provider || ttsTestResult.engine} · ${ttsTestResult.durationSec || ''}s)` : `✕ 测试失败: ${ttsTestResult.error}`),
+                    ttsTestResult.audioDataUrl ? h('audio', { src: dataUrlSafe(ttsTestResult.audioDataUrl), controls: true, style: { width: '100%', height: '34px' } }) : null,
+                  )
+                : null,
+            ),
+          )
+        : null
+
       const cloneStep = cloneAuditionVoiceId ? 3 : recordedB64 ? 2 : 1
       const voiceModal = showVoiceModal
         ? h(
@@ -6255,9 +6880,14 @@ window.__ModuleLoader__?.load({
               { onClick: (ev) => ev.stopPropagation(), style: { ...panelStyle, width: '740px', maxWidth: '100%', maxHeight: '88vh', padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px', overflow: 'hidden' } },
               h(
                 'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('h3', { style: { margin: 0, fontSize: '18px', fontWeight: 800 } }, '🎙 IndexTTS-2.5 音色挑选与 3 步克隆工坊'),
-                h('button', { type: 'button', onClick: () => setShowVoiceModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 18 })),
+                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' } },
+                h('h3', { style: { margin: 0, fontSize: '18px', fontWeight: 800 } }, `🎙 ${activeTtsLabel} 音色挑选与 3 步克隆工坊`),
+                h(
+                  'div',
+                  { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+                  h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => { setShowVoiceModal(false); setShowTtsModal(true) }, style: { ...ghostBtnStyle, padding: '5px 10px', fontSize: '12px' } }, '⚙ 切换配音引擎'),
+                  h('button', { type: 'button', onClick: () => setShowVoiceModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 18 })),
+                ),
               ),
               h(SegmentedPills, {
                 value: voiceModalTab,
@@ -6352,7 +6982,7 @@ window.__ModuleLoader__?.load({
                       h(
                         'div',
                         { style: { display: 'flex', gap: '9px' } },
-                        h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleAuditionClonedVoice, style: { ...blueBtnStyle, flex: 1 } }, '▶ 用 IndexTTS-2.5 合成试听'),
+                        h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleAuditionClonedVoice, style: { ...blueBtnStyle, flex: 1 } }, `▶ 用 ${activeTtsLabel} 合成试听`),
                         h(
                           'button',
                           {
@@ -6629,6 +7259,7 @@ window.__ModuleLoader__?.load({
         projectDrawer,
         newProjectModal,
         llmModal,
+        ttsConfigModal,
         voiceModal,
         skinModal,
         vendorModal,
@@ -6705,7 +7336,12 @@ window.__ModuleLoader__?.load({
       name: '@dsh-video/web-video-workbench',
       inject: ['slots'],
       apply(ctx) {
-        if (ctx?.layout) attachHostLayout(ctx.layout)
+        try {
+          if (typeof ctx?.get === 'function') {
+            const initialLayout = ctx.get('layout')
+            if (initialLayout) attachHostLayout(initialLayout)
+          }
+        } catch {}
         if (typeof ctx?.inject === 'function') {
           try {
             ctx.inject(['layout'], (scoped) => attachHostLayout(scoped?.layout))
@@ -6726,7 +7362,7 @@ window.__ModuleLoader__?.load({
           )
           ctx.slots.inject('sidebar.panellist', () =>
             ctx.slots.register(
-              { name: 'sidebar.panellist', id: 'video-workbench', label: 'AI 视频工坊', order: 85 },
+              { name: 'sidebar.panellist', id: 'video-workbench', label: 'AI 视频工坊', order: 65 },
               SidebarVideoIcon,
             ),
           )

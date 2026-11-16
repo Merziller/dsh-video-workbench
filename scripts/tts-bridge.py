@@ -126,26 +126,58 @@ def generate_fallback_speech_like_wav(output_path: str, text: str, emotion: str 
     }
 
 
-def try_http_tts(endpoint: str, payload: dict, output_path: str, timeout: float = 15.0) -> bool:
-    """Attempt HTTP synthesis against the persistent IndexTTS-2 server (scripts/tts-server.py) or GPT-SoVITS api."""
+def try_http_tts(endpoint: str, payload: dict, output_path: str, timeout: float = 15.0, engine: str = "indextts25") -> bool:
+    """Attempt HTTP synthesis against IndexTTS-2.5/2 server (scripts/tts-server.py) or GPT-SoVITS api_v2/api_v1."""
     if not endpoint:
         return False
     url = endpoint.rstrip("/")
-    req_data = json.dumps(payload).encode("utf-8")
     # Never route localhost TTS traffic through a system HTTP proxy
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    for path_suffix in ("/tts", "/api/tts"):
+
+    candidates = []
+    if engine == "gptvoice":
+        gsv_v2 = {
+            "text": payload.get("text", ""),
+            "text_lang": (payload.get("text_lang") or payload.get("lang") or "zh").lower(),
+            "ref_audio_path": payload.get("ref_audio_path") or payload.get("spk_audio_prompt") or "",
+            "prompt_text": payload.get("prompt_text") or "",
+            "prompt_lang": (payload.get("prompt_lang") or payload.get("lang") or "zh").lower(),
+            "text_split_method": payload.get("text_split_method") or "cut5",
+            "media_type": "wav",
+            "streaming_mode": False,
+            "speed_factor": float(payload.get("speed_factor") or payload.get("duration_factor") or 1.0),
+        }
+        gsv_v1 = {
+            "text": payload.get("text", ""),
+            "text_language": (payload.get("text_lang") or "zh").lower(),
+            "refer_wav_path": payload.get("ref_audio_path") or "",
+            "prompt_text": payload.get("prompt_text") or "",
+            "prompt_language": (payload.get("prompt_lang") or "zh").lower(),
+        }
+        candidates = [
+            ("POST", "/tts", gsv_v2),
+            ("POST", "/api/tts", payload),
+            ("POST", "/", gsv_v1),
+        ]
+    else:
+        candidates = [
+            ("POST", "/tts", payload),
+            ("POST", "/api/tts", payload),
+        ]
+
+    for method, path_suffix, body_obj in candidates:
         try:
+            req_data = json.dumps(body_obj).encode("utf-8")
             req = urllib.request.Request(
                 url + path_suffix,
                 data=req_data,
                 headers={"Content-Type": "application/json"},
-                method="POST",
+                method=method,
             )
             with opener.open(req, timeout=timeout) as resp:
                 body = resp.read()
                 ctype = (resp.headers.get("Content-Type") or "").lower()
-                if "audio" in ctype or body[:4] == b"RIFF":
+                if "audio" in ctype or body[:4] == b"RIFF" or body[:4] == b"OggS" or body[:3] == b"ID3":
                     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
                     with open(output_path, "wb") as f:
                         f.write(body)
@@ -252,7 +284,7 @@ def run_indextts_direct(indextts_root: str, ref_audio: str, emo_audio: str, text
 
 def main():
     parser = argparse.ArgumentParser(description="DSH Video Workbench Local TTS Worker Bridge")
-    parser.add_argument("--engine", default="indextts25", choices=["indextts25", "indextts2", "gptvoice", "auto", "fallback"])
+    parser.add_argument("--engine", default="indextts25")
     parser.add_argument("--text", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--emotion", default="平静")
@@ -290,6 +322,7 @@ def main():
                 "text_lang": (args.lang or "zh").lower(),
                 "lang": args.lang or "",
                 "duration_factor": float(args.duration_factor or 1.0),
+                "speed_factor": float(args.duration_factor or 1.0),
                 "ref_audio_path": staged_ref or args.ref_audio,
                 "prompt_text": args.prompt_text,
                 "prompt_lang": (args.lang or "zh").lower(),
@@ -299,7 +332,7 @@ def main():
                 "fallback_ref": args.fallback_ref,
                 "output_path": out_abs,
             }
-            if try_http_tts(args.endpoint, payload, out_abs, timeout=float(args.http_timeout)):
+            if try_http_tts(args.endpoint, payload, out_abs, timeout=float(args.http_timeout), engine=args.engine):
                 print(json.dumps({
                     "ok": True,
                     "provider": f"{args.engine}-http",
@@ -333,8 +366,12 @@ def main():
             res["placeholder"] = True
             print(json.dumps(res, ensure_ascii=False))
             return
+        if args.engine == "gptvoice":
+            raise RuntimeError(
+                f"GPT-SoVITS 服务未连接 ({args.endpoint or 'http://127.0.0.1:9881'})：请确认已启动 GPT-SoVITS api_v2.py 并检查参考音频/文本参数，或切换到其他配音引擎。"
+            )
         raise RuntimeError(
-            "本地 TTS 引擎不可用：IndexTTS-2.5 常驻服务未就绪（请稍候模型加载完成或检查 INDEXTTS_ROOT/INDEXTTS_PYTHON）。"
+            "本地 TTS 引擎不可用：IndexTTS-2.5 常驻服务未就绪（可在「配音引擎中心」切换 GPT-SoVITS 或导入低配置/纯CPU配音模型）。"
         )
     finally:
         for p in (staged_ref, staged_emo):

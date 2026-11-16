@@ -32,12 +32,19 @@ import {
   saveAvatarConfig,
 } from '@dsh-video/tool-avatar'
 import {
+  addOrUpdateCustomTtsEngine,
   cloneRecordedVoice,
   executeGenerateSpeech,
+  getActiveTtsEngineId,
+  getSafeTtsConfigSummary,
   getTtsServerHealth,
   getVoiceCatalog,
   importVoicePack,
   matchAllScenesInScript,
+  removeCustomTtsEngine,
+  resolveTtsEngineSpec,
+  saveTtsConfig,
+  setActiveTtsEngine,
 } from '@dsh-video/tool-local-tts'
 import {
   executeVideoLint,
@@ -454,13 +461,15 @@ export async function handleWorkbenchApiRequest(req) {
         }
       }
       const catalog = getVoiceCatalog()
-      const ttsStatus = await getTtsServerHealth()
+      const activeTtsId = getActiveTtsEngineId()
+      const ttsStatus = await getTtsServerHealth(1800, activeTtsId)
       return jsonResponse({
         ok: true,
         workspaceRoot,
         projects,
         activeProject,
         llmConfig: getSafeLlmConfigSummary(),
+        ttsConfig: getSafeTtsConfigSummary(),
         voiceCatalog: catalog.voices,
         voiceCategories: catalog.categories,
         availableEmotions: Object.keys(catalog.emotionReferences),
@@ -486,6 +495,67 @@ export async function handleWorkbenchApiRequest(req) {
       const body = await parseRequestJson(req)
       const testRes = await testLlmConnection(body)
       return jsonResponse({ ok: true, ...testRes })
+    }
+
+    // 1d. GET / POST /api/video-workbench/tts-config & POST /tts-test
+    if (pathname === '/api/video-workbench/tts-config' && req.method === 'GET') {
+      const summary = getSafeTtsConfigSummary()
+      const health = await getTtsServerHealth(1800, summary.activeEngineId)
+      return jsonResponse({ ok: true, config: summary, ttsStatus: health })
+    }
+    if (pathname === '/api/video-workbench/tts-config' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      const act = String(body.action || 'save').toLowerCase()
+      if (act === 'select' && body.activeEngineId) {
+        setActiveTtsEngine(body.activeEngineId)
+      } else if (act === 'add-custom' && body.engine) {
+        addOrUpdateCustomTtsEngine(body.engine)
+      } else if (act === 'remove-custom' && body.id) {
+        removeCustomTtsEngine(body.id)
+      } else if (act === 'import-json' && body.jsonText) {
+        const parsed = typeof body.jsonText === 'string' ? JSON.parse(body.jsonText) : body.jsonText
+        if (Array.isArray(parsed.customEngines)) {
+          saveTtsConfig(parsed)
+        } else if (parsed && typeof parsed === 'object') {
+          addOrUpdateCustomTtsEngine({ activate: true, ...parsed })
+        }
+      } else {
+        saveTtsConfig(body)
+      }
+      const summary = getSafeTtsConfigSummary()
+      const health = await getTtsServerHealth(1800, summary.activeEngineId)
+      return jsonResponse({ ok: true, config: summary, ttsStatus: health })
+    }
+    if (pathname === '/api/video-workbench/tts-test' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      const testDir = join(REPO_ROOT, 'voice-packs', 'imported', '_previews')
+      mkdirSync(testDir, { recursive: true })
+      const testWav = join(testDir, `tts-test-${Date.now()}.wav`)
+      const targetEngine = body.engineId || body.engine || getActiveTtsEngineId()
+      const sampleText = String(body.text || '').trim() || '你好，这是一段语音引擎测试音频，音色清晰稳定。'
+      try {
+        const synth = await executeGenerateSpeech({
+          text: sampleText,
+          voiceId: body.voiceId || 'auto',
+          emotion: body.emotion || '平静',
+          engine: targetEngine,
+          outputPath: testWav,
+        })
+        const outFile = synth.audioPath || synth.outputPath || testWav
+        const wavB64 = existsSync(outFile) ? readFileSync(outFile).toString('base64') : ''
+        try { rmSync(outFile, { force: true }) } catch {}
+        return jsonResponse({
+          ok: true,
+          engine: synth.engine,
+          provider: synth.provider,
+          durationSec: synth.durationSec,
+          voiceUsed: synth.voiceUsed,
+          audioDataUrl: wavB64 ? `data:audio/wav;base64,${wavB64}` : '',
+        })
+      } catch (err) {
+        try { rmSync(testWav, { force: true }) } catch {}
+        throw err
+      }
     }
 
     // 1b. GET /api/video-workbench/voices/preview?id=...
@@ -851,6 +921,7 @@ export async function handleWorkbenchApiRequest(req) {
         text: auditionText,
         voiceId: body.voiceId || 'auto',
         emotion: body.emotion || '平静',
+        engine: body.ttsEngine || getActiveTtsEngineId(),
         outputPath: previewWav,
       })
       const wavB64 = existsSync(synth.audioPath || previewWav)
@@ -1115,7 +1186,7 @@ export async function handleWorkbenchApiRequest(req) {
           text: body.text || scene.narration,
           emotion: body.emotion || scene.emotion || '平静',
           voiceId: body.voiceId || scene.voiceId || data.defaultVoiceId || 'auto',
-          engine: body.ttsEngine || process.env.DEFAULT_TTS_ENGINE || 'indextts25',
+          engine: body.ttsEngine || getActiveTtsEngineId(),
           fps: data.fps || 30,
           outputPath: outWav,
           scriptPath: projectDir,
@@ -1148,7 +1219,7 @@ export async function handleWorkbenchApiRequest(req) {
               text: scene.narration,
               emotion: scene.emotion || '平静',
               voiceId: scene.voiceId || data.defaultVoiceId || 'auto',
-              engine: body.ttsEngine || process.env.DEFAULT_TTS_ENGINE || 'indextts25',
+              engine: body.ttsEngine || getActiveTtsEngineId(),
               fps: data.fps || 30,
               outputPath: outWav,
               scriptPath: projectDir,
@@ -1172,7 +1243,8 @@ export async function handleWorkbenchApiRequest(req) {
           return { ok: true, action, results, mastering, mixResult, script: updated.data }
         }
         if (body.async) {
-          const job = createBackgroundJob('正在启动 IndexTTS-2.5 配音引擎...', runTtsAll)
+          const activeSpec = resolveTtsEngineSpec(body.ttsEngine || getActiveTtsEngineId())
+          const job = createBackgroundJob(`正在启动 ${activeSpec.shortName || activeSpec.name} 配音引擎...`, runTtsAll)
           return jsonResponse({ ok: true, jobId: job.id })
         }
         return jsonResponse(await runTtsAll())
@@ -1691,6 +1763,8 @@ export function apply(ctx) {
       { path: '/api/video-workbench/jobs', methods: ['GET'] },
       { path: '/api/video-workbench/llm-config', methods: ['GET', 'POST'] },
       { path: '/api/video-workbench/llm-test', methods: ['POST'] },
+      { path: '/api/video-workbench/tts-config', methods: ['GET', 'POST'] },
+      { path: '/api/video-workbench/tts-test', methods: ['POST'] },
       { path: '/api/video-workbench/voices/preview', methods: ['GET'] },
       { path: '/api/video-workbench/projects', methods: ['POST'] },
       { path: '/api/video-workbench/projects/delete', methods: ['POST'] },

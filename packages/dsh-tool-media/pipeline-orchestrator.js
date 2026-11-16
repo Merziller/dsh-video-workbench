@@ -11,7 +11,7 @@ import {
   sanitizeSpokenNarration,
   writeScriptJson,
 } from '@dsh-video/shared'
-import { executeGenerateSpeech, matchAllScenesInScript } from '@dsh-video/tool-local-tts'
+import { executeGenerateSpeech, getActiveTtsEngineId, matchAllScenesInScript, resolveTtsEngineSpec } from '@dsh-video/tool-local-tts'
 import { executeGenerateAvatar } from '@dsh-video/tool-avatar'
 import {
   executeVideoLint,
@@ -411,10 +411,11 @@ async function executeMultiAgentRunner(run, helpers) {
   // =========================================================================
   if (!isDoneTask(run, 't-audio')) {
     await waitIfPaused('t-audio')
+    const activeTtsSpec = resolveTtsEngineSpec(spec.ttsEngine || getActiveTtsEngineId())
     updateTask('t-audio', {
       status: 'running',
       progress: 10,
-      message: '配音混音 Agent 启动：正在生成 IndexTTS-2.5 旁白语音与音色匹配...',
+      message: `配音混音 Agent 启动：正在使用 ${activeTtsSpec.shortName || activeTtsSpec.name} 生成旁白语音与音色匹配...`,
     })
 
     let scriptNow = readScriptJson(absDir).data
@@ -532,7 +533,7 @@ async function executeMultiAgentRunner(run, helpers) {
           outputPath: `audio/${sc.id}.wav`,
           fps,
           voiceId: sc.voiceId || voiceId || 'auto',
-          engine: spec.ttsEngine || 'indextts25',
+          engine: spec.ttsEngine || getActiveTtsEngineId(),
           scriptPath: absDir,
           sceneId: sc.id,
           allowPlaceholder,

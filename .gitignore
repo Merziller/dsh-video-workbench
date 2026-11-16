@@ -6,6 +6,8 @@
 *.pem
 *.p12
 secrets.json
+.dsh-video-tts-config.json
+.dsh-video-avatar-config.json
 
 # Dependencies & Package Manager Caches
 node_modules/

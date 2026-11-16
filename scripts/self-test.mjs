@@ -1693,16 +1693,29 @@ export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = {
     },
   }
   const clientPlugin = capturedLoaderDef.factory((m) => (m === 'react' ? mockReact : {}))
-  clientPlugin.apply({
-    slots: {
-      inject: (_name, fn) => fn(),
-      register: (opts, Comp) => {
-        registeredSlots.push({ opts, Comp })
-        return () => {}
+  // Simulate DSH Cordis strict proxy that throws `cannot get property "<k>" without inject` on un-injected services
+  const strictCordisCtx = new Proxy(
+    {
+      slots: {
+        inject: (_name, fn) => fn(),
+        register: (opts, Comp) => {
+          registeredSlots.push({ opts, Comp })
+          return () => {}
+        },
+      },
+      inject: (_deps, fn) => fn({ layout: mockLayoutService }),
+      get: (svc) => (svc === 'layout' ? mockLayoutService : undefined),
+    },
+    {
+      get(target, prop) {
+        if (typeof prop === 'string' && !(prop in target) && !['then', 'toJSON'].includes(prop)) {
+          throw new Error(`cannot get property "${prop}" without inject`)
+        }
+        return target[prop]
       },
     },
-    inject: (_deps, fn) => fn({ layout: mockLayoutService }),
-  })
+  )
+  clientPlugin.apply(strictCordisCtx)
   const hasMainSlot = registeredSlots.some((s) => s.opts?.name === 'main' && s.opts?.key === 'video-workbench')
   const overlayEntry = registeredSlots.find((s) => s.opts?.name === 'shell.overlay' && s.opts?.id === 'video-workbench-topbar-switcher')
   const sidebarEntry = registeredSlots.find((s) => s.opts?.name === 'sidebar.panellist' && s.opts?.id === 'video-workbench')
@@ -1793,8 +1806,109 @@ export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = {
   }
   rmSync(tmpThumbProj, { recursive: true, force: true })
 
+  // 16g. Multi-Engine TTS Config (GPT-SoVITS + Custom OpenAI/HTTP/CLI Model Import + Secret Masking + HTTP Audio Synth)
+  const ttsCfgPath = join(REPO_ROOT, '.dsh-video-tts-config.json')
+  const prevTtsCfgRaw = existsSync(ttsCfgPath) ? readFileSync(ttsCfgPath, 'utf8') : null
+  const mockAudioRes = await (async () => {
+    const { createServer } = await import('node:http')
+    const mockWavPath = join(REPO_ROOT, '.tmp', 'v7-mock-tts-src.wav')
+    mkdirSync(join(REPO_ROOT, '.tmp'), { recursive: true })
+    await runCommandRedirected(
+      bins.ffmpeg,
+      ['-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1.1', '-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', mockWavPath],
+      { timeoutMs: 15_000 },
+    )
+    const wavBytes = readFileSync(mockWavPath)
+    let hitPayload = null
+    let hitAuth = ''
+    const srv = createServer(async (req, res) => {
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' })
+        res.end('ok')
+        return
+      }
+      const chunks = []
+      for await (const c of req) chunks.push(c)
+      const rawBody = Buffer.concat(chunks).toString('utf8')
+      hitPayload = rawBody ? JSON.parse(rawBody) : {}
+      hitAuth = req.headers.authorization || ''
+      res.writeHead(200, { 'Content-Type': 'audio/wav' })
+      res.end(wavBytes)
+    })
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+    const addr = srv.address()
+    try {
+      // Check built-ins include gptvoice & switch cleanly
+      const swRes = await handleWorkbenchApiRequest(
+        new Request('http://127.0.0.1/api/video-workbench/tts-config', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'select', activeEngineId: 'gptvoice' }),
+        }),
+      )
+      const swJson = await swRes.json()
+      const hasGsv = (swJson.config?.engines || []).some((e) => e.id === 'gptvoice')
+      if (!swJson.ok || !hasGsv || swJson.config?.activeEngineId !== 'gptvoice') {
+        throw new Error(`GPT-SoVITS switch failed: ${JSON.stringify(swJson)}`)
+      }
+
+      // Add custom OpenAI-compatible TTS model with secret API Key & test audio synthesis
+      const addRes = await handleWorkbenchApiRequest(
+        new Request('http://127.0.0.1/api/video-workbench/tts-config', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            action: 'add-custom',
+            engine: {
+              id: 'test-kokoro-openai',
+              name: 'Test Kokoro Custom',
+              kind: 'openai-tts',
+              endpoint: `http://127.0.0.1:${addr.port}/v1/audio/speech`,
+              apiKey: 'sk-custom-secret-8899',
+              model: 'kokoro-test',
+              voice: 'zf_xiaoxiao',
+              activate: true,
+            },
+          }),
+        }),
+      )
+      const addJson = await addRes.json()
+      const getTtsRes = await handleWorkbenchApiRequest(new Request('http://127.0.0.1/api/video-workbench/tts-config'))
+      const getTtsRaw = await getTtsRes.text()
+      const getTtsJson = JSON.parse(getTtsRaw)
+      const customEntry = (getTtsJson.config?.engines || []).find((e) => e.id === 'test-kokoro-openai')
+      if (!addJson.ok || !customEntry?.hasApiKey || getTtsRaw.includes('sk-custom-secret-8899')) {
+        throw new Error(`Custom TTS secret masking failed: ${getTtsRaw}`)
+      }
+
+      const synthTestRes = await handleWorkbenchApiRequest(
+        new Request('http://127.0.0.1/api/video-workbench/tts-test', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ engineId: 'test-kokoro-openai', text: '自定义轻量化配音引擎测试' }),
+        }),
+      )
+      const synthTestJson = await synthTestRes.json()
+      if (
+        !synthTestJson.ok ||
+        !String(synthTestJson.audioDataUrl || '').startsWith('data:audio/wav;base64,') ||
+        Number(synthTestJson.durationSec) < 0.8 ||
+        hitPayload?.input !== '自定义轻量化配音引擎测试' ||
+        hitAuth !== 'Bearer sk-custom-secret-8899'
+      ) {
+        throw new Error(`Custom TTS synthesis check failed: ${JSON.stringify(synthTestJson)}`)
+      }
+      return synthTestJson
+    } finally {
+      srv.close()
+      try { rmSync(mockWavPath, { force: true }) } catch {}
+      if (prevTtsCfgRaw !== null) writeFileSync(ttsCfgPath, prevTtsCfgRaw, 'utf8')
+      else try { rmSync(ttsCfgPath, { force: true }) } catch {}
+    }
+  })()
+
   console.log(
-    `[16/16] v7 Fixes Verified (Topic Polish API, Avatar Secret Masking, 4-Corner AI Badge, Adaptive Pacing, Top Titlebar Switcher + Sync Slots [${registeredSlots.length}], NarrationMode UI & Scene Thumbs)!`,
+    `[16/16] v7+v8 Verified (Topic Polish, Strict Cordis Proxy + Top Switcher [${registeredSlots.length}], Multi-Engine TTS GPT-SoVITS + Custom OpenAI Synth [${mockAudioRes.durationSec}s], NarrationMode UI & Scene Thumbs)!`,
   )
   console.log('======================================================================')
 }
