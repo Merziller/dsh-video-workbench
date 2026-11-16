@@ -677,13 +677,15 @@ window.__ModuleLoader__?.load({
         'div',
         {
           style: {
-            display: fullWidth ? 'grid' : 'inline-flex',
-            ...(fullWidth ? { gridTemplateColumns: `repeat(${Math.max(1, options.length)}, minmax(0, 1fr))` } : { flexWrap: 'wrap' }),
+            display: fullWidth ? 'flex' : 'inline-flex',
+            flexWrap: 'wrap',
+            ...(fullWidth ? { width: '100%' } : {}),
             gap: '5px',
             padding: '4px',
             borderRadius: '11px',
             background: T.bgInput,
             border: `1px solid ${T.borderSubtle}`,
+            flexShrink: 0,
           },
         },
         options.map((opt) => {
@@ -696,18 +698,23 @@ window.__ModuleLoader__?.load({
               className: 'dsh-vw-btn',
               onClick: () => onChange(opt.id),
               style: {
-                padding: size === 'sm' ? '6px 11px' : '8px 14px',
+                ...(fullWidth ? { flex: '1 1 0%', minWidth: 'fit-content', maxWidth: '100%' } : {}),
+                padding: size === 'sm' ? '6px 11px' : '8px 12px',
                 borderRadius: '8px',
                 border: `1px solid ${on ? acBorder : 'transparent'}`,
                 background: on ? acBg : 'transparent',
                 color: on ? acColor : T.textSecondary,
-                fontSize: size === 'sm' ? '12.5px' : '13.5px',
+                fontSize: size === 'sm' ? '12.5px' : '13px',
                 fontWeight: on ? 800 : 600,
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '6px',
-                whiteSpace: 'nowrap',
+                whiteSpace: fullWidth ? 'normal' : 'nowrap',
+                lineHeight: 1.35,
+                textAlign: 'center',
+                wordBreak: 'keep-all',
+                overflow: 'hidden',
                 cursor: 'pointer',
               },
             },
@@ -965,131 +972,100 @@ window.__ModuleLoader__?.load({
       } catch {}
     }
 
-    function useWindowTitlebarRect() {
-      const [rect, setRect] = useState({ top: 4, height: 38, left: null })
-      useEffect(() => {
-        if (typeof navigator === 'undefined') return undefined
-        const overlay = navigator.windowControlsOverlay
-        if (!overlay?.getTitlebarAreaRect) return undefined
-        const sync = () => {
-          try {
-            if (overlay.visible === false) return
-            const r = overlay.getTitlebarAreaRect()
-            if (r && Number.isFinite(r.height) && r.height > 12) {
-              const cx = Number.isFinite(r.x) && Number.isFinite(r.width) && r.width > 120
-                ? Math.round(r.x + r.width / 2)
-                : null
-              setRect({ top: Number(r.top) || 0, height: Number(r.height), left: cx })
-            }
-          } catch {}
-        }
-        sync()
-        overlay.addEventListener?.('geometrychange', sync)
-        return () => overlay.removeEventListener?.('geometrychange', sync)
-      }, [])
-      return rect
-    }
+    const DEFAULT_TTS_ENGINES_FALLBACK = [
+      {
+        id: 'indextts25',
+        builtin: true,
+        kind: 'indextts25',
+        name: 'IndexTTS-2.5 (高保真情感克隆)',
+        shortName: 'IndexTTS-2.5',
+        vramBadge: '推荐 8GB+ 显存',
+        description: '支持零样本音色克隆、情感语音参考及 Qwen 情绪指令控制，音质细腻。',
+        endpoint: 'http://127.0.0.1:9880',
+      },
+      {
+        id: 'indextts2',
+        builtin: true,
+        kind: 'indextts2',
+        name: 'IndexTTS-2 (经典本地版本)',
+        shortName: 'IndexTTS-2',
+        vramBadge: '6–8GB 显存',
+        description: '兼容旧版 cy_app / IndexTTS-2 HTTP 与本地推理入口。',
+        endpoint: 'http://127.0.0.1:9880',
+      },
+      {
+        id: 'gptvoice',
+        builtin: true,
+        kind: 'gptvoice',
+        name: 'GPT-SoVITS (低显存轻量克隆)',
+        shortName: 'GPT-SoVITS',
+        vramBadge: '4GB+ 显存 · 低配友好',
+        description: '专为低显存 / 中低配显卡优化的轻量配音与音色克隆方案，兼容 api_v2.py 与 v1 接口。',
+        endpoint: 'http://127.0.0.1:9881',
+      },
+    ]
 
-    function TopTitlebarSwitcherOverlay() {
-      const [, setTick] = useState(0)
-      const [darkMode, setDarkMode] = useState(() => detectDshThemeIsDark())
-      const titlebarRect = useWindowTitlebarRect()
-      useEffect(() => {
-        const listener = () => setTick((t) => t + 1)
-        hostLayoutListeners.add(listener)
-        return () => hostLayoutListeners.delete(listener)
-      }, [])
-      useEffect(() => {
-        const updateTheme = () => setDarkMode(detectDshThemeIsDark())
-        updateTheme()
-        const obs = new MutationObserver(updateTheme)
-        obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
-        if (document.body) obs.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
-        return () => obs.disconnect()
-      }, [])
-
-      if (!hostLayoutSvc || typeof hostLayoutSvc.selectPanel !== 'function') return null
-      const activePanelId = hostLayoutSvc.panelInfo?.getSnapshot?.()?.activePanelId
-      const inVideo = activePanelId === 'video-workbench'
-      const pillTop = Math.max(3, Math.round((titlebarRect.top || 0) + Math.max(0, (titlebarRect.height - 28) / 2)))
-      const bg = darkMode ? 'rgba(13, 18, 30, 0.90)' : 'rgba(255, 255, 255, 0.94)'
-      const border = darkMode ? '1px solid rgba(148, 163, 184, 0.28)' : '1px solid rgba(15, 23, 42, 0.14)'
-      const muted = darkMode ? '#CBD5E1' : '#475569'
-      const activeChatBg = darkMode ? 'rgba(34, 211, 238, 0.2)' : 'rgba(2, 132, 199, 0.14)'
-      const activeChatFg = darkMode ? '#22D3EE' : '#0369A1'
-      const activeVidBg = darkMode ? 'rgba(245, 185, 66, 0.22)' : 'rgba(217, 119, 6, 0.15)'
-      const activeVidFg = darkMode ? '#F5B942' : '#B45309'
-
-      return h(
-        'div',
-        {
-          'data-dsh-video-topbar-switcher': '1',
-          style: {
-            position: 'fixed',
-            top: `${pillTop}px`,
-            left: titlebarRect.left ? `${titlebarRect.left}px` : '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 4500,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '3px',
-            padding: '2px 4px',
-            height: '28px',
-            borderRadius: '999px',
-            background: bg,
-            border,
-            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.18)',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
-            maxWidth: 'calc(100vw - 320px)',
-            WebkitAppRegion: 'no-drag',
-            appRegion: 'no-drag',
-            pointerEvents: 'auto',
-            fontFamily: '"Noto Sans SC", system-ui, sans-serif',
-          },
+    const DEFAULT_TTS_TEMPLATES_FALLBACK = [
+      {
+        templateId: 'edge-tts-cpu',
+        label: 'Edge-TTS (零显卡纯 CPU 命令行)',
+        engine: {
+          id: 'edge-tts-cpu',
+          name: 'Edge-TTS 轻量旁白 (纯CPU零显存)',
+          kind: 'cli-command',
+          vramBadge: '0GB 显存 · 纯CPU',
+          command: 'edge-tts',
+          argsTemplate: '--text {{text}} --voice {{voice}} --write-media {{output}}',
+          defaultVoice: 'zh-CN-YunxiNeural',
+          outputExt: '.mp3',
         },
-        h(
-          'button',
-          {
-            type: 'button',
-            onClick: () => hostLayoutSvc.selectPanel(null),
-            style: {
-              padding: '3px 11px',
-              borderRadius: '999px',
-              border: 'none',
-              cursor: 'pointer',
-              background: !inVideo ? activeChatBg : 'transparent',
-              color: !inVideo ? activeChatFg : muted,
-              fontSize: '12px',
-              fontWeight: !inVideo ? 800 : 600,
-              whiteSpace: 'nowrap',
-              lineHeight: 1.2,
-            },
-          },
-          '💬 DeepSeek 对话',
-        ),
-        h(
-          'button',
-          {
-            type: 'button',
-            onClick: () => hostLayoutSvc.selectPanel('video-workbench'),
-            style: {
-              padding: '3px 11px',
-              borderRadius: '999px',
-              border: 'none',
-              cursor: 'pointer',
-              background: inVideo ? activeVidBg : 'transparent',
-              color: inVideo ? activeVidFg : muted,
-              fontSize: '12px',
-              fontWeight: inVideo ? 800 : 600,
-              whiteSpace: 'nowrap',
-              lineHeight: 1.2,
-            },
-          },
-          '🎬 AI 视频工坊',
-        ),
-      )
-    }
+      },
+      {
+        templateId: 'fish-speech-openai',
+        label: 'Fish Speech / OpenAI /v1/audio/speech',
+        engine: {
+          id: 'fish-speech-openai',
+          name: 'Fish Speech / OpenAI TTS 接口',
+          kind: 'openai-tts',
+          vramBadge: '云端或本机 API',
+          endpoint: 'http://127.0.0.1:8080/v1/audio/speech',
+          model: 'fish-speech-1.5',
+          voice: 'default',
+          responseFormat: 'wav',
+          speed: 1.0,
+        },
+      },
+      {
+        templateId: 'kokoro-openai',
+        label: 'Kokoro-FastAPI (超轻量本地 / CPU)',
+        engine: {
+          id: 'kokoro-openai',
+          name: 'Kokoro 82M 超轻量语音',
+          kind: 'openai-tts',
+          vramBadge: 'CPU / <2GB 显存',
+          endpoint: 'http://127.0.0.1:8880/v1/audio/speech',
+          model: 'kokoro',
+          voice: 'zf_xiaoxiao',
+          responseFormat: 'wav',
+          speed: 1.0,
+        },
+      },
+      {
+        templateId: 'cosyvoice-http',
+        label: 'CosyVoice / ChatTTS 通用 HTTP JSON',
+        engine: {
+          id: 'cosyvoice-http',
+          name: 'CosyVoice / 自定义 HTTP 模型',
+          kind: 'http-json',
+          vramBadge: '自定义 HTTP',
+          endpoint: 'http://127.0.0.1:9882/tts',
+          method: 'POST',
+          responseType: 'binary',
+          responseAudioPath: 'audio',
+          payloadTemplate: { text: '{{text}}', voice: '{{voiceName}}', lang: '{{lang}}', speed: '{{speed}}', ref_audio: '{{refAudio}}', prompt_text: '{{promptText}}' },
+        },
+      },
+    ]
 
     function VideoWorkbenchApp({ ctx, isMainSlot = false, layoutService = null }) {
       const [, setHostLayoutRev] = useState(0)
@@ -1184,7 +1160,12 @@ window.__ModuleLoader__?.load({
       const [voiceCatalog, setVoiceCatalog] = useState([])
       const [availableEmotions, setAvailableEmotions] = useState(['平静', '昂扬', '温和', '严肃', '兴奋', '深沉'])
       const [ttsStatus, setTtsStatus] = useState({ reachable: false, ready: false, engine: 'indextts25', engineName: 'IndexTTS-2.5' })
-      const [ttsConfig, setTtsConfig] = useState({ activeEngineId: 'indextts25', engines: [], templates: [] })
+      const [ttsConfig, setTtsConfig] = useState({
+        activeEngineId: 'indextts25',
+        engines: DEFAULT_TTS_ENGINES_FALLBACK,
+        templates: DEFAULT_TTS_TEMPLATES_FALLBACK,
+      })
+      const [ttsBackendOutdated, setTtsBackendOutdated] = useState(false)
       const [showTtsModal, setShowTtsModal] = useState(false)
       const [ttsModalTab, setTtsModalTab] = useState('engines') // 'engines' | 'add' | 'import'
       const [builtinTtsForm, setBuiltinTtsForm] = useState({
@@ -1549,8 +1530,13 @@ window.__ModuleLoader__?.load({
 
       const syncTtsFormFromSummary = (cfg) => {
         if (!cfg) return
-        setTtsConfig(cfg)
-        const list = cfg.engines || []
+        const normalized = {
+          ...cfg,
+          engines: Array.isArray(cfg.engines) && cfg.engines.length ? cfg.engines : DEFAULT_TTS_ENGINES_FALLBACK,
+          templates: Array.isArray(cfg.templates) && cfg.templates.length ? cfg.templates : DEFAULT_TTS_TEMPLATES_FALLBACK,
+        }
+        setTtsConfig(normalized)
+        const list = normalized.engines || []
         const idx25 = list.find((e) => e.id === 'indextts25') || {}
         const gsv = list.find((e) => e.id === 'gptvoice') || {}
         setBuiltinTtsForm({
@@ -1701,6 +1687,28 @@ window.__ModuleLoader__?.load({
       useEffect(() => {
         refreshState('')
       }, [])
+
+      useEffect(() => {
+        if (!showTtsModal) return
+        let cancelled = false
+        ;(async () => {
+          try {
+            const res = await connFetch('/api/video-workbench/tts-config')
+            if (!res.ok) {
+              if (!cancelled && res.status === 404) setTtsBackendOutdated(true)
+              return
+            }
+            const d = await res.json().catch(() => null)
+            if (cancelled || !d?.ok) return
+            setTtsBackendOutdated(false)
+            if (d.config) syncTtsFormFromSummary(d.config)
+            if (d.ttsStatus) setTtsStatus(d.ttsStatus)
+          } catch {}
+        })()
+        return () => {
+          cancelled = true
+        }
+      }, [showTtsModal, connFetch])
 
       const switchWorkbenchMode = (nextMode) => {
         setMode(nextMode)
@@ -3941,7 +3949,7 @@ window.__ModuleLoader__?.load({
                   } else if (!isMainSlot) {
                     switchWorkbenchMode('chat')
                   } else {
-                    notify('请点击顶部居中「💬 DeepSeek 对话」或左侧边栏返回 DeepSeek 对话', 'info')
+                    notify('请点击左侧边栏返回 DeepSeek 对话', 'info')
                   }
                 },
                 style: { padding: '5px 11px', borderRadius: '999px', border: 'none', background: 'transparent', color: T.textSecondary, fontSize: '12.5px', fontWeight: 700, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '5px' },
@@ -6658,34 +6666,45 @@ window.__ModuleLoader__?.load({
               { className: 'dsh-vw-scroll', onClick: (ev) => ev.stopPropagation(), style: { ...panelStyle, width: '780px', maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' } },
               h(
                 'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' } },
+                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexShrink: 0 } },
                 h(
                   'div',
                   null,
                   h('h3', { style: { margin: 0, fontSize: '18px', fontWeight: 800 } }, '🎙 多引擎配音中心 (IndexTTS-2.5 / 2 · GPT-SoVITS · 自定义模型)'),
                   h('div', { style: { fontSize: '12.5px', color: T.textMuted, marginTop: '3px' } }, '低显存电脑可选 GPT-SoVITS 或导入纯 CPU / 云端配音模型，自由切换不绑定单一模型'),
                 ),
-                h('button', { type: 'button', onClick: () => setShowTtsModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 18 })),
+                h('button', { type: 'button', onClick: () => setShowTtsModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer', flexShrink: 0 } }, h(Icon, { name: 'x', size: 18 })),
               ),
-              h(SegmentedPills, {
-                value: ttsModalTab,
-                onChange: setTtsModalTab,
-                T,
-                fullWidth: true,
-                options: [
-                  { id: 'engines', label: '🎛 选择引擎与 GPT-SoVITS / IndexTTS 配置' },
-                  { id: 'add', label: '➕ 添加自定义配音模型 (CPU / OpenAI / HTTP)' },
-                  { id: 'import', label: '📤 JSON 导入 / 导出分享' },
-                ],
-              }),
+              ttsBackendOutdated
+                ? h(
+                    'div',
+                    { style: { padding: '10px 13px', borderRadius: '10px', background: T.accentAmberBg, border: `1px solid ${T.accentAmberBorder}`, color: T.accentAmber, fontSize: '12.5px', lineHeight: 1.5, flexShrink: 0 } },
+                    '⚠ 检测到 DeepSeek Harness 后端仍停留在重启前旧进程，当前显示本地默认引擎列表；如需保存切换、测试发声或导入新模型，请完全退出并重启客户端后再试。',
+                  )
+                : null,
+              h(
+                'div',
+                { style: { flexShrink: 0 } },
+                h(SegmentedPills, {
+                  value: ttsModalTab,
+                  onChange: setTtsModalTab,
+                  T,
+                  fullWidth: true,
+                  options: [
+                    { id: 'engines', label: '🎛 选择与配置引擎' },
+                    { id: 'add', label: '➕ 添加自定义配音模型' },
+                    { id: 'import', label: '📤 JSON 导入导出' },
+                  ],
+                }),
+              ),
               ttsModalTab === 'engines'
                 ? h(
                     'div',
-                    { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
+                    { style: { display: 'flex', flexDirection: 'column', gap: '14px', flexShrink: 0 } },
                     h(
                       'div',
-                      { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } },
-                      (ttsConfig?.engines || []).map((eng) => {
+                      { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', flexShrink: 0 } },
+                      (ttsConfig?.engines?.length ? ttsConfig.engines : DEFAULT_TTS_ENGINES_FALLBACK).map((eng) => {
                         const isAct = (ttsConfig?.activeEngineId || 'indextts25') === eng.id
                         return h(
                           'div',
@@ -6760,7 +6779,7 @@ window.__ModuleLoader__?.load({
                       h(
                         'div',
                         { style: { display: 'flex', justifyContent: 'flex-end', gap: '9px' } },
-                        h('button', { type: 'button', className: 'dsh-vw-btn', disabled: ttsTesting, onClick: () => handleTestTtsEngine(ttsConfig?.activeEngineId), style: ghostBtnStyle }, ttsTesting ? '正在合成测试音频...' : `🔊 试听测试 (${activeTtsLabel})`),
+                        h('button', { type: 'button', className: 'dsh-vw-btn', disabled: ttsTesting, onClick: () => handleTestTtsEngine(ttsConfig?.activeEngineId), style: { ...ghostBtnStyle, borderColor: T.accentBlueBorder, color: T.accentBlue } }, ttsTesting ? '正在合成测试音频...' : `🔊 试听测试 (${activeTtsLabel})`),
                         h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleSaveBuiltinTts, style: goldBtnStyle }, '保存本地接口设置'),
                       ),
                     ),
@@ -6768,12 +6787,12 @@ window.__ModuleLoader__?.load({
                 : ttsModalTab === 'add'
                   ? h(
                       'div',
-                      { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
+                      { style: { display: 'flex', flexDirection: 'column', gap: '12px', flexShrink: 0 } },
                       h('div', { style: { fontSize: '13px', fontWeight: 700, color: T.textSecondary } }, '⚡ 一键填充常用轻量化 / 第三方配音模型模板：'),
                       h(
                         'div',
                         { style: { display: 'flex', flexWrap: 'wrap', gap: '7px' } },
-                        (ttsConfig?.templates || []).map((tpl) =>
+                        (ttsConfig?.templates?.length ? ttsConfig.templates : DEFAULT_TTS_TEMPLATES_FALLBACK).map((tpl) =>
                           h(
                             'button',
                             {
@@ -7324,10 +7343,6 @@ window.__ModuleLoader__?.load({
       return h(PanelBoundary, null, h(VideoWorkbenchApp, { isMainSlot: true, layoutService: hostLayoutSvc }))
     }
 
-    function TopTitlebarSwitcherHost() {
-      return h(PanelBoundary, null, h(TopTitlebarSwitcherOverlay))
-    }
-
     function ToolViewCard(props) {
       return h(PanelBoundary, null, h(VideoToolCallCard, props))
     }
@@ -7352,12 +7367,6 @@ window.__ModuleLoader__?.load({
             ctx.slots.register(
               { name: 'main', key: 'video-workbench', label: 'AI 视频工坊' },
               MainVideoWorkbenchPanel,
-            ),
-          )
-          ctx.slots.inject('shell.overlay', () =>
-            ctx.slots.register(
-              { name: 'shell.overlay', id: 'video-workbench-topbar-switcher', label: 'DeepSeek / 视频工坊切换' },
-              TopTitlebarSwitcherHost,
             ),
           )
           ctx.slots.inject('sidebar.panellist', () =>

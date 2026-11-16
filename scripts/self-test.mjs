@@ -1716,15 +1716,15 @@ export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = {
     },
   )
   clientPlugin.apply(strictCordisCtx)
-  const hasMainSlot = registeredSlots.some((s) => s.opts?.name === 'main' && s.opts?.key === 'video-workbench')
-  const overlayEntry = registeredSlots.find((s) => s.opts?.name === 'shell.overlay' && s.opts?.id === 'video-workbench-topbar-switcher')
+  const mainEntry = registeredSlots.find((s) => s.opts?.name === 'main' && s.opts?.key === 'video-workbench')
+  const hasOverlaySlot = registeredSlots.some((s) => s.opts?.name === 'shell.overlay')
   const sidebarEntry = registeredSlots.find((s) => s.opts?.name === 'sidebar.panellist' && s.opts?.id === 'video-workbench')
   const toolViewCount = registeredSlots.filter((s) => s.opts?.name === 'tool.call.toolview' && typeof s.opts?.key === 'string').length
   const sidebarSvg = sidebarEntry?.Comp?.({ size: 20, active: true })
-  const overlayEl = overlayEntry?.Comp?.({})
-  // Check top titlebar overlay returns capsule when layout service attached and toggles back to DeepSeek chat (`null`)
+  const mainEl = mainEntry?.Comp?.({})
+  // Check top-left capsule inside main panel switches back to DeepSeek chat (`null`) and no redundant shell.overlay is registered
   const findButtons = (node, acc = [], depth = 0) => {
-    if (!node || depth > 12) return acc
+    if (!node || depth > 14) return acc
     if (Array.isArray(node)) {
       for (const c of node) findButtons(c, acc, depth + 1)
       return acc
@@ -1746,12 +1746,12 @@ export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = {
     }
     return acc
   }
-  const overlayBtns = findButtons(overlayEl)
-  const backChatBtn = overlayBtns.find((b) => JSON.stringify(b).includes('DeepSeek 对话'))
+  const mainBtns = findButtons(mainEl)
+  const backChatBtn = mainBtns.find((b) => JSON.stringify(b).includes('DeepSeek 对话'))
   backChatBtn?.props?.onClick?.()
   if (
-    !hasMainSlot ||
-    !overlayEntry ||
+    !mainEntry ||
+    hasOverlaySlot ||
     activePanelMock !== null ||
     !sidebarEntry ||
     sidebarSvg?.type !== 'svg' ||
@@ -1759,9 +1759,11 @@ export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = {
     !wbClientSrc.includes('AI 一键润色提示词') ||
     !wbClientSrc.includes('纯音乐卡点 (免TTS)') ||
     !wbClientSrc.includes('直接上传本机已录视频/音频入库') ||
-    !wbClientSrc.includes('成片原画时间轴')
+    !wbClientSrc.includes('成片原画时间轴') ||
+    !wbClientSrc.includes('DEFAULT_TTS_ENGINES_FALLBACK') ||
+    wbClientSrc.includes("slots.inject('shell.overlay'")
   ) {
-    throw new Error(`DSH client slot / UI check failed: main=${hasMainSlot}, overlay=${Boolean(overlayEntry)}, panelAfterClick=${activePanelMock}, toolViews=${toolViewCount}`)
+    throw new Error(`DSH client slot / UI check failed: main=${Boolean(mainEntry)}, hasOverlaySlot=${hasOverlaySlot}, panelAfterClick=${activePanelMock}, toolViews=${toolViewCount}`)
   }
 
   // 16f. Per-scene keyframe thumbnail extraction (`output/scene-thumbs/*.jpg`) & state integration

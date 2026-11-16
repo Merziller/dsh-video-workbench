@@ -26,7 +26,7 @@
 
 1. **⚡ 4-Agent AI 作战大屏 + 分步精修工作台 + 实时任务监控**：
    - **策划导演 Agent → 素材剪辑 Agent → 配音混音 Agent → 动效质检 & MP4 导出 Agent** 全程可视化接力运行，支持随时暂停、恢复、强停子进程与断点单步重试。
-   - 接入 DeepSeek Harness 桌面端后，顶部标题栏提供 **`💬 DeepSeek 对话 | 🎬 AI 视频工坊`** 胶囊自由左右切换（同时左侧栏亦保留入口），不会困在插件页回不去对话。
+   - 接入 DeepSeek Harness 桌面端后，可通过左侧栏入口切换进入工作台，工作台左上角提供 **`← DeepSeek 对话 | 🎬 AI 视频工坊`** 胶囊随时一键返回对话，简洁不遮挡标题栏。
 2. **🧠 通用四协议大模型接入 + ✨ AI 一键润色提示词**：
    - 支持 **跟随 DSH 客户端自动同步 (`follow-dsh`)** 或插件独立配置，原生兼容 **OpenAI `/v1/chat/completions`**、**Anthropic `/v1/messages`**、**OpenAI `/v1/responses`** 与 **Google Gemini `/v1beta/models`** 四种接口协议。
    - **第 2 步「✨ AI 一键润色提示词」**：只需写一句大白话需求，AI 会结合已上传的图片/视频/BGM 与笔记内容一键扩写成专业导演指令并覆盖替换，支持 **「↩ 恢复原句」**。
@@ -139,7 +139,7 @@ REMOTION_TEMPLATE_ROOT=D:/your_path/remotion-template
 node scripts/install-profile.mjs
 ```
 
-执行成功后：**完全退出并重新启动 DeepSeek Harness 客户端**，顶部标题栏中央即出现 **`💬 DeepSeek 对话 | 🎬 AI 视频工坊`** 切换胶囊（左侧栏亦可直达），大模型预设会自动挂载 **`视频制作模式 (video-maker)`**（会自动同步读取你在 DSH 客户端中配置好的模型与 API Key）。
+执行成功后：**完全退出并重新启动 DeepSeek Harness 客户端**，在左侧边栏即可切换进入 **`🎬 AI 视频工坊`**（工作台左上角提供 **`← DeepSeek 对话`** 胶囊随时切回主对话），大模型预设会自动挂载 **`视频制作模式 (video-maker)`**（会自动同步读取你在 DSH 客户端中配置好的模型与 API Key）。
 
 ### 方式 B：独立浏览器运行（支持系统浏览器直接开启摄像头自拍）
 
@@ -206,7 +206,7 @@ node scripts/self-test.mjs
 - `packages/dsh-tool-avatar`: Transparent `yuva420p` WebM digital human compositor (RMS-driven SVG anchor, FFmpeg squircle/chromakey overlay, and pluggable external MuseTalk / LatentSync REST adapter).
 - `packages/dsh-tool-video-suite`: Static sandbox linter, 3×3 contact sheet snapshots, keyframe thumbnail extractor (`output/scene-thumbs/*.jpg`), full-FPS CDP / `@remotion/renderer` exporter, and FFmpeg loudness/black-frame QA.
 - `packages/dsh-preset-video`: Registers the `视频制作模式` (`video-maker`) DSH Agent Preset and project scaffolder.
-- `packages/dsh-web-video-workbench`: Registers `/api/video-workbench/*` endpoints and the DSH Desktop `shell.overlay` top-bar switcher + `main` / `sidebar.panellist` / `tool.call.toolview` UI slots.
+- `packages/dsh-web-video-workbench`: Registers `/api/video-workbench/*` endpoints and the DSH Desktop `main` (with top-left `← DeepSeek 对话` layout switcher), `sidebar.panellist`, and `tool.call.toolview` UI slots.
 
 ### License
 Released under the [MIT License](./LICENSE).
