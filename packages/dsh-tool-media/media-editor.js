@@ -2,20 +2,19 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { basename, extname, isAbsolute, join, resolve } from 'node:path'
 import {
   createAbortError,
+  normalizeVideoStyle,
   readScriptJson,
   resolveBinaries,
   resolveVideoDimensions,
   runCommandRedirected,
+  VIDEO_STYLES,
   writeScriptJson,
 } from '@dsh-video/shared'
 import { readAssets, writeAssets } from './asset-manager.js'
 
-const STYLE_COLOR_GRADE = {
-  tech: 'eq=contrast=1.06:saturation=1.12:brightness=0.01',
-  'minimal-editorial': 'eq=contrast=1.03:saturation=0.92:brightness=0.02',
-  'vibrant-brand': 'eq=contrast=1.08:saturation=1.22:brightness=0.02',
-  cinema: 'eq=contrast=1.10:saturation=1.05:brightness=-0.01',
-}
+const STYLE_COLOR_GRADE = Object.fromEntries(
+  Object.entries(VIDEO_STYLES).map(([k, v]) => [k, v.colorGrade]),
+)
 
 /**
  * Curate, smart-crop, color-grade, speed-scale, and optionally chroma-key visual assets
@@ -60,7 +59,8 @@ export async function executeCurateAndEditAssets(options = {}) {
   const targetH = dims.height
   const safeSpeed = Math.max(0.5, Math.min(2.5, Number(clipSpeed) || 1.0))
   const safeTrim = Math.max(0, Number(trimSeconds) || 0)
-  const gradeFilter = enhanceColor ? (STYLE_COLOR_GRADE[style || scriptObj?.style] || STYLE_COLOR_GRADE.tech) : ''
+  const resolvedStyle = normalizeVideoStyle(style || scriptObj?.style || 'tech')
+  const gradeFilter = enhanceColor ? (STYLE_COLOR_GRADE[resolvedStyle] || STYLE_COLOR_GRADE.tech) : ''
 
   const visuals = (manifest.items || []).filter((it) => {
     if (it.type !== 'image' && it.type !== 'video') return false
@@ -96,13 +96,29 @@ export async function executeCurateAndEditAssets(options = {}) {
 
     const baseName = `${item.id || `clip-${i + 1}`}`
     const wantsChroma = Boolean(chromaKeyColor && /^#[0-9a-f]{6}$/i.test(String(chromaKeyColor).trim()))
+    const roleHint = `${item.role || ''} ${item.name || ''} ${item.originalName || ''} ${item.path || ''}`.toLowerCase()
+    const iw = Number(item.width || 0)
+    const ih = Number(item.height || 0)
+    const preserveAspect =
+      item.fitMode === 'preserve' ||
+      item.fitMode === 'contain' ||
+      (item.type === 'image' && (
+        /ui|screen|app|shot|logo|brand|mark|comic|char|art|theme|compare|board|shelf|asset|render|export|task|studio/.test(roleHint) ||
+        (iw > 0 && ih > 0 && iw !== ih && Math.abs(iw / ih - targetW / targetH) > 0.04)
+      ))
 
-    const vfChain = [
-      `scale=${targetW}:${targetH}:force_original_aspect_ratio=increase`,
-      `crop=${targetW}:${targetH}`,
-      'setsar=1',
-    ]
-    if (gradeFilter) vfChain.push(gradeFilter)
+    const vfChain = preserveAspect
+      ? [
+          `scale='min(${targetW},iw)':'min(${targetH},ih)':force_original_aspect_ratio=decrease:flags=lanczos`,
+          `pad='ceil(iw/2)*2':'ceil(ih/2)*2'`,
+          'setsar=1',
+        ]
+      : [
+          `scale=${targetW}:${targetH}:force_original_aspect_ratio=increase`,
+          `crop=${targetW}:${targetH}`,
+          'setsar=1',
+        ]
+    if (gradeFilter && !preserveAspect) vfChain.push(gradeFilter)
 
     if (item.type === 'image') {
       const outRel = `assets/edited/${baseName}-edited.png`
@@ -190,6 +206,7 @@ export async function executeCurateAndEditAssets(options = {}) {
             updatedScenes = true
           }
         }
+        sc.assetPaths = sc.media.map((x) => x.path).filter(Boolean)
       }
     }
     if (updatedScenes) {

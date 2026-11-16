@@ -6,7 +6,7 @@
  */
 import { existsSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { readScriptJson, resolveVideoDimensions, writeScriptJson } from '@dsh-video/shared'
+import { deriveVerbalSubtitleParts, normalizeVideoStyle, readScriptJson, resolveVideoDimensions, VIDEO_STYLES, writeScriptJson } from '@dsh-video/shared'
 import { matchAllScenesInScript } from '@dsh-video/tool-local-tts'
 import { importAssets, readAssets } from './asset-manager.js'
 import { buildRichHtmlVideo, resolvePalette } from './html-generator.js'
@@ -17,16 +17,12 @@ const TRANSITIONS = ['iris-circle', 'block-wipe', 'glitch-cut', 'zoom-punch', 'l
 const MOTIONS = ['zoom-in', 'pan-left', 'zoom-out', 'pan-right']
 const VFX_MODES = ['3d-depth+sweep', 'sparks+shockwave', 'halftone+glitch', 'grid+scan', 'radial-speedlines']
 
-const STYLE_CONFIG = {
-  tech: { label: '科技前沿', emotion: '平静', mood: 'tech', bpm: 118, role: 'host' },
-  cinematic: { label: '电影大片', emotion: '激昂', mood: 'cinematic', bpm: 104, role: 'storyteller' },
-  documentary: { label: '纪实叙事', emotion: '深沉', mood: 'cinematic', bpm: 98, role: 'narrator' },
-  energetic: { label: '高燃快剪', emotion: '高兴', mood: 'energetic', bpm: 124, role: 'host' },
-  warm: { label: '温暖治愈', emotion: '温柔', mood: 'warm', bpm: 96, role: 'storyteller' },
-}
+const STYLE_CONFIG = VIDEO_STYLES
 
 function extractChapterTitle(narration, fallback) {
-  const raw = String(narration || '').trim()
+  const raw = String(narration || '')
+    .trim()
+    .replace(/^(?:请|帮我|帮忙)?(?:制作|生成|创作|拍|做)(?:一条|一个|一段)?\s*(?:\d+\s*秒(?:左右的?)?)?\s*/, '')
   if (!raw) return fallback
   const first = raw.split(/[，。！？；,!?;：:\n]/)[0].trim()
   if (!first) return fallback
@@ -62,12 +58,28 @@ function ensureBeatGridOnScript(scriptData) {
     Number(scriptData.totalDurationSec) ||
       (scriptData.scenes || []).reduce((acc, s) => acc + Number(s.durationSec || 4), 0),
   )
+  const hasAnalyzedBeats =
+    Boolean(scriptData?.bgm?.analyzed) &&
+    Array.isArray(scriptData?.bgm?.beats) &&
+    scriptData.bgm.beats.length >= 4
+  if (hasAnalyzedBeats) {
+    scriptData.bgm = {
+      ...scriptData.bgm,
+      enabled: scriptData?.bgm?.enabled !== false,
+      mood,
+      volume: Number.isFinite(Number(scriptData?.bgm?.volume)) ? Number(scriptData.bgm.volume) : 0.28,
+      bpm,
+    }
+    return scriptData
+  }
   const grid = buildBeatGrid(totalSec + 2, bpm)
   scriptData.bgm = {
+    ...(scriptData?.bgm || {}),
     enabled: scriptData?.bgm?.enabled !== false,
     mood,
     volume: Number.isFinite(Number(scriptData?.bgm?.volume)) ? Number(scriptData.bgm.volume) : 0.28,
     path: scriptData?.bgm?.path || '',
+    uploadedPath: scriptData?.bgm?.uploadedPath || '',
     source: scriptData?.bgm?.source || 'generated',
     bpm: grid.bpm,
     beats: grid.beats,
@@ -87,48 +99,85 @@ export function syncProjectCodeFromScript(projectDir, scriptData, { forceOverwri
   writeRemotionProjectFiles(absDir, enriched, { rebuildTemplate: true })
 }
 
+function condenseSubtitleText(narration, fallback = '') {
+  const clean = String(narration || '')
+    .trim()
+    .replace(/[。！？!?]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return clean || String(fallback || '').trim()
+}
+
+function buildSceneSubChunks(narration, subtitleText, specSubChunks = null, maxLineWidth = 16) {
+  return deriveVerbalSubtitleParts(narration, specSubChunks, subtitleText, maxLineWidth)
+}
+
 function buildSceneSfxCues({ idx, total, layout, dur, sfxPick }) {
   const cues = []
   if (idx === 0) {
-    cues.push({ type: 'hit', path: sfxPick('hit'), offsetSec: 0, volume: 0.72, pan: 0 })
-    cues.push({ type: 'crash_cym', path: sfxPick('crash_cym'), offsetSec: 0.02, volume: 0.42, pan: 0 })
+    cues.push({ type: 'hit', path: sfxPick('hit'), offsetSec: 0, volume: 0.62, pan: 0 })
+    cues.push({ type: 'shimmer_swell', path: sfxPick('shimmer_swell'), offsetSec: 0.04, volume: 0.45, pan: 0 })
   } else {
     cues.push({
       type: layout === 'mosaic-pulse-wall' || layout === 'radial-climax' ? 'sub_drop' : 'hit',
       path: sfxPick('hit'),
       offsetSec: 0,
-      volume: 0.65,
+      volume: 0.52,
       pan: 0,
     })
   }
 
-  cues.push({ type: idx % 2 === 0 ? 'thud' : 'slash', path: sfxPick('thud'), offsetSec: 0.14, volume: 0.54, pan: -0.15 })
-
-  if (layout === '3d-stage-opener' || layout === 'mosaic-pulse-wall') {
-    cues.push({ type: 'whoosh', path: sfxPick('whoosh'), offsetSec: 0.32, volume: 0.52, pan: 0.2 })
-    cues.push({ type: 'counter', path: sfxPick('counter'), offsetSec: 0.65, volume: 0.42, pan: 0, d: 0.75 })
-    cues.push({ type: 'card', path: sfxPick('card'), offsetSec: 1.05, volume: 0.46, pan: -0.25 })
-    cues.push({ type: 'card', path: sfxPick('card'), offsetSec: 1.32, volume: 0.46, pan: 0.25 })
+  if (layout === 'card-fan-opener') {
+    cues.push({ type: 'flip', path: sfxPick('flip'), offsetSec: 0.16, volume: 0.44, pan: -0.22 })
+    cues.push({ type: 'flip', path: sfxPick('flip'), offsetSec: 0.34, volume: 0.44, pan: 0.18 })
+    cues.push({ type: 'flip', path: sfxPick('flip'), offsetSec: 0.52, volume: 0.44, pan: -0.14 })
+    cues.push({ type: 'whoosh', path: sfxPick('whoosh'), offsetSec: Math.min(0.85, dur * 0.28), volume: 0.46, pan: 0.15 })
+  } else if (layout === 'app-focus-shot') {
+    cues.push({ type: 'whoosh', path: sfxPick('whoosh'), offsetSec: 0.14, volume: 0.45, pan: -0.16 })
+    cues.push({ type: 'pop_soft', path: sfxPick('pop_soft'), offsetSec: Math.min(0.62, dur * 0.2), volume: 0.48, pan: 0.14 })
+    cues.push({ type: 'lock', path: sfxPick('lock'), offsetSec: Math.min(1.5, dur * 0.46), volume: 0.44, pan: 0 })
+  } else if (layout === 'workflow-steps') {
+    cues.push({ type: 'pop_soft', path: sfxPick('pop_soft'), offsetSec: 0.24, volume: 0.44, pan: -0.2 })
+    cues.push({ type: 'pop_soft', path: sfxPick('pop_soft'), offsetSec: Math.min(0.62, dur * 0.26), volume: 0.44, pan: 0 })
+    cues.push({ type: 'pop_soft', path: sfxPick('pop_soft'), offsetSec: Math.min(1.02, dur * 0.45), volume: 0.44, pan: 0.2 })
+    cues.push({ type: 'shine', path: sfxPick('shine'), offsetSec: Math.min(1.8, dur * 0.65), volume: 0.4, pan: 0 })
+  } else if (layout === 'split-wipe-compare') {
+    cues.push({ type: 'swoosh', path: sfxPick('swoosh'), offsetSec: 0.24, volume: 0.48, pan: -0.15 })
+    cues.push({ type: 'flip', path: sfxPick('flip'), offsetSec: Math.min(1.55, dur * 0.48), volume: 0.45, pan: 0.18 })
+  } else if (layout === 'metric-dashboard') {
+    cues.push({ type: 'tick_burst', path: sfxPick('tick_burst'), offsetSec: 0.2, volume: 0.44, pan: -0.1 })
+    cues.push({ type: 'counter', path: sfxPick('counter'), offsetSec: 0.48, volume: 0.4, pan: 0, d: 0.65 })
+    cues.push({ type: 'ding', path: sfxPick('ding'), offsetSec: Math.min(1.75, dur * 0.56), volume: 0.42, pan: 0.14 })
+  } else if (layout === 'multi-window-trio') {
+    cues.push({ type: 'pop_soft', path: sfxPick('pop_soft'), offsetSec: 0.2, volume: 0.42, pan: -0.24 })
+    cues.push({ type: 'pop_soft', path: sfxPick('pop_soft'), offsetSec: 0.48, volume: 0.42, pan: 0 })
+    cues.push({ type: 'pop_soft', path: sfxPick('pop_soft'), offsetSec: 0.76, volume: 0.42, pan: 0.24 })
+    cues.push({ type: 'shimmer_swell', path: sfxPick('shimmer_swell'), offsetSec: Math.min(1.6, dur * 0.5), volume: 0.36, pan: 0 })
+  } else if (layout === '3d-stage-opener' || layout === 'mosaic-pulse-wall') {
+    cues.push({ type: 'whoosh', path: sfxPick('whoosh'), offsetSec: 0.3, volume: 0.48, pan: 0.2 })
+    cues.push({ type: 'counter', path: sfxPick('counter'), offsetSec: 0.62, volume: 0.38, pan: 0, d: 0.7 })
+    cues.push({ type: 'card', path: sfxPick('card'), offsetSec: 1.0, volume: 0.42, pan: -0.22 })
+    cues.push({ type: 'card', path: sfxPick('card'), offsetSec: 1.28, volume: 0.42, pan: 0.22 })
   } else if (layout === 'media-split-motion' || layout === 'compare-dual') {
-    cues.push({ type: 'card', path: sfxPick('card'), offsetSec: 0.42, volume: 0.5, pan: -0.28 })
-    cues.push({ type: 'pop', path: sfxPick('pop'), offsetSec: 0.72, volume: 0.45, pan: 0.25 })
-    cues.push({ type: 'pop', path: sfxPick('pop'), offsetSec: 0.96, volume: 0.45, pan: -0.2 })
-    cues.push({ type: 'shine', path: sfxPick('shine'), offsetSec: Math.min(2.1, dur * 0.48), volume: 0.42, pan: 0.15 })
+    cues.push({ type: 'card', path: sfxPick('card'), offsetSec: 0.38, volume: 0.46, pan: -0.24 })
+    cues.push({ type: 'pop', path: sfxPick('pop'), offsetSec: 0.68, volume: 0.42, pan: 0.2 })
+    cues.push({ type: 'pop', path: sfxPick('pop'), offsetSec: 0.94, volume: 0.42, pan: -0.18 })
+    cues.push({ type: 'shine', path: sfxPick('shine'), offsetSec: Math.min(1.9, dur * 0.48), volume: 0.38, pan: 0.14 })
   } else if (layout === 'kinetic-impact') {
-    cues.push({ type: 'glitch', path: sfxPick('glitch'), offsetSec: 0.28, volume: 0.5, pan: 0.1 })
-    cues.push({ type: 'sparkle', path: sfxPick('sparkle'), offsetSec: 0.78, volume: 0.45, pan: -0.15 })
-    cues.push({ type: 'typing', path: sfxPick('typing'), offsetSec: Math.min(1.6, dur * 0.4), volume: 0.36, pan: 0, d: 0.6 })
+    cues.push({ type: 'glitch', path: sfxPick('glitch'), offsetSec: 0.26, volume: 0.46, pan: 0.1 })
+    cues.push({ type: 'sparkle', path: sfxPick('sparkle'), offsetSec: 0.75, volume: 0.42, pan: -0.15 })
+    cues.push({ type: 'typing', path: sfxPick('typing'), offsetSec: Math.min(1.5, dur * 0.4), volume: 0.34, pan: 0, d: 0.55 })
   } else {
-    // radial-climax
-    cues.push({ type: 'sparkle', path: sfxPick('sparkle'), offsetSec: 0.36, volume: 0.5, pan: 0 })
-    cues.push({ type: 'stamp', path: sfxPick('stamp'), offsetSec: Math.min(1.4, dur * 0.36), volume: 0.55, pan: 0 })
-    cues.push({ type: 'chime', path: sfxPick('chime'), offsetSec: Math.max(0.5, dur - 1.5), volume: 0.52, pan: 0.1 })
+    cues.push({ type: 'shimmer_swell', path: sfxPick('shimmer_swell'), offsetSec: 0.15, volume: 0.44, pan: 0 })
+    cues.push({ type: 'sparkle', path: sfxPick('sparkle'), offsetSec: 0.42, volume: 0.45, pan: 0 })
+    cues.push({ type: 'stamp', path: sfxPick('stamp'), offsetSec: Math.min(1.4, dur * 0.38), volume: 0.48, pan: 0 })
+    cues.push({ type: 'chime', path: sfxPick('chime'), offsetSec: Math.max(0.5, dur - 1.35), volume: 0.48, pan: 0.1 })
   }
 
   if (idx < total - 1) {
-    const preTime = Math.max(0.6, Number((dur - 0.58).toFixed(2)))
-    cues.push({ type: idx % 2 === 0 ? 'riser' : 'suck', path: sfxPick('riser'), offsetSec: preTime, volume: 0.48, pan: 0, d: 0.58 })
-    cues.push({ type: 'swoosh', path: sfxPick('swoosh'), offsetSec: Math.max(0.4, Number((dur - 0.22).toFixed(2))), volume: 0.52, pan: 0 })
+    const preTime = Math.max(0.55, Number((dur - 0.52).toFixed(2)))
+    cues.push({ type: idx % 2 === 0 ? 'riser' : 'suck', path: sfxPick('riser'), offsetSec: preTime, volume: 0.42, pan: 0, d: 0.52 })
+    cues.push({ type: 'swoosh', path: sfxPick('swoosh'), offsetSec: Math.max(0.35, Number((dur - 0.2).toFixed(2))), volume: 0.46, pan: 0 })
   }
 
   return cues
@@ -149,7 +198,11 @@ export async function planVideoFromAssets(options = {}) {
     quality = '1080p',
     width: requestedWidth,
     height: requestedHeight,
-    aiBadge = false,
+    aiBadge = true,
+    aiBadgeEnabled,
+    aiBadgePosition = 'top-right',
+    aiBadgeText = '',
+    pacingMode = 'auto',
     fps: requestedFps,
     voiceId = 'auto',
     audience = '大众与创作者',
@@ -178,7 +231,8 @@ export async function planVideoFromAssets(options = {}) {
   const importedSfx = (assets.items || []).filter((it) => it.role === 'sfx')
   const notesText = (assets.notes || []).map((n) => n.text).join('\n').trim()
 
-  const st = STYLE_CONFIG[style] || STYLE_CONFIG.tech
+  const normalizedStyle = normalizeVideoStyle(style)
+  const st = STYLE_CONFIG[normalizedStyle] || STYLE_CONFIG.tech
   const projectTitle = title || existing.title || topic || 'AI 动效视听作品'
   const coreTopic = topic || projectTitle
   const fps = Number(requestedFps) || Number(existing.fps) || 30
@@ -190,115 +244,289 @@ export async function planVideoFromAssets(options = {}) {
         .filter((s) => s.length >= 6)
     : []
 
-  const sceneCount = visuals.length >= 5 ? Math.min(6, visuals.length) : Math.max(3, visuals.length || 4)
+  const brandLogoAsset =
+    visuals.find((m) => m.role === 'brand_mark' || /(?:^|[\/_-])(?:brand[-_]?mark|logo|app[-_]?icon)(?:[._-]|$)/i.test(String(m.name || m.path || ''))) || null
+  const contentVisuals =
+    visuals.length > 1 && brandLogoAsset ? visuals.filter((m) => m.id !== brandLogoAsset.id) : visuals
+  const artworkVisuals = contentVisuals.filter(
+    (m) => (Number(m.height) > Number(m.width) * 1.1) || /(?:comic|manga|char|poster|cover|art|sheet|p\d{2}|c\d{2})/i.test(String(m.name || m.path || '')),
+  )
+  const uiVisuals = contentVisuals.filter((m) => !artworkVisuals.some((a) => a.id === m.id))
+  const orderedVisuals = uiVisuals.length > 0 ? uiVisuals : contentVisuals
+
+  const toMediaEntry = (m, mi = 0) => ({
+    assetId: m.id,
+    path: m.editedPath || m.path,
+    originalPath: m.path,
+    webPath: m.editedWebPath || m.webPath || '',
+    type: m.type,
+    role: m.role,
+    width: Number(m.editedWidth || m.width || 0),
+    height: Number(m.editedHeight || m.height || 0),
+    motion: MOTIONS[mi % MOTIONS.length],
+    trimStartSec: 0,
+  })
+
+  const scenesSpec = Array.isArray(options.scenesSpec) && options.scenesSpec.length > 0 ? options.scenesSpec : null
+  const sceneCount = scenesSpec
+    ? scenesSpec.length
+    : Math.max(
+        3,
+        Math.min(
+          16,
+          Number(options.sceneCount) ||
+            Math.max(
+              noteChunks.length >= 4 ? Math.min(16, noteChunks.length) : 0,
+              orderedVisuals.length >= 4 ? Math.min(14, orderedVisuals.length + 2) : contentVisuals.length || 4,
+            ),
+        ),
+      )
 
   const buckets = Array.from({ length: sceneCount }, () => [])
-  visuals.forEach((v, i) => {
+  orderedVisuals.forEach((v, i) => {
     buckets[i % sceneCount].push(v)
   })
 
-  // Global media pool so mosaic-pulse-wall & 3d-stage-opener can orbit all uploaded media cleanly
-  const globalMediaPool = visuals.map((m, mi) => ({
-    assetId: m.id,
-    path: m.path,
-    webPath: m.webPath || '',
-    type: m.type,
-    motion: MOTIONS[mi % MOTIONS.length],
-    trimStartSec: 0,
-  }))
+  // Global media pool using curated uncropped assets so mosaic-pulse-wall / card-fan-opener render cleanly
+  const globalMediaPool = contentVisuals.map((m, mi) => toMediaEntry(m, mi))
+  const fanPool = (artworkVisuals.length >= 3 ? artworkVisuals : contentVisuals).slice(0, 7).map((m, mi) => toMediaEntry(m, mi))
 
   const sfxPick = (kind) => importedSfx.find((x) => x.name.toLowerCase().includes(kind))?.path || `audio/sfx/${kind}.wav`
 
-  const middleLayoutsWithMedia = ['media-split-motion', 'kinetic-impact', 'mosaic-pulse-wall', 'compare-dual']
-  const middleLayoutsTextOnly = ['kinetic-impact', 'compare-dual', 'media-split-motion']
+  const middleLayoutsWithMedia = [
+    'app-focus-shot',
+    'workflow-steps',
+    'split-wipe-compare',
+    'metric-dashboard',
+    'multi-window-trio',
+    'mosaic-pulse-wall',
+  ]
+  const zeroAssetNarrative = contentVisuals.length === 0
+  const middleLayoutsTextOnly = zeroAssetNarrative
+    ? ['narrative-diorama']
+    : ['kinetic-impact', 'compare-dual', 'workflow-steps', 'metric-dashboard']
+  const NARRATIVE_DEFAULTS = [
+    { mood: 'dawn-amber', setting: 'palace-stairs', archetype: 'hero-numeral', heroNum: '01', heroUnit: '幕' },
+    { mood: 'crimson-war', setting: 'mountain-camp', archetype: 'oath-break' },
+    { mood: 'crimson-war', setting: 'city-siege', archetype: 'strategic-map' },
+    { mood: 'crimson-war', setting: 'city-siege', archetype: 'slash-climax' },
+    { mood: 'indigo-night', setting: 'vast-plain', archetype: 'cavalry-rush' },
+    { mood: 'ash-twilight', setting: 'river-gorge', archetype: 'farewell-tent' },
+    { mood: 'void-gold', setting: 'mountain-camp', archetype: 'plaque-summary' },
+  ]
+
+  const findVisualByRef = (list, ref) => {
+    const q = String(ref || '').trim().toLowerCase()
+    if (!q) return null
+    const qBase = q.replace(/^.*[\\/]/, '')
+    const qNoExt = qBase.replace(/\.[^.]+$/, '')
+    return (
+      list.find((v) => {
+        const orig = String(v.originalName || '').toLowerCase()
+        const name = String(v.name || '').toLowerCase()
+        const id = String(v.id || '').toLowerCase()
+        const p = String(v.path || '').replace(/\\/g, '/').toLowerCase()
+        const ep = String(v.editedPath || '').replace(/\\/g, '/').toLowerCase()
+        return (
+          orig === q ||
+          orig === qBase ||
+          orig.replace(/\.[^.]+$/, '') === qNoExt ||
+          name === q ||
+          name === qBase ||
+          name === qNoExt ||
+          id === q ||
+          p === q ||
+          ep === q ||
+          p.endsWith(`/${qBase}`)
+        )
+      }) || null
+    )
+  }
+
+  const resolveSpecMedia = (specItem, fallbackBucket, sceneIdx) => {
+    if (Array.isArray(specItem?.media) && specItem.media.length > 0) {
+      return specItem.media.map((ref, mi) => {
+        if (typeof ref === 'string') {
+          const hit = findVisualByRef(visuals, ref)
+          if (hit) return toMediaEntry(hit, sceneIdx + mi)
+          return { assetId: `ref-${sceneIdx}-${mi}`, path: ref, webPath: ref, type: 'image', motion: MOTIONS[(sceneIdx + mi) % MOTIONS.length], trimStartSec: 0 }
+        }
+        return ref
+      })
+    }
+    return fallbackBucket.slice(0, 4).map((m, mi) => toMediaEntry(m, sceneIdx + mi))
+  }
 
   const scenes = []
   let prevLayout = ''
   for (let i = 0; i < sceneCount; i++) {
+    const spec = scenesSpec ? scenesSpec[i] : null
     const isFirst = i === 0
     const isLast = i === sceneCount - 1
     const bucket = buckets[i]
     const primary = bucket[0]
 
-    // Assign primary+secondary media from bucket, plus pool fallback for collage stages
-    const mediaArr = bucket.slice(0, 4).map((m, mi) => ({
-      assetId: m.id,
-      path: m.editedPath || m.path,
-      originalPath: m.path,
-      webPath: m.editedWebPath || m.webPath || '',
-      type: m.type,
-      motion: MOTIONS[(i + mi) % MOTIONS.length],
-      trimStartSec: 0,
-    }))
+    let mediaArr = resolveSpecMedia(spec, bucket, i)
 
-    let layout = 'kinetic-impact'
-    if (isFirst) {
-      layout = '3d-stage-opener'
-    } else if (isLast) {
-      layout = 'radial-climax'
-    } else {
-      const candidates = visuals.length > 0 ? middleLayoutsWithMedia : middleLayoutsTextOnly
-      const pick = candidates[(i - 1) % candidates.length]
-      layout = pick === prevLayout ? candidates[i % candidates.length] : pick
+    let layout = spec?.layout || 'app-focus-shot'
+    if (!spec?.layout) {
+      if (zeroAssetNarrative) {
+        layout = 'narrative-diorama'
+      } else if (isFirst) {
+        layout = fanPool.length >= 3 ? 'card-fan-opener' : '3d-stage-opener'
+      } else if (isLast) {
+        layout = 'radial-climax'
+      } else {
+        const candidates = contentVisuals.length > 0 ? middleLayoutsWithMedia : middleLayoutsTextOnly
+        const pick = candidates[(i - 1) % candidates.length]
+        layout = pick === prevLayout ? candidates[i % candidates.length] : pick
+      }
     }
     prevLayout = layout
+    const defaultNarrSpec =
+      zeroAssetNarrative
+        ? NARRATIVE_DEFAULTS[isFirst ? 0 : isLast ? NARRATIVE_DEFAULTS.length - 1 : 1 + ((i - 1) % (NARRATIVE_DEFAULTS.length - 2))]
+        : undefined
+    const resolvedStageSpec = spec?.stageSpec || defaultNarrSpec
 
-    let sceneTitle = ''
-    let narration = ''
-    let tag = st.label
-    let subtitleLine = ''
-
-    if (isFirst) {
-      sceneTitle = projectTitle
-      narration =
-        noteChunks[0] ||
-        `${coreTopic}正式开启。随着光影、空间节奏与立体音效同步爆发，带你进入极具张力的视听体验。`
-      tag = st.label
-      subtitleLine = topic && topic.length <= 28 ? topic : ''
-    } else if (isLast) {
-      narration =
-        noteChunks[i] ||
-        `把每一份创意与画面瞬间定格成高品质成片，现在就开始属于你的节奏表达。`
-      sceneTitle = extractChapterTitle(narration, projectTitle)
-      tag = '高燃收尾'
-    } else {
-      narration =
-        noteChunks[i] ||
-        `透过动态镜头层次、弹性字效与细腻转场节拍，将画面质感与关键观点立体放大呈现。`
-      sceneTitle = extractChapterTitle(narration, `高能篇章 ${String(i + 1).padStart(2, '0')}`)
-      tag = `第 ${i + 1} 幕`
+    // Ensure multi-asset promo layouts always have required media items without blank frames
+    if ((layout === 'multi-window-trio' || layout === 'split-wipe-compare') && orderedVisuals.length >= 2) {
+      const need = layout === 'multi-window-trio' ? 3 : 2
+      while (mediaArr.length < need) {
+        const extra = orderedVisuals[(i + mediaArr.length) % orderedVisuals.length]
+        if (extra) mediaArr.push(toMediaEntry(extra, i + mediaArr.length))
+        else break
+      }
     }
 
-    const highlights = extractSemanticHighlights(narration, tag, sceneTitle)
-    const compareLeft = { label: '传统呈现', text: highlights[0] || '静态平铺画面' }
-    const compareRight = { label: '动态重构', text: highlights[1] || '空间节拍联动' }
+    let sceneTitle = spec?.title || ''
+    let narration = spec?.narration || ''
+    let tag = spec?.tag || st.label
+    let subtitleLine = spec?.subtitleLine || ''
 
-    const estDur = Math.max(4.2, Number((narration.length / 4.2 + 1.25).toFixed(2)))
-    const sfxCues = buildSceneSfxCues({ idx: i, total: sceneCount, layout, dur: estDur, sfxPick })
+    if (!narration) {
+      if (isFirst) {
+        sceneTitle = sceneTitle || extractChapterTitle(title || existing.title || coreTopic, '高能开篇')
+        narration =
+          noteChunks[0] ||
+          `${coreTopic}正式开启。随着光影、空间节奏与立体音效同步爆发，带你进入极具张力的视听体验。`
+        tag = spec?.tag || st.label
+        subtitleLine = subtitleLine || (topic && topic.length <= 28 ? topic : '')
+      } else if (isLast) {
+        narration =
+          noteChunks[i] ||
+          `把每一份创意与画面瞬间定格成高品质成片，现在就开始属于你的节奏表达。`
+        sceneTitle = sceneTitle || extractChapterTitle(narration, projectTitle)
+        tag = spec?.tag || '高燃收尾'
+      } else {
+        narration =
+          noteChunks[i] ||
+          `透过动态镜头层次、弹性字效与细腻转场节拍，将画面质感与关键观点立体放大呈现。`
+        sceneTitle = sceneTitle || extractChapterTitle(narration, `高能篇章 ${String(i + 1).padStart(2, '0')}`)
+        tag = spec?.tag || `第 ${i + 1} 幕`
+      }
+    } else if (!sceneTitle) {
+      sceneTitle = extractChapterTitle(narration, `第 ${i + 1} 幕`)
+    }
 
+    const subMaxW = requestedWidth && requestedHeight && requestedWidth < requestedHeight ? 11 : 16
+    const subChunks = buildSceneSubChunks(narration, spec?.subtitleText || '', spec?.subChunks, subMaxW)
+    const subtitleText = subChunks.join(' ') || condenseSubtitleText(narration, sceneTitle)
+    const highlights = Array.isArray(spec?.highlights) && spec.highlights.length > 0 ? spec.highlights : extractSemanticHighlights(narration, tag, sceneTitle)
+    const compareLeft = spec?.compareLeft || { label: '传统方案', text: highlights[0] || '繁琐手动操作' }
+    const compareRight = spec?.compareRight || { label: '智能重构', text: highlights[1] || '一键高效直出' }
+
+    const defaultCams =
+      layout === 'app-focus-shot' && !spec?.cams
+        ? [
+            { t: 0, fx: 0.5, fy: 0.5, z: 1.03 },
+            { t: 0.35, fx: 0.48, fy: 0.46, z: 1.24 },
+            { t: 0.86, fx: 0.5, fy: 0.5, z: 1.06 },
+          ]
+        : spec?.cams
+
+    const rawSteps =
+      layout === 'workflow-steps' && !spec?.steps
+        ? (highlights.length >= 3 ? highlights : ['导入素材', '智能编排', '精修渲染']).map((h, si) => ({
+            title: h,
+            desc: si === 0 ? '聚合图文视听' : si === 1 ? '自动节奏分镜' : '高清成片交付',
+            img: mediaArr[si % Math.max(1, mediaArr.length)]?.path || '',
+          }))
+        : spec?.steps
+    const defaultSteps = Array.isArray(rawSteps)
+      ? rawSteps.map((stItem, si) => {
+          const ref = String(stItem?.img || stItem?.asset || '').trim()
+          const hit = ref ? findVisualByRef(visuals, ref) : null
+          return {
+            ...stItem,
+            img: hit ? hit.editedPath || hit.path : ref || mediaArr[si % Math.max(1, mediaArr.length)]?.path || '',
+          }
+        })
+      : undefined
+
+    const defaultMetrics =
+      layout === 'metric-dashboard' && (!Array.isArray(spec?.metrics) || spec.metrics.length === 0)
+        ? [
+            { value: `${(i + 1) * 18}+`, label: highlights[0] || '高能分镜' },
+            { value: '1080P', label: highlights[1] || '清晰直出' },
+            { value: '60FPS', label: highlights[2] || '丝滑动效' },
+          ]
+        : spec?.metrics || []
+
+    const estDur = Number(spec?.durationSec) > 0
+      ? Number(spec.durationSec)
+      : Math.max(sceneCount >= 8 ? 3.2 : 4.0, Number((narration.length / 4.8 + 0.95).toFixed(2)))
+    const sfxCues = Array.isArray(spec?.sfxCues) && spec.sfxCues.length > 0
+      ? spec.sfxCues
+      : buildSceneSfxCues({ idx: i, total: sceneCount, layout, dur: estDur, sfxPick })
+
+    const uiSafeLayouts = ['card-fan-opener', 'app-focus-shot', 'workflow-steps', 'split-wipe-compare', 'metric-dashboard', 'multi-window-trio']
+    const cleanTransitions = ['light-wipe', 'iris-circle', 'zoom-punch']
+    const transitionPool = normalizedStyle === 'emerald' || uiSafeLayouts.includes(layout) ? cleanTransitions : TRANSITIONS
     scenes.push({
-      id: `scene-${String(i + 1).padStart(2, '0')}`,
+      id: spec?.id || `scene-${String(i + 1).padStart(2, '0')}`,
       title: sceneTitle,
       narration,
+      subtitleText,
+      subChunks,
       subtitleLine,
-      emotion: isFirst || isLast ? '激昂' : st.emotion,
-      role: st.role,
-      voiceId: voiceId || 'auto',
+      emotion: spec?.emotion || (isFirst || isLast ? '激昂' : st.emotion),
+      role: spec?.role || st.role,
+      voiceId: spec?.voiceId || voiceId || 'auto',
+      voiceLeadSec: Number.isFinite(Number(spec?.voiceLeadSec)) ? Number(spec.voiceLeadSec) : sceneCount >= 6 ? 0.22 : 0.35,
+      tailSec: Number.isFinite(Number(spec?.tailSec)) ? Number(spec.tailSec) : sceneCount >= 6 ? 0.32 : 0.65,
       tag,
       layout,
-      transition: TRANSITIONS[i % TRANSITIONS.length],
-      kenBurns: MOTIONS[i % MOTIONS.length],
-      vfx: VFX_MODES[i % VFX_MODES.length],
+      transition: spec?.transition || transitionPool[i % transitionPool.length],
+      kenBurns: spec?.kenBurns || MOTIONS[i % MOTIONS.length],
+      vfx: spec?.vfx || VFX_MODES[i % VFX_MODES.length],
       highlights,
       compareLeft,
       compareRight,
-      counterTarget: (i + 1) * 24,
-      counterLabel: st.label,
-      metrics: [],
+      counterTarget: spec?.counterTarget ?? (i + 1) * 24,
+      counterLabel: spec?.counterLabel || st.label,
+      metrics: defaultMetrics,
+      steps: defaultSteps,
+      trioLabels: spec?.trioLabels,
+      windowLayout: spec?.windowLayout,
+      windowTitle: spec?.windowTitle || (layout === 'app-focus-shot' ? projectTitle : undefined),
+      windowTheme: spec?.windowTheme,
+      cams: defaultCams,
+      marks: spec?.marks,
+      loupe: spec?.loupe,
+      hudStep: Number.isFinite(Number(spec?.hudStep)) ? Number(spec.hudStep) : undefined,
+      stageSpec: resolvedStageSpec,
+      beatCount: Number.isFinite(Number(spec?.beatCount)) ? Number(spec.beatCount) : undefined,
+      accentWords: Array.isArray(spec?.accentWords) ? spec.accentWords : undefined,
+      fanMedia: Array.isArray(spec?.fanMedia)
+        ? resolveSpecMedia({ media: spec.fanMedia }, bucket, i)
+        : layout === 'card-fan-opener'
+          ? fanPool
+          : undefined,
       media: mediaArr,
-      poolMedia: layout === '3d-stage-opener' || layout === 'mosaic-pulse-wall' ? globalMediaPool : undefined,
+      poolMedia: layout === '3d-stage-opener' || layout === 'mosaic-pulse-wall' || layout === 'card-fan-opener' ? globalMediaPool : undefined,
       sfxCues,
-      visualPrompt: primary ? `${layout} 空间动态编排 · ${primary.path}` : `${layout} 动效排版与光影特效`,
+      visualPrompt: spec?.visualPrompt || (primary ? `${layout} 空间动态编排 · ${primary.path}` : `${layout} 动效排版与光影特效`),
       durationSec: estDur,
     })
   }
@@ -312,12 +540,21 @@ export async function planVideoFromAssets(options = {}) {
     assets: visuals,
   })
 
+  const requestedBrandAsset = options.brandMark ? findVisualByRef(visuals, options.brandMark) : null
+  const resolvedBrandMark =
+    (requestedBrandAsset ? requestedBrandAsset.editedPath || requestedBrandAsset.path : options.brandMark) ||
+    (brandLogoAsset ? brandLogoAsset.editedPath || brandLogoAsset.path : existing.brandMark || '')
+  const resolvedWorkflowSteps =
+    Array.isArray(options.workflowSteps) && options.workflowSteps.length > 0
+      ? options.workflowSteps
+      : existing.workflowSteps
+
   const nextScript = {
     ...existing,
     authoringMode: 'local-draft',
     title: projectTitle,
     topic: coreTopic,
-    style,
+    style: normalizedStyle,
     engine: engine === 'remotion' ? 'remotion' : 'html',
     fps,
     width: dims.width,
@@ -326,20 +563,32 @@ export async function planVideoFromAssets(options = {}) {
     requestedAspectRatio: dims.requestedAspectRatio,
     quality: dims.quality,
     dimensionReason: dims.reason,
-    aiBadge: Boolean(aiBadge),
+    aiBadge: aiBadgeEnabled !== undefined ? Boolean(aiBadgeEnabled) : Boolean(aiBadge),
+    aiBadgeEnabled: aiBadgeEnabled !== undefined ? Boolean(aiBadgeEnabled) : (existing.aiBadgeEnabled !== undefined ? Boolean(existing.aiBadgeEnabled) : aiBadge !== false),
+    aiBadgePosition: String(aiBadgePosition || existing.aiBadgePosition || 'top-right'),
+    aiBadgeText: String(aiBadgeText || existing.aiBadgeText || (typeof aiBadge === 'string' && aiBadge.trim() ? aiBadge : '') || ''),
+    pacingMode: String(pacingMode || existing.pacingMode || 'auto'),
+    brandMark: resolvedBrandMark || undefined,
+    workflowSteps: resolvedWorkflowSteps,
     audience,
     goal,
     voiceMode: voiceId && voiceId !== 'auto' ? 'manual' : 'auto',
     defaultVoiceId: voiceId || 'auto',
-    theme: resolvePalette({ style }),
+    narrationMode: options.narrationMode || existing.narrationMode || 'tts',
+    subtitleStyle: zeroAssetNarrative || options.narrationMode === 'subtitle-mv' ? 'cinematic' : existing.subtitleStyle || 'pill',
+    theme: {
+      ...resolvePalette({ style: normalizedStyle }),
+      ...(resolvedBrandMark ? { brandMark: resolvedBrandMark } : {}),
+    },
     bgm: {
+      ...(existing?.bgm || {}),
       enabled: true,
       mood: st.mood,
-      bpm: st.bpm,
-      volume: 0.28,
-      path: importedMusic[0]?.path || '',
+      bpm: Number(existing?.bgm?.analyzed ? existing.bgm.bpm : 0) || st.bpm,
+      volume: Number.isFinite(Number(existing?.bgm?.volume)) ? Number(existing.bgm.volume) : 0.24,
+      path: importedMusic[0]?.path || existing?.bgm?.path || '',
       uploadedPath: importedMusic[0]?.path || existing?.bgm?.uploadedPath || '',
-      source: importedMusic.length > 0 ? 'user-imported' : 'generated',
+      source: importedMusic.length > 0 ? 'user-imported' : existing?.bgm?.source || 'generated',
     },
     scenes,
   }

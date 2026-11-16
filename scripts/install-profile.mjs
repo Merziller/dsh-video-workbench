@@ -1,34 +1,43 @@
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { loadEnv, REPO_ROOT, resolveEnvPath } from '../packages/shared/index.js'
 
-export function ensureWorkspaceLinks() {
-  const scopeDir = join(REPO_ROOT, 'node_modules', '@dsh-video')
+const WORKSPACE_PKG_MAP = {
+  shared: 'packages/shared',
+  'tool-local-tts': 'packages/dsh-tool-local-tts',
+  'tool-avatar': 'packages/dsh-tool-avatar',
+  'tool-video-suite': 'packages/dsh-tool-video-suite',
+  'tool-media': 'packages/dsh-tool-media',
+  'preset-video': 'packages/dsh-preset-video',
+  'web-video-workbench': 'packages/dsh-web-video-workbench',
+  'video-app': 'packages/dsh-video-app',
+}
+
+function linkScopePackages(scopeRoot) {
+  const scopeDir = join(scopeRoot, '@dsh-video')
   mkdirSync(scopeDir, { recursive: true })
-  const pkgMap = {
-    shared: 'packages/shared',
-    'tool-local-tts': 'packages/dsh-tool-local-tts',
-    'tool-avatar': 'packages/dsh-tool-avatar',
-    'tool-video-suite': 'packages/dsh-tool-video-suite',
-    'tool-media': 'packages/dsh-tool-media',
-    'preset-video': 'packages/dsh-preset-video',
-    'web-video-workbench': 'packages/dsh-web-video-workbench',
-    'video-app': 'packages/dsh-video-app',
-  }
-  for (const [name, relTarget] of Object.entries(pkgMap)) {
+  for (const [name, relTarget] of Object.entries(WORKSPACE_PKG_MAP)) {
     const linkPath = join(scopeDir, name)
     const targetPath = join(REPO_ROOT, relTarget)
-    if (!existsSync(linkPath) && existsSync(targetPath)) {
-      try {
-        symlinkSync(targetPath, linkPath, 'junction')
-      } catch {}
-    }
+    if (!existsSync(targetPath)) continue
+    try {
+      const st = lstatSync(linkPath)
+      if (st.isSymbolicLink()) continue
+      rmSync(linkPath, { recursive: true, force: true })
+    } catch {}
+    try {
+      symlinkSync(targetPath, linkPath, 'junction')
+    } catch {}
   }
 }
 
+export function ensureWorkspaceLinks() {
+  linkScopePackages(join(REPO_ROOT, 'node_modules'))
+}
+
 /**
- * Set up the `video` profile (and optionally link into `desktop` profile)
+ * Set up the `video` profile (and link `@dsh-video/web-video-workbench` bundle into `desktop` profile)
  * for DeepSeek Harness without hardcoding any machine-specific paths.
  */
 export function setupDshVideoProfile() {
@@ -38,11 +47,8 @@ export function setupDshVideoProfile() {
   const videoProfileDir = join(dshHome, 'profiles', 'video')
   mkdirSync(videoProfileDir, { recursive: true })
 
+  // Note: `@dsh-video/preset-video` loads tool-local-tts, tool-avatar, tool-video-suite & tool-media automatically
   const pluginPaths = [
-    join(REPO_ROOT, 'packages', 'dsh-tool-local-tts', 'index.js').replace(/\\/g, '/'),
-    join(REPO_ROOT, 'packages', 'dsh-tool-avatar', 'index.js').replace(/\\/g, '/'),
-    join(REPO_ROOT, 'packages', 'dsh-tool-video-suite', 'index.js').replace(/\\/g, '/'),
-    join(REPO_ROOT, 'packages', 'dsh-tool-media', 'index.js').replace(/\\/g, '/'),
     join(REPO_ROOT, 'packages', 'dsh-preset-video', 'index.js').replace(/\\/g, '/'),
     join(REPO_ROOT, 'packages', 'dsh-web-video-workbench', 'lib', 'index.js').replace(/\\/g, '/'),
   ]
@@ -74,54 +80,73 @@ export function setupDshVideoProfile() {
     )
   }
 
-  // Also attempt non-destructive registration into user's desktop profile if accessible
+  // Register `@dsh-video/web-video-workbench` as a real DSH 0.2.x client+bundle plugin in `desktop` profile
   let desktopMounted = false
   let desktopPatchPath = ''
+  let desktopPkgPath = ''
   try {
     const userDesktopProfile = join(homedir(), '.dsh', 'profiles', 'desktop')
     desktopPatchPath = join(userDesktopProfile, 'cordis.patch.yml')
-    if (existsSync(desktopPatchPath)) {
-      // The desktop profile patch is a top-level YAML ARRAY of loader entries.
-      // Bare `  - path: ...` lines appended at the end are NOT valid there: the
-      // 2-space indent makes them children of the previous entry, so the loader
-      // dies with `YAMLException: bad indentation of a sequence entry` and the
-      // whole profile (plugin_manager, guardian, every provider) stops loading.
-      // They must live inside their own `- insert:` block instead.
-      const MARKER = '# >>> dsh-video-workbench (managed block) >>>'
-      const END_MARKER = '# <<< dsh-video-workbench (managed block) <<<'
-      const block = [
-        MARKER,
-        '- insert:',
-        ...pluginPaths.map((p) => `    - path: "${p}"`),
-        END_MARKER,
-      ].join('\n')
+    desktopPkgPath = join(userDesktopProfile, 'package.json')
 
-      let raw = readFileSync(desktopPatchPath, 'utf8')
-      // Drop any previously managed block (marker-delimited, or the legacy
-      // bare-line form appended by older versions of this script).
-      const managed = new RegExp(
-        `\\n?${MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${END_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n?`,
-        'g',
-      )
-      raw = raw.replace(managed, '\n')
-      raw = raw
-        .split(/\r?\n/)
-        .filter(
-          (line) =>
-            !(
-              /^\s*-\s+path:/.test(line) &&
-              /dsh-tool-local-tts|dsh-tool-avatar|dsh-tool-video-suite|dsh-tool-media|dsh-preset-video|dsh-web-video-workbench/.test(line)
-            ),
-        )
-        .join('\n')
-        .replace(/\n+$/, '')
+    if (existsSync(userDesktopProfile) && existsSync(desktopPkgPath)) {
+      // 1. Link all `@dsh-video/*` workspace packages into `desktop/node_modules/@dsh-video/*`
+      linkScopePackages(join(userDesktopProfile, 'node_modules'))
 
-      const updated = `${raw}\n${block}\n`
-      writeFileSync(desktopPatchPath, updated, 'utf8')
+      // 2. Register `@dsh-video/web-video-workbench` in `desktop/package.json` (`dsh.profile.bundles` + `dependencies`)
+      const pkgRaw = readFileSync(desktopPkgPath, 'utf8')
+      const pkg = JSON.parse(pkgRaw)
+      pkg.dsh = pkg.dsh && typeof pkg.dsh === 'object' ? pkg.dsh : {}
+      pkg.dsh.profile = pkg.dsh.profile && typeof pkg.dsh.profile === 'object' ? pkg.dsh.profile : {}
+      const bundles = Array.isArray(pkg.dsh.profile.bundles) ? [...pkg.dsh.profile.bundles] : []
+      if (!bundles.includes('@dsh-video/web-video-workbench')) {
+        bundles.push('@dsh-video/web-video-workbench')
+      }
+      pkg.dsh.profile.bundles = bundles
+      pkg.dependencies = pkg.dependencies && typeof pkg.dependencies === 'object' ? pkg.dependencies : {}
+      pkg.dependencies['@dsh-video/web-video-workbench'] =
+        `link:${join(REPO_ROOT, 'packages', 'dsh-web-video-workbench').replace(/\\/g, '/')}`
+
+      copyFileSync(desktopPkgPath, `${desktopPkgPath}.bak-video-workbench`)
+      writeFileSync(desktopPkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8')
+
+      // 3. Clean out any legacy raw `- path:` lines inside `cordis.patch.yml` so plugins aren't registered twice,
+      //    while strictly preserving any unrelated user config entries (such as `ui-settings-general`, `agent-default-model`).
+      if (existsSync(desktopPatchPath)) {
+        const lines = readFileSync(desktopPatchPath, 'utf8').split(/\r?\n/)
+        const cleaned = []
+        let skipEmptyInsert = false
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i]
+          if (/^#\s*(?:>>>|<<<)\s*dsh-video-workbench\b/.test(line.trim())) continue
+          if (
+            /^\s*-\s+path:/.test(line) &&
+            /dsh-tool-local-tts|dsh-tool-avatar|dsh-tool-video-suite|dsh-tool-media|dsh-preset-video|dsh-web-video-workbench/.test(line)
+          ) {
+            continue
+          }
+          if (line.trim() === '- insert:') {
+            const nextLine = lines[i + 1] || ''
+            if (
+              /^\s*-\s+path:/.test(nextLine) &&
+              /dsh-tool-local-tts|dsh-tool-avatar|dsh-tool-video-suite|dsh-tool-media|dsh-preset-video|dsh-web-video-workbench/.test(nextLine)
+            ) {
+              skipEmptyInsert = true
+              continue
+            }
+          }
+          if (skipEmptyInsert && /^\s*-\s+path:/.test(line)) continue
+          skipEmptyInsert = false
+          cleaned.push(line)
+        }
+        const nextYml = cleaned.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '\n')
+        copyFileSync(desktopPatchPath, `${desktopPatchPath}.bak-video-workbench`)
+        writeFileSync(desktopPatchPath, nextYml, 'utf8')
+      }
       desktopMounted = true
     }
   } catch {
-    // Ignore if user desktop profile is locked
+    // Ignore if user desktop profile is absent/read-only
   }
 
   return {
@@ -130,6 +155,7 @@ export function setupDshVideoProfile() {
     profilePatchPath,
     desktopMounted,
     desktopPatchPath,
+    desktopPkgPath,
     pluginPaths,
   }
 }

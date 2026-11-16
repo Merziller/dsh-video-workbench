@@ -1,307 +1,369 @@
+/* eslint-disable no-undef */
 /**
- * DSH Video Workbench — Cinema-Grade Theme-Adaptive Studio (`dsh-web-video-workbench`)
- * Dual-Track Creation:
- *   Track A: 0-Token Local Draft & IndexTTS-2.5 Voice Practice
- *   Track B: DSH-Synced / 4-Protocol Model-Agnostic LLM Coding + Post-TTS AI Voice Mastering + Remotion / HyperFrames HTML + FFmpeg QA
- * Theme Support: Auto (Sync DSH Host / OS), Cinema Dark (Black-Gold Viewfinder), Editorial Light (Warm Archival Studio)
- * Plain ES Module (React.createElement, no JSX build step required).
+ * DSH Video Workbench Frontend Client (v6 — Kinetic War Room & Studio Redesign)
+ * Pure ES Module loaded dynamically inside DSH Web UI via window.__ModuleLoader__.
+ * Zero build/JSX required; zero DSH core mutation.
  */
-window.__ModuleLoader__.load({
-  id: 'dsh-web-video-workbench',
-  factory: async (resolveModule) => {
-    const React = await resolveModule('react')
-    const {
-      Component,
-      createElement: h,
-      useCallback,
-      useEffect,
-      useMemo,
-      useRef,
-      useState,
-    } = React
+window.__ModuleLoader__?.load({
+  id: '@dsh-video/web-video-workbench',
+  factory: (resolveModule) => {
+    const ReactMod = resolveModule('react')
+    const React = ReactMod?.default || ReactMod
+    const { useState, useEffect, useRef, useMemo, useCallback } = React
+    const h = React.createElement
 
-    const VIDEO_TOOL_NAMES = new Set([
-      'import_assets',
-      'list_assets',
-      'generate_sfx_bgm',
-      'plan_video_from_assets',
-      'produce_video',
-      'generate_speech',
-      'list_voices',
-      'import_voice_pack',
-      'match_scene_voices',
-      'get_llm_config',
-      'configure_llm_model',
-      'ai_master_voice',
-      'ai_create_video',
-      'ai_refine_scene',
-      'export_publish_pack',
-      'import_vendor_motion',
-      'video_qa',
-      'video_lint',
-      'video_snapshot',
-      'video_render',
-    ])
-
-    const STYLE_OPTIONS = [
-      { id: 'tech', label: '科技前沿', desc: '深邃几何 · 精密脉冲', swatch: '#38BDF8' },
-      { id: 'cinematic', label: '电影大片', desc: '黑金质感 · 史诗运镜', swatch: '#E5A93C' },
-      { id: 'documentary', label: '人文纪实', desc: '沉稳叙事 · 克制考究', swatch: '#10B981' },
-      { id: 'energetic', label: '高燃快剪', desc: '节拍冲击 · 视觉撞色', swatch: '#F43F5E' },
-      { id: 'warm', label: '温暖治愈', desc: '柔光漫射 · 细腻故事', swatch: '#FB923C' },
-    ]
-
-    const makeSvgPatternUrl = (svg) => `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`
-
-    const SKIN_PRESETS = [
-      {
-        id: 'obsidian-nebula',
-        name: '星际舰桥 · 赛博hex',
-        badge: '默认作战',
-        css: [
-          makeSvgPatternUrl('<svg xmlns="http://www.w3.org/2000/svg" width="84" height="72" viewBox="0 0 84 72"><path d="M21 0 L63 0 L84 36 L63 72 L21 72 L0 36 Z" fill="none" stroke="#22D3EE" stroke-opacity="0.065" stroke-width="1"/><circle cx="42" cy="36" r="1.3" fill="#22D3EE" fill-opacity="0.18"/></svg>'),
-          'radial-gradient(ellipse 78% 52% at 18% 16%, rgba(34,211,238,0.26), transparent 64%)',
-          'radial-gradient(ellipse 68% 58% at 84% 82%, rgba(229,169,60,0.20), transparent 62%)',
-          'linear-gradient(155deg, #050811 0%, #0A1120 50%, #04070D 100%)',
-        ].join(', '),
-        lightCss: [
-          makeSvgPatternUrl('<svg xmlns="http://www.w3.org/2000/svg" width="84" height="72" viewBox="0 0 84 72"><path d="M21 0 L63 0 L84 36 L63 72 L21 72 L0 36 Z" fill="none" stroke="#0284C7" stroke-opacity="0.075" stroke-width="1"/><circle cx="42" cy="36" r="1.2" fill="#0284C7" fill-opacity="0.16"/></svg>'),
-          'radial-gradient(ellipse 78% 55% at 15% 15%, rgba(14,165,233,0.16), transparent 62%)',
-          'radial-gradient(ellipse 75% 60% at 88% 82%, rgba(217,119,6,0.13), transparent 60%)',
-          'linear-gradient(155deg, #F1F5FB 0%, #E7EEF8 55%, #F8FAFC 100%)',
-        ].join(', '),
-      },
-      {
-        id: 'cyber-matrix',
-        name: '量子态势 · 坐标光栅',
-        badge: '全息雷达',
-        css: [
-          makeSvgPatternUrl('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><path d="M96 0 H0 V96" fill="none" stroke="#38BDF8" stroke-opacity="0.07" stroke-width="1"/><path d="M44 48 H52 M48 44 V52" stroke="#22D3EE" stroke-opacity="0.16" stroke-width="1"/></svg>'),
-          'radial-gradient(circle at 50% 42%, rgba(34,211,238,0.28), transparent 62%)',
-          'radial-gradient(circle at 82% 18%, rgba(59,130,246,0.22), transparent 52%)',
-          'linear-gradient(180deg, #040812 0%, #081529 55%, #040914 100%)',
-        ].join(', '),
-        lightCss: [
-          makeSvgPatternUrl('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><path d="M96 0 H0 V96" fill="none" stroke="#0284C7" stroke-opacity="0.08" stroke-width="1"/><path d="M44 48 H52 M48 44 V52" stroke="#0284C7" stroke-opacity="0.18" stroke-width="1"/></svg>'),
-          'radial-gradient(circle at 50% 10%, rgba(14,165,233,0.20), transparent 65%)',
-          'linear-gradient(180deg, #E8F3FF 0%, #F6FAFF 100%)',
-        ].join(', '),
-      },
-      {
-        id: 'anamorphic-gold',
-        name: '变形宽银幕 · 黑金胶片',
-        badge: '影院首映',
-        css: [
-          makeSvgPatternUrl('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40" viewBox="0 0 120 40"><rect x="6" y="4" width="10" height="6" rx="1.5" fill="#E5A93C" fill-opacity="0.10"/><rect x="104" y="4" width="10" height="6" rx="1.5" fill="#E5A93C" fill-opacity="0.10"/><line x1="0" y1="20" x2="120" y2="20" stroke="#E5A93C" stroke-opacity="0.06" stroke-dasharray="3 6"/></svg>'),
-          'radial-gradient(ellipse 120% 22% at 50% 44%, rgba(229,169,60,0.28), transparent 72%)',
-          'radial-gradient(circle at 78% 22%, rgba(251,146,60,0.16), transparent 55%)',
-          'linear-gradient(160deg, #090806 0%, #16110B 55%, #06070A 100%)',
-        ].join(', '),
-        lightCss: [
-          makeSvgPatternUrl('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40" viewBox="0 0 120 40"><line x1="0" y1="20" x2="120" y2="20" stroke="#B7791F" stroke-opacity="0.09" stroke-dasharray="3 6"/></svg>'),
-          'radial-gradient(ellipse 110% 20% at 50% 44%, rgba(217,119,6,0.18), transparent 72%)',
-          'linear-gradient(160deg, #FCF8F0 0%, #F3EAD8 100%)',
-        ].join(', '),
-      },
-      {
-        id: 'aurora-emerald',
-        name: '深潜声呐 · 霓虹极光',
-        badge: '频谱等高',
-        css: [
-          makeSvgPatternUrl('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><circle cx="80" cy="80" r="32" fill="none" stroke="#10B981" stroke-opacity="0.06" stroke-width="1"/><circle cx="80" cy="80" r="64" fill="none" stroke="#22D3EE" stroke-opacity="0.05" stroke-width="1" stroke-dasharray="4 6"/></svg>'),
-          'radial-gradient(ellipse 75% 50% at 22% 80%, rgba(16,185,129,0.24), transparent 62%)',
-          'radial-gradient(ellipse 70% 50% at 85% 20%, rgba(34,211,238,0.24), transparent 62%)',
-          'linear-gradient(165deg, #030A0D 0%, #071920 100%)',
-        ].join(', '),
-        lightCss: [
-          makeSvgPatternUrl('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><circle cx="80" cy="80" r="46" fill="none" stroke="#059669" stroke-opacity="0.08" stroke-width="1"/></svg>'),
-          'radial-gradient(ellipse 75% 50% at 22% 80%, rgba(16,185,129,0.14), transparent 62%)',
-          'linear-gradient(165deg, #ECFDF7 0%, #F4FBFA 100%)',
-        ].join(', '),
-      },
-      {
-        id: 'pearl-aerospace',
-        name: '高定航天 · 情报白昼',
-        badge: '高清拟态',
-        css: [
-          makeSvgPatternUrl('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80"><circle cx="40" cy="40" r="1.2" fill="#94A3B8" fill-opacity="0.20"/><path d="M0 40 H12 M68 40 H80 M40 0 V12 M40 68 V80" stroke="#64748B" stroke-opacity="0.14" stroke-width="1"/></svg>'),
-          'radial-gradient(circle at 50% 15%, rgba(148,163,184,0.16), transparent 60%)',
-          'linear-gradient(180deg, #0B1018 0%, #121A26 100%)',
-        ].join(', '),
-        lightCss: [
-          makeSvgPatternUrl('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80"><circle cx="40" cy="40" r="1.2" fill="#0F172A" fill-opacity="0.12"/><path d="M0 40 H10 M70 40 H80 M40 0 V10 M40 70 V80" stroke="#0284C7" stroke-opacity="0.14" stroke-width="1"/></svg>'),
-          'radial-gradient(ellipse 70% 50% at 15% 20%, rgba(56,189,248,0.16), transparent 60%)',
-          'radial-gradient(ellipse 60% 45% at 88% 82%, rgba(217,119,6,0.10), transparent 60%)',
-          'linear-gradient(165deg, #F6F8FC 0%, #E9EFF7 100%)',
-        ].join(', '),
-      },
-    ]
-
-    const AGENT_TEAM_DEFS = [
-      { id: 'director', short: '01 策划导演', icon: 'sparkles', desc: '文案与分镜脚本' },
-      { id: 'editor', short: '02 素材剪辑', icon: 'sliders', desc: '构图裁切与调色' },
-      { id: 'audio', short: '03 配音混音', icon: 'mic', desc: 'TTS修音 · 闪避 · 数字人' },
-      { id: 'motion_qa', short: '04 动效质检', icon: 'film', desc: '动效 · 9宫格 · MP4' },
-    ]
-
-    const ASPECT_RATIO_OPTIONS = [
-      { id: 'auto', label: 'AI 智能判断', sub: '自动匹配主题与素材', icon: '✨' },
-      { id: '16:9', label: '16:9 横屏', sub: 'B站 · YouTube · 官网', icon: '▬' },
-      { id: '9:16', label: '9:16 竖屏', sub: '抖音 · 视频号 · 快手', icon: '▮' },
-      { id: '3:4', label: '3:4 图文', sub: '小红书封面比例', icon: '▯' },
-      { id: '1:1', label: '1:1 方屏', sub: '朋友圈 · 信息流', icon: '■' },
-    ]
-
-    const QUALITY_OPTIONS = [
-      { id: '720p', label: '720P 草稿', desc: '极速预览' },
-      { id: '1080p', label: '1080P 高清', desc: '成片推荐' },
-      { id: '2k', label: '2K 超清', desc: '2560/1440' },
-      { id: '4k', label: '4K 影院', desc: '极致细节' },
-      { id: 'custom', label: '自定义', desc: '手填像素' },
-    ]
-
-    const TOPIC_PRESETS = [
-      {
-        label: '产品发布会短片',
-        topic: '用苹果/大厂发布会节奏打造视觉短片：犀利指出传统痛点，以三维动态UI与滚动数字指标引爆核心卖点，高燃收尾号召体验。',
-      },
-      {
-        label: '知识深度科普',
-        topic: '三幕式电影科普叙事：抛出颠覆直觉的问题、结合导入素材与动态图解逐层剖析原理、给出一针见血的总结金句。',
-      },
-      {
-        label: '旅拍 / 影像混剪',
-        topic: '围绕导入的高清影像片段与照片，配以电影级调色暗角、节拍鼓点切镜与温暖深情独白，讲述一段打动人心的旅程。',
-      },
-    ]
-
-    const MOTION_OPTIONS = [
-      { value: 'zoom-in', label: '推进 (Zoom In)' },
-      { value: 'zoom-out', label: '拉远 (Zoom Out)' },
-      { value: 'pan-left', label: '左摇 (Pan Left)' },
-      { value: 'pan-right', label: '右摇 (Pan Right)' },
-    ]
-
-    const TRANSITION_OPTIONS = [
-      { value: 'iris-circle', label: '光圈虹膜 (Iris)' },
-      { value: 'block-wipe', label: '方块擦除 (Block Wipe)' },
-      { value: 'glitch-cut', label: '数字故障切 (Glitch)' },
-      { value: 'zoom-punch', label: '冲刺缩放 (Zoom Punch)' },
-      { value: 'light-wipe', label: '高光掠过 (Light Wipe)' },
-    ]
-
-    const CREATION_MODE_OPTIONS = [
-      { id: 'ai-coded', title: '🤖 AI 自由写码模式', desc: '大模型直写高清 React/HTML 动效与物理转场代码' },
-      { id: 'schema-plan', title: '📐 Schema 结构化模式', desc: 'promo-plan/1 高保真配方编排 · 四档自动降级稳交付' },
-    ]
-
-    const BGM_MODE_OPTIONS = [
-      { id: 'llm-coded', icon: '🤖', title: 'AI 写配乐代码', desc: '大模型编写 JS DSP 代码合成 48kHz 原创立体声 WAV' },
-      { id: 'uploaded', icon: '🎵', title: '自由上传本地 BGM', desc: '上传个人 mp3/wav/flac 配乐，自动避让人声并混音' },
-      { id: 'tts-engine', icon: '🗣', title: 'IndexTTS-2.5 音色合成', desc: '用音色库或克隆声线合成空灵人声和弦氛围垫底' },
-    ]
-
-    const PLATFORM_OPTIONS = [
-      { id: 'universal', label: '通用成片', desc: '无边框遮挡 · 16:9 / 通用展示' },
-      { id: 'douyin', label: '抖音竖屏', desc: '避开底部18%文案栏与右侧9%赞评栏' },
-      { id: 'kuaishou', label: '快手竖屏', desc: '避开底部16%互动条与右侧图标区' },
-      { id: 'xiaohongshu', label: '小红书', desc: '3:4 / 9:16 图文底栏与右上角避让' },
-      { id: 'bilibili', label: 'B站横屏', desc: '顶部弹幕安全区与右上推荐卡片避让' },
-    ]
-
-    const QUICK_FIX_PILLS = [
-      { label: '🛡 字幕上移进安全区', prompt: '请把所有分镜字幕位置上移入平台安全区内，避免被抖音/快手底部栏或B站控件遮挡，并加大高对比描边。' },
-      { label: '🔊 配乐降 3dB 突出人声', prompt: '保持口播人声响度不变，把背景音乐压低约 3dB，强化人声开口时的自动闪避 Ducking。' },
-      { label: '⚡ 加快镜头与转场节奏', prompt: '把全片转场和关键字卡入场节奏提快 15%，消除画面停顿拖沓感。' },
-      { label: '✨ 强化标题动效与高光', prompt: '加强主标题与关键数字卡片的弹簧进场动画与高光扫过粒子质感。' },
-      { label: '🎬 切换黑金电影级调色', prompt: '调整当前画面的暗角、对比度与标题边框为黑金胶片质感。' },
-    ]
-
+    // =========================================================================
+    // 1. UNIFIED VISUAL TOKENS, THEMES & STATIC CATALOGS
+    // =========================================================================
     const DARK_THEME = {
       mode: 'dark',
-      bgApp: '#07090E',
-      bgSidebar: 'rgba(13, 17, 26, 0.80)',
-      bgPanel: 'rgba(13, 17, 26, 0.76)',
-      bgElevated: 'rgba(22, 28, 42, 0.72)',
-      bgInput: 'rgba(7, 9, 14, 0.82)',
-      borderSubtle: 'rgba(255, 255, 255, 0.09)',
-      borderStrong: 'rgba(34, 211, 238, 0.28)',
-      textPrimary: '#F3F4F8',
-      textSecondary: '#A8B1C6',
-      textMuted: '#727E99',
-      accentGold: '#E5A93C',
-      accentGoldBg: 'rgba(229, 169, 60, 0.14)',
-      accentGoldBorder: 'rgba(229, 169, 60, 0.44)',
+      bgRoot: '#06080E',
+      bgPanel: 'rgba(13, 18, 30, 0.84)',
+      bgPanelSolid: '#0E1422',
+      bgElevated: 'rgba(20, 27, 45, 0.78)',
+      bgInput: 'rgba(8, 12, 22, 0.88)',
+      bgSidebar: 'rgba(10, 14, 24, 0.90)',
+      bgHover: 'rgba(255, 255, 255, 0.06)',
+      monitorShell: '#04060A',
+      borderSubtle: 'rgba(148, 163, 184, 0.16)',
+      borderStrong: 'rgba(148, 163, 184, 0.30)',
+      textPrimary: '#F1F5F9',
+      textSecondary: '#CBD5E1',
+      textMuted: '#94A3B8',
+      accentGold: '#F5B942',
+      accentGoldBg: 'rgba(245, 185, 66, 0.14)',
+      accentGoldBorder: 'rgba(245, 185, 66, 0.45)',
       accentBlue: '#22D3EE',
       accentBlueBg: 'rgba(34, 211, 238, 0.13)',
       accentBlueBorder: 'rgba(34, 211, 238, 0.42)',
-      accentGreen: '#22C55E',
-      accentGreenBg: 'rgba(34, 197, 94, 0.14)',
-      accentRed: '#F43F5E',
-      accentRedBg: 'rgba(244, 63, 94, 0.14)',
-      monitorShell: '#040508',
-      shadowCard: '0 18px 46px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
-      scrollThumb: 'rgba(255, 255, 255, 0.16)',
+      accentViolet: '#A78BFA',
+      accentVioletBg: 'rgba(167, 139, 250, 0.14)',
+      accentGreen: '#34D399',
+      accentGreenBg: 'rgba(52, 211, 153, 0.13)',
+      accentRed: '#FB7185',
+      accentRedBg: 'rgba(251, 113, 133, 0.14)',
+      shadowCard: '0 20px 54px rgba(0, 0, 0, 0.56)',
+      shadowPopover: '0 24px 64px rgba(0, 0, 0, 0.72)',
+      scrollThumb: 'rgba(148, 163, 184, 0.28)',
     }
 
     const LIGHT_THEME = {
       mode: 'light',
-      bgApp: '#F3F4F8',
-      bgSidebar: 'rgba(245, 246, 250, 0.84)',
-      bgPanel: 'rgba(255, 255, 255, 0.84)',
-      bgElevated: 'rgba(246, 247, 251, 0.82)',
-      bgInput: 'rgba(241, 243, 249, 0.88)',
-      borderSubtle: 'rgba(15, 23, 42, 0.09)',
-      borderStrong: 'rgba(14, 165, 233, 0.28)',
+      bgRoot: '#EEF3FA',
+      bgPanel: 'rgba(255, 255, 255, 0.88)',
+      bgPanelSolid: '#FFFFFF',
+      bgElevated: 'rgba(243, 247, 253, 0.90)',
+      bgInput: 'rgba(255, 255, 255, 0.96)',
+      bgSidebar: 'rgba(248, 250, 254, 0.94)',
+      bgHover: 'rgba(15, 23, 42, 0.05)',
+      monitorShell: '#0F172A',
+      borderSubtle: 'rgba(15, 23, 42, 0.11)',
+      borderStrong: 'rgba(15, 23, 42, 0.24)',
       textPrimary: '#0F172A',
-      textSecondary: '#475569',
+      textSecondary: '#334155',
       textMuted: '#64748B',
-      accentGold: '#B7791F',
-      accentGoldBg: 'rgba(183, 121, 31, 0.12)',
-      accentGoldBorder: 'rgba(183, 121, 31, 0.36)',
+      accentGold: '#B45309',
+      accentGoldBg: 'rgba(217, 119, 6, 0.11)',
+      accentGoldBorder: 'rgba(217, 119, 6, 0.36)',
       accentBlue: '#0284C7',
-      accentBlueBg: 'rgba(2, 132, 199, 0.1)',
-      accentBlueBorder: 'rgba(2, 132, 199, 0.34)',
-      accentGreen: '#16A34A',
-      accentGreenBg: 'rgba(22, 163, 74, 0.1)',
+      accentBlueBg: 'rgba(2, 132, 199, 0.10)',
+      accentBlueBorder: 'rgba(2, 132, 199, 0.35)',
+      accentViolet: '#7C3AED',
+      accentVioletBg: 'rgba(124, 58, 237, 0.10)',
+      accentGreen: '#059669',
+      accentGreenBg: 'rgba(5, 150, 105, 0.10)',
       accentRed: '#E11D48',
-      accentRedBg: 'rgba(225, 29, 72, 0.1)',
-      monitorShell: '#07090E', // Cinema monitors stay reference-black for true color accuracy
-      shadowCard: '0 14px 36px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.65)',
-      scrollThumb: 'rgba(15, 23, 42, 0.16)',
+      accentRedBg: 'rgba(225, 29, 72, 0.10)',
+      shadowCard: '0 14px 36px rgba(15, 23, 42, 0.09)',
+      shadowPopover: '0 18px 46px rgba(15, 23, 42, 0.18)',
+      scrollThumb: 'rgba(15, 23, 42, 0.20)',
     }
 
-    function detectHostDarkMode() {
+    const SKIN_PRESETS = [
+      {
+        id: 'obsidian-nebula',
+        name: '深邃星云 · Cinema',
+        badge: '默认',
+        darkBg:
+          'radial-gradient(ellipse 90% 60% at 15% 15%, rgba(34,211,238,0.16), transparent 60%), radial-gradient(ellipse 80% 55% at 85% 20%, rgba(245,185,66,0.13), transparent 60%), radial-gradient(circle at 50% 90%, rgba(124,58,237,0.18), transparent 65%), #06080E',
+        lightBg:
+          'radial-gradient(ellipse 90% 60% at 15% 15%, rgba(56,189,248,0.18), transparent 60%), radial-gradient(ellipse 80% 55% at 85% 25%, rgba(245,158,11,0.14), transparent 60%), linear-gradient(180deg, #F0F5FC 0%, #E6EEF8 100%)',
+      },
+      {
+        id: 'cyber-laser',
+        name: '霓虹激光矩阵',
+        badge: '科技',
+        darkBg:
+          'radial-gradient(circle at 20% 25%, rgba(6,182,212,0.22), transparent 55%), radial-gradient(circle at 80% 75%, rgba(236,72,153,0.16), transparent 58%), #050811',
+        lightBg:
+          'radial-gradient(circle at 20% 25%, rgba(14,165,233,0.16), transparent 55%), radial-gradient(circle at 80% 75%, rgba(236,72,153,0.12), transparent 58%), #EDF2FA',
+      },
+      {
+        id: 'emerald-trench',
+        name: '翡翠深空舱',
+        badge: '沉浸',
+        darkBg:
+          'radial-gradient(ellipse at 30% 20%, rgba(16,185,129,0.20), transparent 55%), radial-gradient(ellipse at 75% 80%, rgba(34,211,238,0.14), transparent 55%), #040B0D',
+        lightBg:
+          'radial-gradient(ellipse at 30% 20%, rgba(16,185,129,0.16), transparent 55%), radial-gradient(ellipse at 75% 80%, rgba(14,165,233,0.12), transparent 55%), #EDF7F4',
+      },
+      {
+        id: 'amber-premiere',
+        name: '曜金首映厅',
+        badge: '电影',
+        darkBg:
+          'radial-gradient(ellipse at 50% 0%, rgba(245,185,66,0.22), transparent 60%), radial-gradient(ellipse at 85% 85%, rgba(244,63,94,0.12), transparent 55%), #09070B',
+        lightBg:
+          'radial-gradient(ellipse at 50% 0%, rgba(245,158,11,0.16), transparent 60%), radial-gradient(ellipse at 85% 85%, rgba(244,63,94,0.09), transparent 55%), #FAF6EE',
+      },
+    ]
+
+    // Unified styles matching @dsh-video/shared `VIDEO_STYLES`
+    const UNIFIED_STYLES = [
+      { id: 'emerald', label: '墨翠轻奢', desc: '深翠墨底 · 柔金光影', swatch: '#45D1B2', gradient: 'linear-gradient(135deg, #45D1B2, #0F766E)' },
+      { id: 'tech', label: '科技锋芒', desc: '几何光线 · 精密节奏', swatch: '#22D3EE', gradient: 'linear-gradient(135deg, #0EA5E9, #6366F1)' },
+      { id: 'cinematic', label: '电影大片', desc: '黄金比例 · 光影叙事', swatch: '#F5B942', gradient: 'linear-gradient(135deg, #F59E0B, #B45309)' },
+      { id: 'documentary', label: '极简纪实', desc: '克制留白 · 权威旁白', swatch: '#94A3B8', gradient: 'linear-gradient(135deg, #64748B, #334155)' },
+      { id: 'energetic', label: '活力潮牌', desc: '快切节拍 · 高能撞色', swatch: '#FB7185', gradient: 'linear-gradient(135deg, #F43F5E, #EC4899)' },
+      { id: 'warm', label: '温暖故事', desc: '柔光琥珀 · 人文温度', swatch: '#FB923C', gradient: 'linear-gradient(135deg, #FB923C, #D97706)' },
+    ]
+
+    const ASPECT_RATIO_OPTIONS = [
+      { id: 'auto', label: 'AI 智能判断', sub: '依据主题自动', icon: '✦' },
+      { id: '16:9', label: '16:9 横屏', sub: 'B站 / YouTube / 大屏', icon: '▭' },
+      { id: '9:16', label: '9:16 竖屏', sub: '抖音 / 快手 / 小红书', icon: '▯' },
+      { id: '1:1', label: '1:1 方屏', sub: '信息流 / 动态卡片', icon: '◻' },
+      { id: '4:3', label: '4:3 复古', sub: '课件 / 访谈叙事', icon: '❐' },
+      { id: 'custom', label: '自定义', sub: '手动宽高像素', icon: '⊞' },
+    ]
+
+    const QUALITY_OPTIONS = [
+      { id: '720p', label: '720P 极速预览', desc: '快速渲染 · 审片演练' },
+      { id: '1080p', label: '1080P 全高清', desc: '主流平台发布标准' },
+      { id: '4k', label: '4K 超清母带', desc: '极致画质 · 耗时较长' },
+      { id: 'custom', label: '自定义分辨率', desc: '自由输入宽高像素' },
+    ]
+
+    const PLATFORM_OPTIONS = [
+      { id: 'universal', label: '通用全平台', hint: '标准 5% 安全边距' },
+      { id: 'douyin', label: '抖音 / 视频号', hint: '避让右侧点赞与底部字幕区' },
+      { id: 'bilibili', label: 'B站 / YouTube', hint: '横屏片头与弹幕防遮挡' },
+      { id: 'xiaohongshu', label: '小红书图文视频', hint: '底部文案与首图防裁切' },
+    ]
+
+    const MOTION_OPTIONS = [
+      { value: 'zoom-in', label: '缓推拉近 (Zoom In)' },
+      { value: 'zoom-out', label: '缓拉远景 (Zoom Out)' },
+      { value: 'pan-left', label: '横向左移 (Pan Left)' },
+      { value: 'pan-right', label: '横向右移 (Pan Right)' },
+      { value: 'static', label: '锁定静止 (Static)' },
+    ]
+
+    const WIRE_PROTOCOL_CARDS = [
+      {
+        id: 'openai-completions',
+        title: 'OpenAI 兼容 Chat',
+        path: '/v1/chat/completions',
+        tag: '通用首选 / 中转站',
+        desc: 'DeepSeek、Qwen、硅基流动及绝大多数 API 中转',
+        color: '#22D3EE',
+      },
+      {
+        id: 'anthropic-messages',
+        title: 'Anthropic 原生 Messages',
+        path: '/v1/messages',
+        tag: 'Claude 专属',
+        desc: '直连 Claude Opus / Sonnet 原生协议头',
+        color: '#F5B942',
+      },
+      {
+        id: 'openai-responses',
+        title: 'OpenAI Responses',
+        path: '/v1/responses',
+        tag: 'OpenAI 新一代',
+        desc: '官方 GPT Reasoning / Responses 新规范接口',
+        color: '#34D399',
+      },
+      {
+        id: 'gemini-native',
+        title: 'Gemini 原生 Generate',
+        path: '/v1beta/models',
+        tag: 'Google 直连',
+        desc: 'Google Gemini 原生流式与多模态通道',
+        color: '#A78BFA',
+      },
+    ]
+
+    const LAUNCH_INSPIRATION_TEMPLATES = [
+      {
+        label: '🚀 AI 产品震撼发布',
+        topic: '制作一条 30 秒电影级产品发布短片：节奏先慢后燃，用高对比霓虹视觉、震撼数字计数动效与强鼓点转场，讲透我们的 AI 新品如何让普通人 3 分钟出大片。',
+        style: 'tech',
+        aspect: '16:9',
+      },
+      {
+        label: '📱 爆款口播干货教程',
+        topic: '制作一条 35 秒竖屏高完播干货口播短片：前 3 秒抛出反常识金句，配合大字高亮动画与重点卡片弹出，分享普通人一定要知道的三个高效创作秘诀。',
+        style: 'energetic',
+        aspect: '9:16',
+      },
+      {
+        label: '🌟 品牌温情故事短片',
+        topic: '制作一条 30 秒温暖电影感品牌故事短片：采用柔和琥珀光影与舒缓钢琴弦乐铺底，讲述团队从灵感萌芽到打磨出第一件作品的真实历程。',
+        style: 'warm',
+        aspect: '16:9',
+      },
+      {
+        label: '📊 深度洞察与行业拆解',
+        topic: '制作一条 35 秒极简纪实风格行业洞察视频：用清晰的图表对比动效、章节导航条与沉稳权威旁白，客观拆解今年行业变革与核心机会点。',
+        style: 'documentary',
+        aspect: '16:9',
+      },
+    ]
+
+    const QUICK_FIX_PILLS = [
+      { label: '⚡ 节奏加快一倍', prompt: '把全片切换节奏加快，转场更有冲击力，单幕更干脆利落' },
+      { label: '✨ 动效粒子更炫酷', prompt: '升级当前幕前景视觉特效与动效代码，加入光影扫描和数字动效，确保文字清晰' },
+      { label: '🔤 加大重点字幕字号', prompt: '显著放大画面标题与关键字幕字号，提高文字与背景对比度，适合手机端一眼看清' },
+      { label: '🎬 电影胶片暖金色调', prompt: '整体画面调整为电影暗角暖金光影质感，氛围更具高级大片感' },
+      { label: '🥁 鼓点配乐更燃', prompt: '重编 BGM 与转场音效节奏，鼓点更有力量感并与分镜切点对齐' },
+    ]
+
+    const AGENT_STATION_META = [
+      {
+        id: 'director',
+        name: '策划导演 Agent',
+        role: '剧本 · 分镜 · 视觉方案',
+        stepTarget: 2,
+        icon: 'sparkles',
+        color: '#22D3EE',
+      },
+      {
+        id: 'editor',
+        name: '素材剪辑 Agent',
+        role: '智能选片 · 裁切调色',
+        stepTarget: 1,
+        icon: 'scissors',
+        color: '#F5B942',
+      },
+      {
+        id: 'audio',
+        name: '配音混音 Agent',
+        role: 'IndexTTS-2.5 · 人声闪避',
+        stepTarget: 2,
+        icon: 'mic',
+        color: '#34D399',
+      },
+      {
+        id: 'motion_qa',
+        name: '动效质检 Agent',
+        role: 'Remotion编码 · 自检出片',
+        stepTarget: 3,
+        icon: 'film',
+        color: '#A78BFA',
+      },
+    ]
+
+    // =========================================================================
+    // 2. HELPERS: MEDIA DETECT, ICONS, BEGINNER ERROR TRANSLATOR, THEME WATCH
+    // =========================================================================
+    function detectDshThemeIsDark() {
       try {
         const html = document.documentElement
         const body = document.body
-        const attrTheme = (
-          html.getAttribute('data-theme') ||
-          html.getAttribute('data-color-mode') ||
-          body?.getAttribute('data-theme') ||
-          ''
-        ).toLowerCase()
-        if (attrTheme.includes('light')) return false
-        if (attrTheme.includes('dark')) return true
+        const dt = (html.getAttribute('data-theme') || body?.getAttribute('data-theme') || '').toLowerCase()
+        if (dt === 'light') return false
+        if (dt === 'dark') return true
         if (html.classList.contains('light') || body?.classList.contains('light')) return false
         if (html.classList.contains('dark') || body?.classList.contains('dark')) return true
-
-        // Probe computed background luminance if host sets CSS body bg directly
-        const bgStr = body ? getComputedStyle(body).backgroundColor : ''
-        const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(bgStr || '')
-        if (m && (m[4] === undefined || Number(m[4]) > 0.2)) {
-          const lum = (Number(m[1]) * 0.299 + Number(m[2]) * 0.587 + Number(m[3]) * 0.114) / 255
-          if (lum > 0.62) return false
-          if (lum < 0.38) return true
+        const bg = getComputedStyle(body || html).backgroundColor
+        const m = bg && bg.match(/\d+/g)
+        if (m && m.length >= 3) {
+          const lum = (Number(m[0]) * 299 + Number(m[1]) * 587 + Number(m[2]) * 114) / 1000
+          return lum < 130
         }
-        return window.matchMedia?.('(prefers-color-scheme: dark)').matches !== false
+        return window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)').matches : true
       } catch {
         return true
       }
     }
 
-    function Icon({ name, size = 15, color = 'currentColor' }) {
-      const base = {
+    function fmtTimecode(frame, fps = 30) {
+      const f = Math.max(0, Math.floor(frame))
+      const safeFps = Math.max(1, Number(fps) || 30)
+      const sec = f / safeFps
+      const mm = String(Math.floor(sec / 60)).padStart(2, '0')
+      const ss = String(Math.floor(sec % 60)).padStart(2, '0')
+      const ff = String(f % safeFps).padStart(2, '0')
+      return `${mm}:${ss}:${ff}`
+    }
+
+    function fmtSeconds(sec) {
+      const s = Math.max(0, Math.floor(Number(sec) || 0))
+      const mm = String(Math.floor(s / 60)).padStart(2, '0')
+      const ss = String(s % 60).padStart(2, '0')
+      return `${mm}:${ss}`
+    }
+
+    function readFileAsBase64(file) {
+      return new Promise((resolve, reject) => {
+        const fr = new FileReader()
+        fr.onload = () => {
+          const str = String(fr.result || '')
+          const idx = str.indexOf(',')
+          resolve(idx >= 0 ? str.slice(idx + 1) : str)
+        }
+        fr.onerror = () => reject(fr.error || new Error('读取文件失败'))
+        fr.readAsDataURL(file)
+      })
+    }
+
+    function translateBeginnerError(raw) {
+      const msg = String(raw || '').trim()
+      if (!msg) return { title: '操作遇到问题', detail: '' }
+      const low = msg.toLowerCase()
+      if (low.includes('401') || low.includes('403') || low.includes('unauthorized') || low.includes('api key') || low.includes('未配置') || low.includes('invalid x-api-key')) {
+        return {
+          title: '模型密钥 (API Key) 未设置或无效 — 请点右上角「AI 模型」核对密钥，或切换为「本地草稿预演」零配置先出片',
+          detail: msg,
+          action: 'open-llm',
+        }
+      }
+      if (low.includes('429') || low.includes('quota') || low.includes('rate limit') || low.includes('余额')) {
+        return {
+          title: '模型接口请求过于频繁或额度不足 — 请更换模型、稍后重试，或点选「本地草稿预演」继续创作',
+          detail: msg,
+          action: 'open-llm',
+        }
+      }
+      if (low.includes('enotfound') || low.includes('econnrefused') || low.includes('fetch failed') || low.includes('networkerror') || low.includes('timed out')) {
+        return {
+          title: '网络连接大模型或本地服务超时 — 请检查网络代理设置或 API Base URL 地址是否正确',
+          detail: msg,
+          action: 'open-llm',
+        }
+      }
+      if (low.includes('no assets') || low.includes('暂无可用素材')) {
+        return {
+          title: '当前工程还没有画面素材 — 点一下「🎁 加载新手演示素材」即可立刻试拍成片',
+          detail: msg,
+          action: 'load-starter',
+        }
+      }
+      return { title: msg, detail: '' }
+    }
+
+    function taskStatusBadge(status) {
+      if (status === 'completed') return { label: '已完成', color: '#34D399', bg: 'rgba(52, 211, 153, 0.14)', border: 'rgba(52, 211, 153, 0.4)' }
+      if (status === 'running') return { label: '运行中', color: '#22D3EE', bg: 'rgba(34, 211, 238, 0.14)', border: 'rgba(34, 211, 238, 0.45)' }
+      if (status === 'paused') return { label: '已暂停', color: '#F5B942', bg: 'rgba(245, 185, 66, 0.15)', border: 'rgba(245, 185, 66, 0.45)' }
+      if (status === 'failed') return { label: '需处理', color: '#FB7185', bg: 'rgba(251, 113, 133, 0.14)', border: 'rgba(251, 113, 133, 0.45)' }
+      if (status === 'stopped') return { label: '已停止', color: '#FB7185', bg: 'rgba(251, 113, 133, 0.12)', border: 'rgba(251, 113, 133, 0.35)' }
+      return { label: '待命中', color: '#94A3B8', bg: 'rgba(148, 163, 184, 0.12)', border: 'rgba(148, 163, 184, 0.25)' }
+    }
+
+    function Icon({ name, size = 16, color = 'currentColor' }) {
+      const common = {
         width: size,
         height: size,
         viewBox: '0 0 24 24',
@@ -312,158 +374,78 @@ window.__ModuleLoader__.load({
         strokeLinejoin: 'round',
         style: { flexShrink: 0, display: 'inline-block' },
       }
+      const p = (...ds) => ds.map((d, i) => h('path', { key: i, d }))
       switch (name) {
         case 'film':
-          return h(
-            'svg',
-            base,
-            h('rect', { x: 2, y: 3, width: 20, height: 18, rx: 2.5 }),
-            h('line', { x1: 7, y1: 3, x2: 7, y2: 21 }),
-            h('line', { x1: 17, y1: 3, x2: 17, y2: 21 }),
-            h('line', { x1: 2, y1: 9, x2: 7, y2: 9 }),
-            h('line', { x1: 2, y1: 15, x2: 7, y2: 15 }),
-            h('line', { x1: 17, y1: 9, x2: 22, y2: 9 }),
-            h('line', { x1: 17, y1: 15, x2: 22, y2: 15 }),
-          )
-        case 'plus':
-          return h('svg', base, h('line', { x1: 12, y1: 5, x2: 12, y2: 19 }), h('line', { x1: 5, y1: 12, x2: 19, y2: 12 }))
-        case 'trash':
-          return h(
-            'svg',
-            base,
-            h('polyline', { points: '3 6 5 6 21 6' }),
-            h('path', { d: 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6' }),
-            h('path', { d: 'M10 11v6M14 11v6' }),
-          )
-        case 'upload':
-          return h(
-            'svg',
-            base,
-            h('path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }),
-            h('polyline', { points: '17 8 12 3 7 8' }),
-            h('line', { x1: 12, y1: 3, x2: 12, y2: 15 }),
-          )
-        case 'folder':
-          return h(
-            'svg',
-            base,
-            h('path', { d: 'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z' }),
-          )
-        case 'play':
-          return h('svg', { ...base, fill: color, stroke: 'none' }, h('polygon', { points: '6 4 20 12 6 20 6 4' }))
-        case 'pause':
-          return h(
-            'svg',
-            { ...base, fill: color, stroke: 'none' },
-            h('rect', { x: 6, y: 4, width: 4, height: 16, rx: 1 }),
-            h('rect', { x: 14, y: 4, width: 4, height: 16, rx: 1 }),
-          )
-        case 'mic':
-          return h(
-            'svg',
-            base,
-            h('path', { d: 'M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z' }),
-            h('path', { d: 'M19 10v2a7 7 0 0 1-14 0v-2' }),
-            h('line', { x1: 12, y1: 19, x2: 12, y2: 22 }),
-          )
+          return h('svg', common, h('rect', { x: 2, y: 3, width: 20, height: 18, rx: 3 }), ...p('M7 3v18', 'M17 3v18', 'M2 12h20', 'M2 7.5h5', 'M2 16.5h5', 'M17 7.5h5', 'M17 16.5h5'))
         case 'sparkles':
-          return h(
-            'svg',
-            base,
-            h('path', { d: 'M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z' }),
-          )
-        case 'download':
-          return h(
-            'svg',
-            base,
-            h('path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }),
-            h('polyline', { points: '7 10 12 15 17 10' }),
-            h('line', { x1: 12, y1: 15, x2: 12, y2: 3 }),
-          )
-        case 'camera':
-          return h(
-            'svg',
-            base,
-            h('path', { d: 'M23 7l-7 5 7 5V7z' }),
-            h('rect', { x: 1, y: 5, width: 15, height: 14, rx: 2, ry: 2 }),
-          )
-        case 'avatar':
-          return h(
-            'svg',
-            base,
-            h('path', { d: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2' }),
-            h('circle', { cx: 12, cy: 7, r: 4 }),
-          )
-        case 'activity':
-          return h('svg', base, h('polyline', { points: '22 12 18 12 15 21 9 3 6 12 2 12' }))
-        case 'palette':
-          return h(
-            'svg',
-            base,
-            h('circle', { cx: 13.5, cy: 6.5, r: 0.9 }),
-            h('circle', { cx: 17.5, cy: 10.5, r: 0.9 }),
-            h('circle', { cx: 8.5, cy: 7.5, r: 0.9 }),
-            h('circle', { cx: 6.5, cy: 12.5, r: 0.9 }),
-            h('path', { d: 'M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.31-.44-.73-.44-1.18a1.64 1.64 0 0 1 1.67-1.67h2c3.05 0 5.56-2.49 5.56-5.56C22 6.01 17.52 2 12 2z' }),
-          )
-        case 'zap':
-          return h('svg', { ...base, fill: color, stroke: 'none' }, h('polygon', { points: '13 2 3 14 12 14 11 22 21 10 12 10 13 2' }))
-        case 'stop':
-          return h('svg', { ...base, fill: color, stroke: 'none' }, h('rect', { x: 5, y: 5, width: 14, height: 14, rx: 2 }))
-        case 'refresh':
-          return h(
-            'svg',
-            base,
-            h('polyline', { points: '23 4 23 10 17 10' }),
-            h('path', { d: 'M20.49 15a9 9 0 1 1-2.12-9.36L23 10' }),
-          )
-        case 'check':
-          return h('svg', base, h('polyline', { points: '20 6 9 17 4 12' }))
-        case 'x':
-          return h('svg', base, h('line', { x1: 18, y1: 6, x2: 6, y2: 18 }), h('line', { x1: 6, y1: 6, x2: 18, y2: 18 }))
-        case 'sliders':
-          return h(
-            'svg',
-            base,
-            h('line', { x1: 4, y1: 21, x2: 4, y2: 14 }),
-            h('line', { x1: 4, y1: 10, x2: 4, y2: 3 }),
-            h('line', { x1: 12, y1: 21, x2: 12, y2: 12 }),
-            h('line', { x1: 12, y1: 8, x2: 12, y2: 3 }),
-            h('line', { x1: 20, y1: 21, x2: 20, y2: 16 }),
-            h('line', { x1: 20, y1: 12, x2: 20, y2: 3 }),
-          )
-        case 'code':
-          return h('svg', base, h('polyline', { points: '16 18 22 12 16 6' }), h('polyline', { points: '8 6 2 12 8 18' }))
-        case 'undo':
-          return h('svg', base, h('polyline', { points: '9 14 4 9 9 4' }), h('path', { d: 'M20 20v-7a4 4 0 0 0-4-4H4' }))
-        case 'sun':
-          return h(
-            'svg',
-            base,
-            h('circle', { cx: 12, cy: 12, r: 4 }),
-            h('path', { d: 'M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41' }),
-          )
-        case 'moon':
-          return h('svg', base, h('path', { d: 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z' }))
-        case 'shield':
-          return h('svg', base, h('path', { d: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z' }), h('polyline', { points: '9 12 11 14 15 10' }))
+          return h('svg', common, ...p('M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z', 'M5 17l.9 2.1L8 20l-2.1.9L5 23l-.9-2.1L2 20l2.1-.9z', 'M19 3l.8 1.8L21.5 5.6l-1.7.7L19 8l-.7-1.7-1.8-.7 1.8-.8z'))
+        case 'play':
+          return h('svg', { ...common, fill: color }, h('polygon', { points: '6 4 20 12 6 20 6 4' }))
+        case 'pause':
+          return h('svg', { ...common, fill: color }, h('rect', { x: 6, y: 4, width: 4, height: 16 }), h('rect', { x: 14, y: 4, width: 4, height: 16 }))
+        case 'upload':
+          return h('svg', common, ...p('M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'M17 8l-5-5-5 5', 'M12 3v12'))
+        case 'folder':
+          return h('svg', common, ...p('M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'))
+        case 'mic':
+          return h('svg', common, ...p('M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z', 'M19 10v2a7 7 0 0 1-14 0v-2', 'M12 19v4', 'M8 23h8'))
         case 'cpu':
-          return h(
-            'svg',
-            base,
-            h('rect', { x: 4, y: 4, width: 16, height: 16, rx: 2 }),
-            h('rect', { x: 9, y: 9, width: 6, height: 6 }),
-            h('line', { x1: 9, y1: 1, x2: 9, y2: 4 }),
-            h('line', { x1: 15, y1: 1, x2: 15, y2: 4 }),
-            h('line', { x1: 9, y1: 20, x2: 9, y2: 23 }),
-            h('line', { x1: 15, y1: 20, x2: 15, y2: 23 }),
-          )
+          return h('svg', common, h('rect', { x: 4, y: 4, width: 16, height: 16, rx: 2 }), h('rect', { x: 9, y: 9, width: 6, height: 6 }), ...p('M9 1v3', 'M15 1v3', 'M9 20v3', 'M15 20v3', 'M20 9h3', 'M20 14h3', 'M1 9h3', 'M1 14h3'))
+        case 'sun':
+          return h('svg', common, h('circle', { cx: 12, cy: 12, r: 4 }), ...p('M12 2v2', 'M12 20v2', 'M4.93 4.93l1.41 1.41', 'M17.66 17.66l1.41 1.41', 'M2 12h2', 'M20 12h2', 'M6.34 17.66l-1.41 1.41', 'M19.07 4.93l-1.41 1.41'))
+        case 'moon':
+          return h('svg', common, ...p('M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'))
+        case 'plus':
+          return h('svg', common, ...p('M12 5v14', 'M5 12h14'))
+        case 'trash':
+          return h('svg', common, ...p('M3 6h18', 'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'))
+        case 'download':
+          return h('svg', common, ...p('M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'M7 10l5 5 5-5', 'M12 15V3'))
+        case 'check':
+          return h('svg', common, ...p('M20 6L9 17l-5-5'))
+        case 'x':
+          return h('svg', common, ...p('M18 6L6 18', 'M6 6l12 12'))
+        case 'undo':
+          return h('svg', common, ...p('M3 7v6h6', 'M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13'))
+        case 'code':
+          return h('svg', common, ...p('M16 18l6-6-6-6', 'M8 6l-6 6 6 6'))
+        case 'zap':
+          return h('svg', common, ...p('M13 2L3 14h9l-1 8 10-12h-9l1-8z'))
+        case 'camera':
+          return h('svg', common, ...p('M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z'), h('circle', { cx: 12, cy: 13, r: 4 }))
+        case 'palette':
+          return h('svg', common, ...p('M12 22a1 1 0 0 1-1-1v-2a1 1 0 0 0-1-1H7a5 5 0 0 1 0-10h1a6 6 0 0 0 6-6 9 9 0 0 1 9 9 9 9 0 0 1-9 9z'))
+        case 'scissors':
+          return h('svg', common, h('circle', { cx: 6, cy: 6, r: 3 }), h('circle', { cx: 6, cy: 18, r: 3 }), ...p('M20 4L8.12 15.88', 'M14.47 14.48L20 20', 'M8.12 8.12L12 12'))
+        case 'chevron-down':
+          return h('svg', common, ...p('M6 9l6 6 6-6'))
+        case 'sliders':
+          return h('svg', common, ...p('M4 21v-7', 'M4 10V3', 'M12 21v-9', 'M12 8V3', 'M20 21v-5', 'M20 12V3', 'M1 14h6', 'M9 8h6', 'M17 16h6'))
+        case 'gift':
+          return h('svg', common, h('rect', { x: 3, y: 8, width: 18, height: 4 }), h('rect', { x: 4, y: 12, width: 16, height: 9, rx: 1 }), ...p('M12 8v13', 'M12 8H8a2.5 2.5 0 1 1 2.5-2.5V8', 'M12 8h4a2.5 2.5 0 1 0-2.5-2.5V8'))
+        case 'eye':
+          return h('svg', common, ...p('M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'), h('circle', { cx: 12, cy: 12, r: 3 }))
+        case 'bot':
+          return h('svg', common, h('rect', { x: 3, y: 7, width: 18, height: 13, rx: 3 }), ...p('M12 7V3', 'M8 3h8', 'M9 13v2', 'M15 13v2'))
         default:
-          return null
+          return h('svg', common, h('circle', { cx: 12, cy: 12, r: 8 }))
       }
     }
 
-    class PanelBoundary extends Component {
+    function SidebarVideoIcon(props) {
+      const sz = Number(props?.size) || 20
+      return h(
+        'svg',
+        { viewBox: '0 0 24 24', width: sz, height: sz, fill: 'none', stroke: 'currentColor', strokeWidth: 1.85, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
+        h('rect', { x: 2.5, y: 3.5, width: 19, height: 17, rx: 3 }),
+        h('line', { x1: 7.5, y1: 3.5, x2: 7.5, y2: 20.5 }),
+        h('line', { x1: 16.5, y1: 3.5, x2: 16.5, y2: 20.5 }),
+        h('polygon', { points: '10.5 9 14.5 12 10.5 15', fill: 'currentColor', stroke: 'none' }),
+      )
+    }
+
+    class PanelBoundary extends React.Component {
       constructor(props) {
         super(props)
         this.state = { error: null }
@@ -475,106 +457,221 @@ window.__ModuleLoader__.load({
         if (this.state.error) {
           return h(
             'div',
-            {
-              style: {
-                padding: '24px',
-                margin: '24px',
-                borderRadius: '12px',
-                background: '#161A24',
-                border: '1px solid rgba(244, 63, 94, 0.45)',
-                color: '#FECDD3',
-                fontFamily: 'Microsoft YaHei, PingFang SC, sans-serif',
+            { style: { padding: '32px', color: '#FB7185', background: '#07090F', minHeight: '220px', fontFamily: 'Microsoft YaHei, sans-serif' } },
+            h('h3', { style: { margin: '0 0 10px', fontSize: '18px' } }, '电影视频工坊面板渲染异常'),
+            h('pre', { style: { fontSize: '13px', whiteSpace: 'pre-wrap', opacity: 0.9 } }, String(this.state.error?.message || this.state.error)),
+            h(
+              'button',
+              {
+                onClick: () => this.setState({ error: null }),
+                style: { marginTop: '14px', padding: '10px 18px', borderRadius: '10px', border: 'none', background: '#22D3EE', color: '#051018', fontWeight: 700, cursor: 'pointer', fontSize: '14px' },
               },
-            },
-            h('strong', null, '视频工作台渲染异常'),
-            h('pre', { style: { marginTop: '8px', fontSize: '12px', whiteSpace: 'pre-wrap' } }, String(this.state.error?.message || this.state.error)),
+              '重新加载界面',
+            ),
           )
         }
         return this.props.children
       }
     }
 
-    function useConnectionFetch(ctx) {
-      return useMemo(() => {
-        const bound = ctx?.connection?.fetch?.bind?.(ctx.connection)
-        return bound || window.fetch.bind(window)
-      }, [ctx])
+    // =========================================================================
+    // 3. CUSTOM UI PRIMITIVES (ZERO NATIVE <select> — CINEMA GLASS POPOVER)
+    // =========================================================================
+    function CinemaSelect({ value, options = [], onChange, placeholder = '请选择', T, style = {}, menuWidth = 'auto', compact = false, disabled = false }) {
+      const [open, setOpen] = useState(false)
+      const [dropUp, setDropUp] = useState(false)
+      const rootRef = useRef(null)
+
+      useEffect(() => {
+        if (!open) return undefined
+        const rect = rootRef.current?.getBoundingClientRect()
+        if (rect) {
+          const spaceBelow = window.innerHeight - rect.bottom
+          setDropUp(spaceBelow < 240 && rect.top > 240)
+        }
+        const onDocClick = (ev) => {
+          if (rootRef.current && !rootRef.current.contains(ev.target)) setOpen(false)
+        }
+        const onEsc = (ev) => {
+          if (ev.key === 'Escape') setOpen(false)
+        }
+        document.addEventListener('mousedown', onDocClick)
+        document.addEventListener('click', onDocClick)
+        window.addEventListener('keydown', onEsc)
+        return () => {
+          document.removeEventListener('mousedown', onDocClick)
+          document.removeEventListener('click', onDocClick)
+          window.removeEventListener('keydown', onEsc)
+        }
+      }, [open])
+
+      const activeOpt = options.find((o) => String(o.value) === String(value))
+      return h(
+        'div',
+        { ref: rootRef, style: { position: 'relative', minWidth: 0, width: style.width || '100%', ...style } },
+        h(
+          'button',
+          {
+            type: 'button',
+            disabled,
+            className: 'dsh-vw-btn',
+            onClick: () => !disabled && setOpen((v) => !v),
+            style: {
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '8px',
+              padding: compact ? '7px 11px' : '10px 14px',
+              borderRadius: '10px',
+              background: T.bgInput,
+              border: `1px solid ${open ? T.accentBlueBorder : T.borderStrong}`,
+              boxShadow: open ? `0 0 0 3px ${T.accentBlueBg}` : 'none',
+              color: activeOpt ? T.textPrimary : T.textMuted,
+              fontSize: compact ? '12.5px' : '13.5px',
+              fontWeight: 600,
+              textAlign: 'left',
+              cursor: disabled ? 'not-allowed' : 'pointer',
+            },
+          },
+          h(
+            'span',
+            { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '7px' } },
+            activeOpt?.badgeColor ? h('span', { style: { width: '9px', height: '9px', borderRadius: '50%', background: activeOpt.badgeColor, flexShrink: 0 } }) : null,
+            activeOpt ? activeOpt.label : placeholder,
+          ),
+          h(Icon, { name: 'chevron-down', size: 15, color: open ? T.accentBlue : T.textMuted }),
+        ),
+        open
+          ? h(
+              'div',
+              {
+                className: 'dsh-vw-scroll dsh-vw-popover-in',
+                style: {
+                  position: 'absolute',
+                  left: 0,
+                  right: menuWidth === 'auto' ? 0 : 'auto',
+                  minWidth: menuWidth === 'auto' ? '100%' : menuWidth,
+                  ...(dropUp ? { bottom: 'calc(100% + 6px)' } : { top: 'calc(100% + 6px)' }),
+                  maxHeight: '280px',
+                  overflowY: 'auto',
+                  padding: '6px',
+                  borderRadius: '12px',
+                  background: T.bgPanelSolid,
+                  border: `1px solid ${T.borderStrong}`,
+                  boxShadow: T.shadowPopover,
+                  backdropFilter: 'blur(22px)',
+                  zIndex: 4200,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '3px',
+                },
+              },
+              options.length === 0
+                ? h('div', { style: { padding: '12px', fontSize: '13px', color: T.textMuted, textAlign: 'center' } }, '暂无可选项')
+                : options.map((opt) => {
+                    const isSel = String(opt.value) === String(value)
+                    return h(
+                      'button',
+                      {
+                        key: String(opt.value),
+                        type: 'button',
+                        onClick: () => {
+                          setOpen(false)
+                          onChange(opt.value)
+                        },
+                        style: {
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '10px',
+                          padding: '9px 11px',
+                          borderRadius: '9px',
+                          border: 'none',
+                          background: isSel ? T.accentBlueBg : 'transparent',
+                          color: isSel ? T.accentBlue : T.textPrimary,
+                          fontSize: '13.5px',
+                          fontWeight: isSel ? 700 : 500,
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                        },
+                      },
+                      h(
+                        'div',
+                        { style: { minWidth: 0, flex: 1 } },
+                        h(
+                          'div',
+                          { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '7px' } },
+                          opt.badgeColor ? h('span', { style: { width: '9px', height: '9px', borderRadius: '50%', background: opt.badgeColor, flexShrink: 0 } }) : null,
+                          opt.label,
+                        ),
+                        opt.sub ? h('div', { style: { fontSize: '12px', color: T.textMuted, marginTop: '2px' } }, opt.sub) : null,
+                      ),
+                      isSel ? h(Icon, { name: 'check', size: 15, color: T.accentBlue }) : null,
+                    )
+                  }),
+            )
+          : null,
+      )
     }
 
-    function VideoToolCallCard({ item }) {
-      if (!item || !VIDEO_TOOL_NAMES.has(item.toolName)) return null
-      const out = item.result || item.output || {}
+    function SegmentedPills({ value, options = [], onChange, T, accent = 'blue', size = 'md', fullWidth = false }) {
+      const acColor = accent === 'gold' ? T.accentGold : T.accentBlue
+      const acBg = accent === 'gold' ? T.accentGoldBg : T.accentBlueBg
+      const acBorder = accent === 'gold' ? T.accentGoldBorder : T.accentBlueBorder
       return h(
         'div',
         {
           style: {
-            margin: '6px 0',
-            padding: '10px 14px',
-            borderRadius: '10px',
-            background: '#121621',
-            border: '1px solid rgba(229, 169, 60, 0.25)',
-            color: '#F3F4F8',
-            fontFamily: 'Microsoft YaHei, PingFang SC, sans-serif',
-            fontSize: '12px',
+            display: fullWidth ? 'grid' : 'inline-flex',
+            ...(fullWidth ? { gridTemplateColumns: `repeat(${Math.max(1, options.length)}, minmax(0, 1fr))` } : { flexWrap: 'wrap' }),
+            gap: '5px',
+            padding: '4px',
+            borderRadius: '11px',
+            background: T.bgInput,
+            border: `1px solid ${T.borderSubtle}`,
           },
         },
-        h(
-          'div',
-          { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-          h('span', { style: { fontWeight: 700, color: '#E5A93C' } }, item.toolName),
-          h('span', { style: { color: '#9CA3B5', fontSize: '11px' } }, item.status || '已完成'),
-        ),
-        out.durationSec || out.script?.totalDurationSec
-          ? h('div', { style: { color: '#38BDF8', marginTop: '4px' } }, `帧精准时长 ${out.durationSec || out.script?.totalDurationSec}s`)
-          : null,
-        out.outputPath || out.render?.outputPath
-          ? h('div', { style: { color: '#22C55E', marginTop: '4px' } }, `成片路径: ${out.outputPath || out.render?.outputPath}`)
-          : null,
+        options.map((opt) => {
+          const on = String(opt.id) === String(value)
+          return h(
+            'button',
+            {
+              key: String(opt.id),
+              type: 'button',
+              className: 'dsh-vw-btn',
+              onClick: () => onChange(opt.id),
+              style: {
+                padding: size === 'sm' ? '6px 11px' : '8px 14px',
+                borderRadius: '8px',
+                border: `1px solid ${on ? acBorder : 'transparent'}`,
+                background: on ? acBg : 'transparent',
+                color: on ? acColor : T.textSecondary,
+                fontSize: size === 'sm' ? '12.5px' : '13.5px',
+                fontWeight: on ? 800 : 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                whiteSpace: 'nowrap',
+                cursor: 'pointer',
+              },
+            },
+            opt.icon ? h('span', null, opt.icon) : null,
+            opt.label,
+          )
+        }),
       )
     }
 
-    function SidebarVideoIcon() {
-      return h(
-        'span',
-        {
-          title: '电影级视频创作工坊',
-          style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '20px', height: '20px' },
-        },
-        h(Icon, { name: 'film', size: 16 }),
-      )
-    }
-
-    function readFileAsBase64(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => {
-          const str = String(reader.result || '')
-          const idx = str.indexOf(',')
-          resolve(idx >= 0 ? str.slice(idx + 1) : str)
-        }
-        reader.onerror = () => reject(reader.error || new Error('读取文件失败'))
-        reader.readAsDataURL(file)
-      })
-    }
-
-    function fmtTimecode(frame, fps = 30) {
-      const f = Math.max(0, Math.floor(frame))
-      const sec = f / Math.max(1, fps)
-      const mm = String(Math.floor(sec / 60)).padStart(2, '0')
-      const ss = String(Math.floor(sec % 60)).padStart(2, '0')
-      const ff = String(f % Math.max(1, fps)).padStart(2, '0')
-      return `${mm}:${ss}:${ff}`
-    }
-
-    // -------------------------------------------------------------------------
-    // AI AGENT WAR ROOM LIVE CANVAS BACKDROP, DSP SPECTRUM & 5-AGENT CONSTELLATION
-    // -------------------------------------------------------------------------
-    function WarRoomCanvasBackdrop({ active, dark }) {
+    // =========================================================================
+    // 4. KINETIC 3D PERSPECTIVE CANVAS & REAL-TIME DSP WAVEFORM
+    // =========================================================================
+    function WarRoomKineticCanvas({ active, dark, agents = [] }) {
       const canvasRef = useRef(null)
-      const activeRef = useRef(active)
-      const darkRef = useRef(dark)
-      activeRef.current = Boolean(active)
-      darkRef.current = Boolean(dark)
+      const stateRef = useRef({ active: false, dark: true, agents: [] })
+      stateRef.current = { active: Boolean(active), dark: Boolean(dark), agents: agents || [] }
 
       useEffect(() => {
         const canvas = canvasRef.current
@@ -583,13 +680,13 @@ window.__ModuleLoader__.load({
         if (!ctx2d) return undefined
 
         let raf = 0
-        let w = 0
-        let hPx = 0
+        let w = 1280
+        let hPx = 460
         const resize = () => {
           const rect = canvas.parentElement?.getBoundingClientRect()
           const dpr = Math.min(window.devicePixelRatio || 1, 2)
-          w = Math.max(640, Math.floor(rect?.width || window.innerWidth))
-          hPx = Math.max(420, Math.floor(rect?.height || window.innerHeight))
+          w = Math.max(600, Math.floor(rect?.width || 1280))
+          hPx = Math.max(360, Math.floor(rect?.height || 460))
           canvas.width = Math.floor(w * dpr)
           canvas.height = Math.floor(hPx * dpr)
           ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -597,80 +694,132 @@ window.__ModuleLoader__.load({
         resize()
         window.addEventListener('resize', resize)
 
-        const nodes = Array.from({ length: 42 }, (_, idx) => ({
-          x: Math.random() * (w || 1440),
-          y: Math.random() * (hPx || 900),
-          vx: (Math.random() - 0.5) * 0.45,
-          vy: (Math.random() - 0.5) * 0.45,
-          r: (idx % 4 === 0 ? 2.4 : 1.35) + Math.random() * 0.9,
-          tone: idx % 3 === 0 ? 'gold' : 'cyan',
+        const particles = Array.from({ length: 48 }, (_, i) => ({
+          x: Math.random() * 1400,
+          y: Math.random() * 600,
+          vx: (Math.random() - 0.5) * 0.42,
+          vy: -0.18 - Math.random() * 0.35,
+          r: (i % 5 === 0 ? 2.6 : 1.4) + Math.random() * 1.1,
+          tone: i % 3 === 0 ? 'gold' : i % 3 === 1 ? 'violet' : 'cyan',
         }))
 
+        let t = 0
         let lastTs = 0
-        let phase = 0
-        const tick = (ts) => {
-          raf = requestAnimationFrame(tick)
-          if (ts - lastTs < 28) return // smooth ~35fps cap for low CPU footprint
-          const dt = Math.min(60, lastTs ? ts - lastTs : 28) / 16.6
+        const draw = (ts) => {
+          raf = requestAnimationFrame(draw)
+          if (ts - lastTs < 24) return
+          const dt = Math.min(50, lastTs ? ts - lastTs : 24) / 16.6
           lastTs = ts
-          const isAct = activeRef.current
-          const isDk = darkRef.current
-          const speed = isAct ? 1.85 : 0.72
-          phase += 0.015 * speed
+          const { active: isAct, dark: isDk, agents: ags } = stateRef.current
+          t += 0.018 * (isAct ? 2.3 : 0.85) * dt
 
           ctx2d.clearRect(0, 0, w, hPx)
 
-          // Moving subtle tactical horizon sweep beam
-          const sweepY = ((phase * 48) % (hPx + 160)) - 80
-          const grad = ctx2d.createLinearGradient(0, sweepY - 50, 0, sweepY + 50)
-          const beamAlpha = isDk ? (isAct ? 0.09 : 0.035) : (isAct ? 0.07 : 0.025)
-          grad.addColorStop(0, 'rgba(34,211,238,0)')
-          grad.addColorStop(0.5, isDk ? `rgba(34,211,238,${beamAlpha})` : `rgba(2,132,199,${beamAlpha})`)
-          grad.addColorStop(1, 'rgba(34,211,238,0)')
-          ctx2d.fillStyle = grad
-          ctx2d.fillRect(0, sweepY - 50, w, 100)
+          // A. Volumetric aurora halos behind command stage
+          const glow1 = ctx2d.createRadialGradient(w * 0.5, hPx * 0.36, 12, w * 0.5, hPx * 0.36, w * 0.46)
+          glow1.addColorStop(0, isDk ? (isAct ? 'rgba(34,211,238,0.16)' : 'rgba(34,211,238,0.08)') : isAct ? 'rgba(2,132,199,0.12)' : 'rgba(2,132,199,0.05)')
+          glow1.addColorStop(0.55, isDk ? 'rgba(124,58,237,0.06)' : 'rgba(124,58,237,0.03)')
+          glow1.addColorStop(1, 'transparent')
+          ctx2d.fillStyle = glow1
+          ctx2d.fillRect(0, 0, w, hPx)
 
-          // Update & draw constellation particles
-          for (let i = 0; i < nodes.length; i += 1) {
-            const p = nodes[i]
-            p.x += p.vx * speed * dt
-            p.y += p.vy * speed * dt
-            if (p.x < -10) p.x = w + 10
-            else if (p.x > w + 10) p.x = -10
-            if (p.y < -10) p.y = hPx + 10
-            else if (p.y > hPx + 10) p.y = -10
+          // B. 3D Perspective receding floor grid (lower 52% of stage)
+          const horizonY = hPx * 0.44
+          const floorH = hPx - horizonY
+          ctx2d.save()
+          ctx2d.beginPath()
+          ctx2d.rect(0, horizonY, w, floorH)
+          ctx2d.clip()
 
-            for (let j = i + 1; j < nodes.length; j += 1) {
-              const q = nodes[j]
-              const dx = p.x - q.x
-              const dy = p.y - q.y
-              const distSq = dx * dx + dy * dy
-              if (distSq < 21500) {
-                const alpha = (1 - Math.sqrt(distSq) / 147) * (isDk ? (isAct ? 0.22 : 0.11) : (isAct ? 0.16 : 0.08))
-                ctx2d.strokeStyle = isDk ? `rgba(34,211,238,${alpha.toFixed(3)})` : `rgba(2,132,199,${alpha.toFixed(3)})`
-                ctx2d.lineWidth = isAct ? 1.1 : 0.8
-                ctx2d.beginPath()
-                ctx2d.moveTo(p.x, p.y)
-                ctx2d.lineTo(q.x, q.y)
-                ctx2d.stroke()
-              }
-            }
-
-            const dotAlpha = isDk ? (isAct ? 0.72 : 0.42) : (isAct ? 0.52 : 0.28)
-            ctx2d.fillStyle =
-              p.tone === 'gold'
-                ? isDk
-                  ? `rgba(229,169,60,${dotAlpha})`
-                  : `rgba(183,121,31,${dotAlpha})`
-                : isDk
-                  ? `rgba(34,211,238,${dotAlpha})`
-                  : `rgba(2,132,199,${dotAlpha})`
+          const gridColor = isDk ? (isAct ? 'rgba(34,211,238,0.22)' : 'rgba(148,163,184,0.12)') : isAct ? 'rgba(2,132,199,0.18)' : 'rgba(15,23,42,0.09)'
+          ctx2d.strokeStyle = gridColor
+          ctx2d.lineWidth = 1
+          const cols = 16
+          for (let c = -cols; c <= cols; c += 1) {
+            const topX = w * 0.5 + c * (w / 32)
+            const botX = w * 0.5 + c * (w / 7.5)
             ctx2d.beginPath()
-            ctx2d.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+            ctx2d.moveTo(topX, horizonY)
+            ctx2d.lineTo(botX, hPx)
+            ctx2d.stroke()
+          }
+          const rows = 10
+          const zShift = (t * 0.75) % 1
+          for (let r = 0; r < rows; r += 1) {
+            const p = (r + zShift) / rows
+            const y = horizonY + Math.pow(p, 1.85) * floorH
+            const alpha = Math.min(1, p * 1.1) * (isDk ? (isAct ? 0.34 : 0.16) : isAct ? 0.24 : 0.11)
+            ctx2d.strokeStyle = isDk ? `rgba(34,211,238,${alpha.toFixed(3)})` : `rgba(2,132,199,${alpha.toFixed(3)})`
+            ctx2d.beginPath()
+            ctx2d.moveTo(0, y)
+            ctx2d.lineTo(w, y)
+            ctx2d.stroke()
+          }
+          ctx2d.restore()
+
+          // C. Smooth energy conduits linking the 4 horizontal agent anchors
+          const anchors = [0.14, 0.38, 0.62, 0.86].map((rx) => ({ x: w * rx, y: hPx * 0.44 }))
+          for (let idx = 0; idx < 3; idx += 1) {
+            const p1 = anchors[idx]
+            const p2 = anchors[idx + 1]
+            const agCur = ags[idx]
+            const agNext = ags[idx + 1]
+            const conduitHot = isAct && (agCur?.status === 'running' || agCur?.status === 'completed' || agNext?.status === 'running')
+            const midX = (p1.x + p2.x) * 0.5
+            const ctrlY = p1.y - (idx % 2 === 0 ? 46 : -38)
+
+            ctx2d.strokeStyle = conduitHot
+              ? isDk
+                ? 'rgba(34,211,238,0.58)'
+                : 'rgba(2,132,199,0.52)'
+              : isDk
+                ? 'rgba(148,163,184,0.18)'
+                : 'rgba(15,23,42,0.12)'
+            ctx2d.lineWidth = conduitHot ? 2.2 : 1.2
+            ctx2d.beginPath()
+            ctx2d.moveTo(p1.x, p1.y)
+            ctx2d.quadraticCurveTo(midX, ctrlY, p2.x, p2.y)
+            ctx2d.stroke()
+
+            // Animated data pulse traveling across bezier curve
+            const pulseCount = conduitHot ? 2 : 1
+            for (let k = 0; k < pulseCount; k += 1) {
+              const u = (t * (conduitHot ? 0.55 : 0.22) + idx * 0.27 + k * 0.5) % 1
+              const inv = 1 - u
+              const px = inv * inv * p1.x + 2 * inv * u * midX + u * u * p2.x
+              const py = inv * inv * p1.y + 2 * inv * u * ctrlY + u * u * p2.y
+              ctx2d.fillStyle = conduitHot ? '#F5B942' : isDk ? 'rgba(34,211,238,0.55)' : 'rgba(2,132,199,0.45)'
+              ctx2d.beginPath()
+              ctx2d.arc(px, py, conduitHot ? 4.2 : 2.6, 0, Math.PI * 2)
+              ctx2d.fill()
+            }
+          }
+
+          // D. Rising luminous ambient motes
+          for (const pt of particles) {
+            pt.x += pt.vx * dt
+            pt.y += pt.vy * (isAct ? 1.8 : 0.8) * dt
+            if (pt.y < -12) {
+              pt.y = hPx + 12
+              pt.x = Math.random() * w
+            }
+            if (pt.x < -12) pt.x = w + 12
+            if (pt.x > w + 12) pt.x = -12
+            const alpha = isDk ? (isAct ? 0.72 : 0.36) : isAct ? 0.5 : 0.22
+            ctx2d.fillStyle =
+              pt.tone === 'gold'
+                ? `rgba(245,185,66,${alpha})`
+                : pt.tone === 'violet'
+                  ? `rgba(167,139,250,${alpha})`
+                  : isDk
+                    ? `rgba(34,211,238,${alpha})`
+                    : `rgba(2,132,199,${alpha})`
+            ctx2d.beginPath()
+            ctx2d.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2)
             ctx2d.fill()
           }
         }
-        raf = requestAnimationFrame(tick)
+        raf = requestAnimationFrame(draw)
         return () => {
           cancelAnimationFrame(raf)
           window.removeEventListener('resize', resize)
@@ -680,21 +829,14 @@ window.__ModuleLoader__.load({
       return h('canvas', {
         ref: canvasRef,
         'aria-hidden': 'true',
-        style: {
-          position: 'absolute',
-          inset: 0,
-          width: '100%',
-          height: '100%',
-          zIndex: 0,
-          pointerEvents: 'none',
-        },
+        style: { position: 'absolute', inset: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none' },
       })
     }
 
-    function AudioWaveformCanvas({ active, isPlaying, dark }) {
+    function AudioWaveformCanvas({ active, isPlaying, dark, height = 42 }) {
       const canvasRef = useRef(null)
-      const stateRef = useRef({ active: false, isPlaying: false, dark: true })
-      stateRef.current = { active: Boolean(active), isPlaying: Boolean(isPlaying), dark: Boolean(dark) }
+      const stRef = useRef({ active: false, isPlaying: false, dark: true })
+      stRef.current = { active: Boolean(active), isPlaying: Boolean(isPlaying), dark: Boolean(dark) }
 
       useEffect(() => {
         const canvas = canvasRef.current
@@ -703,632 +845,188 @@ window.__ModuleLoader__.load({
         if (!ctx2d) return undefined
 
         let raf = 0
-        let t = 0
         let lastTs = 0
-        const bars = 34
-        const draw = (ts) => {
-          raf = requestAnimationFrame(draw)
-          if (ts - lastTs < 36) return
+        let phase = 0
+        const render = (ts) => {
+          raf = requestAnimationFrame(render)
+          if (ts - lastTs < 30) return
           lastTs = ts
-          const { active: isAct, isPlaying: isPlay, dark: isDk } = stateRef.current
-          t += isAct || isPlay ? 0.16 : 0.045
-
-          const cw = canvas.clientWidth || 250
-          const ch = canvas.clientHeight || 44
-          const dpr = Math.min(window.devicePixelRatio || 1, 2)
-          if (canvas.width !== Math.floor(cw * dpr)) {
-            canvas.width = Math.floor(cw * dpr)
-            canvas.height = Math.floor(ch * dpr)
+          const { active: isAct, isPlaying: isPly, dark: isDk } = stRef.current
+          const w = canvas.clientWidth || 320
+          const hPx = canvas.clientHeight || height
+          if (canvas.width !== w || canvas.height !== hPx) {
+            canvas.width = w
+            canvas.height = hPx
           }
-          ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0)
-          ctx2d.clearRect(0, 0, cw, ch)
+          phase += isAct || isPly ? 0.16 : 0.045
+          ctx2d.clearRect(0, 0, w, hPx)
 
-          const gap = 3
-          const bw = Math.max(2, (cw - (bars - 1) * gap) / bars)
+          const bars = Math.max(24, Math.floor(w / 8))
+          const step = w / bars
           for (let i = 0; i < bars; i += 1) {
             const norm = i / bars
-            const envelope = Math.sin(norm * Math.PI)
-            const amp = isAct || isPlay
-              ? 0.25 + 0.72 * Math.abs(Math.sin(t * 1.4 + i * 0.48) * Math.cos(t * 0.7 - i * 0.23)) * envelope
-              : 0.12 + 0.16 * Math.abs(Math.sin(t + i * 0.35)) * envelope
-            const bh = Math.max(3, amp * (ch - 6))
-            const x = i * (bw + gap)
-            const y = ch - bh
-            const isGold = i > bars * 0.65
-            ctx2d.fillStyle = isGold
-              ? isDk
-                ? '#E5A93C'
-                : '#B7791F'
-              : isDk
-                ? '#22D3EE'
-                : '#0284C7'
-            ctx2d.globalAlpha = isAct || isPlay ? 0.88 : 0.45
-            ctx2d.fillRect(x, y, bw, bh)
+            const env = Math.sin(norm * Math.PI)
+            const wave = Math.abs(Math.sin(phase + i * 0.42) * 0.65 + Math.cos(phase * 1.3 - i * 0.26) * 0.35)
+            const amp = (isAct || isPly ? 0.22 + wave * 0.74 : 0.14 + wave * 0.22) * env
+            const bh = Math.max(4, amp * (hPx - 6))
+            ctx2d.fillStyle =
+              i % 4 === 0
+                ? isDk
+                  ? '#F5B942'
+                  : '#D97706'
+                : isDk
+                  ? '#22D3EE'
+                  : '#0284C7'
+            ctx2d.beginPath()
+            const x = i * step + 1.5
+            const y = (hPx - bh) * 0.5
+            ctx2d.roundRect ? ctx2d.roundRect(x, y, Math.max(3, step - 3.5), bh, 2) : ctx2d.rect(x, y, Math.max(3, step - 3.5), bh)
+            ctx2d.fill()
           }
-          ctx2d.globalAlpha = 1
         }
-        raf = requestAnimationFrame(draw)
+        raf = requestAnimationFrame(render)
         return () => cancelAnimationFrame(raf)
-      }, [])
+      }, [height])
 
-      return h('canvas', {
-        ref: canvasRef,
-        style: { width: '100%', height: '42px', display: 'block', borderRadius: '6px' },
-      })
+      return h('canvas', { ref: canvasRef, style: { width: '100%', height: `${height}px`, display: 'block' } })
     }
 
-    function WarRoomConstellationStage({
-      agents,
-      activeRun,
-      hasMp4,
-      previewHtmlUrl,
-      avatarEnabled,
-      dark,
-      T,
-      onJumpStep,
-      onSwitchToMonitor,
-    }) {
-      // Derive 5 visual War Room nodes backed by real TaskManager agent statuses + Avatar readiness
-      const agentById = {}
-      ;(agents || []).forEach((a) => {
-        agentById[a.id] = a
-      })
-      const audioSt = agentById.audio || {}
-      const avatarNodeState = avatarEnabled
-        ? {
-            status:
-              audioSt.status === 'running' && (String(audioSt.message || '').includes('数字人') || (audioSt.progress || 0) >= 60)
-                ? 'running'
-                : audioSt.status === 'completed'
-                  ? 'completed'
-                  : audioSt.status === 'failed' || audioSt.status === 'stopped'
-                    ? audioSt.status
-                    : 'idle',
-            progress: audioSt.status === 'completed' ? 100 : audioSt.status === 'running' ? Math.max(15, Number(audioSt.progress || 0)) : 0,
-            message: audioSt.status === 'running' ? 'Alpha WebM 合成通道待命' : '数字人口播叠层已开启',
-          }
-        : { status: 'standby', progress: 0, message: '按需开启 · MuseTalk/AI' }
-
-      const nodes = [
-        {
-          id: 'director',
-          code: '01',
-          title: '策划导演 Agent',
-          sub: '文案 · 分镜 · BGM代码',
-          xPct: 18,
-          yPct: 26,
-          step: 2,
-          data: agentById.director || { status: 'idle', progress: 0, message: '指令待命中' },
-        },
-        {
-          id: 'editor',
-          code: '02',
-          title: '素材精修 Agent',
-          sub: '智能裁切 · 调色 · 抠图',
-          xPct: 50,
-          yPct: 13,
-          step: 1,
-          data: agentById.editor || { status: 'idle', progress: 0, message: '等待调度素材' },
-        },
-        {
-          id: 'audio',
-          code: '03',
-          title: '配音混音 Agent',
-          sub: 'IndexTTS-2.5 · 闪避混音',
-          xPct: 82,
-          yPct: 26,
-          step: 2,
-          data: agentById.audio || { status: 'idle', progress: 0, message: '声学通道待命' },
-        },
-        {
-          id: 'avatar',
-          code: '04',
-          title: '数字人口播 Agent',
-          sub: '克隆真人口型 · Alpha WebM',
-          xPct: 20,
-          yPct: 84,
-          step: 2,
-          data: avatarNodeState,
-        },
-        {
-          id: 'motion_qa',
-          code: '05',
-          title: '动效质检 Render',
-          sub: '代码动效 · 9宫格 · MP4',
-          xPct: 80,
-          yPct: 84,
-          step: 3,
-          data: agentById.motion_qa || { status: 'idle', progress: 0, message: 'Chromium 渲染待命' },
-        },
-      ]
-
-      const isPipelineRunning = activeRun?.status === 'running'
-      const isPipelineDone = activeRun?.status === 'completed'
-      const runProgress = Math.round(Number(activeRun?.progress || 0))
-      const edgeLinks = [
-        { from: 0, to: 1, id: 'e01', bend: -4 },
-        { from: 1, to: 2, id: 'e12', bend: -4 },
-        { from: 2, to: 3, id: 'e23', bend: 0 },
-        { from: 3, to: 4, id: 'e34', bend: 5 },
-        { from: 2, to: 4, id: 'e24', bend: 4 },
-        { from: 0, to: 3, id: 'e03', bend: -4 },
-      ]
-
-      const statusVisual = (st) => {
-        if (st === 'running') return { color: T.accentBlue, bg: T.accentBlueBg, border: T.accentBlue, text: '作战中' }
-        if (st === 'completed') return { color: T.accentGreen, bg: T.accentGreenBg, border: T.accentGreen, text: '已就绪' }
-        if (st === 'paused') return { color: T.accentGold, bg: T.accentGoldBg, border: T.accentGold, text: '已暂停' }
-        if (st === 'failed' || st === 'stopped') return { color: T.accentRed, bg: T.accentRedBg, border: T.accentRed, text: st === 'stopped' ? '已中止' : '异常' }
-        if (st === 'standby') return { color: T.textMuted, bg: T.bgElevated, border: T.borderSubtle, text: '待命' }
-        return { color: T.accentGold, bg: T.bgElevated, border: T.borderStrong, text: '待发' }
-      }
-
-      return h(
-        'div',
-        {
-          style: {
-            position: 'relative',
-            width: '100%',
-            flex: 1,
-            minHeight: '410px',
-            borderRadius: '14px',
-            overflow: 'hidden',
-            background: dark
-              ? 'radial-gradient(circle at 50% 50%, rgba(16, 36, 58, 0.56), rgba(5, 8, 16, 0.88) 72%)'
-              : 'radial-gradient(circle at 50% 50%, rgba(224, 242, 254, 0.65), rgba(248, 250, 252, 0.92) 72%)',
-            border: `1px solid ${T.borderStrong}`,
-            boxShadow: dark ? 'inset 0 0 60px rgba(34,211,238,0.08)' : 'inset 0 0 40px rgba(2,132,199,0.06)',
-          },
-        },
-        // Corner Precision Reticles
-        h('div', { className: 'dsh-vw-reticle dsh-vw-reticle-tl', style: { borderColor: T.accentBlue } }),
-        h('div', { className: 'dsh-vw-reticle dsh-vw-reticle-tr', style: { borderColor: T.accentBlue } }),
-        h('div', { className: 'dsh-vw-reticle dsh-vw-reticle-bl', style: { borderColor: T.accentGold } }),
-        h('div', { className: 'dsh-vw-reticle dsh-vw-reticle-br', style: { borderColor: T.accentGold } }),
-
-        // True Aspect-Locked Spinning Orbital Radar Dial
-        h(
-          'svg',
-          {
-            viewBox: '-210 -210 420 420',
-            preserveAspectRatio: 'xMidYMid meet',
-            style: { position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' },
-          },
-          h(
-            'defs',
-            null,
-            h(
-              'linearGradient',
-              { id: 'dshRadarSweep', x1: '0%', y1: '0%', x2: '100%', y2: '100%' },
-              h('stop', { offset: '0%', stopColor: T.accentBlue, stopOpacity: isPipelineRunning ? '0.32' : '0.16' }),
-              h('stop', { offset: '100%', stopColor: T.accentBlue, stopOpacity: '0' }),
-            ),
-          ),
-          h('circle', { r: 178, fill: 'none', stroke: T.accentBlue, strokeOpacity: dark ? 0.14 : 0.16, strokeWidth: 1, strokeDasharray: '4 8' }),
-          h('circle', { r: 134, className: 'dsh-vw-orbit-cw', fill: 'none', stroke: T.accentGold, strokeOpacity: dark ? 0.24 : 0.22, strokeWidth: 1.2, strokeDasharray: '18 10 3 10' }),
-          h('circle', { r: 94, className: 'dsh-vw-orbit-ccw', fill: 'none', stroke: T.accentBlue, strokeOpacity: dark ? 0.34 : 0.28, strokeWidth: 1.4, strokeDasharray: '28 8 6 8' }),
-          h(
-            'g',
-            { className: 'dsh-vw-radar-spin', style: { animationDuration: isPipelineRunning ? '3.4s' : '9s' } },
-            h('path', { d: 'M 0 0 L 165 -55 A 174 174 0 0 1 165 55 Z', fill: 'url(#dshRadarSweep)' }),
-            h('line', { x1: 0, y1: 0, x2: 174, y2: 0, stroke: T.accentBlue, strokeOpacity: isPipelineRunning ? 0.65 : 0.25, strokeWidth: 1.4 }),
-          ),
-        ),
-
-        // 100%-Aligned Normalized Coordinate SVG Energy Conduits & Animated Data Packets
-        h(
-          'svg',
-          {
-            viewBox: '0 0 100 100',
-            preserveAspectRatio: 'none',
-            style: { position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' },
-          },
-          nodes.map((n) =>
-            h('line', {
-              key: `spoke-${n.id}`,
-              x1: 50,
-              y1: 50,
-              x2: n.xPct,
-              y2: n.yPct,
-              vectorEffect: 'non-scaling-stroke',
-              stroke: n.data.status === 'running' ? T.accentBlue : n.data.status === 'completed' ? T.accentGreen : T.accentBlue,
-              strokeOpacity: n.data.status === 'running' ? 0.6 : n.data.status === 'completed' ? 0.45 : 0.16,
-              strokeWidth: n.data.status === 'running' ? 2 : 1,
-              strokeDasharray: n.data.status === 'running' ? '6 4' : '2 5',
-              className: n.data.status === 'running' ? 'dsh-vw-hud-flow' : '',
-            }),
-          ),
-          edgeLinks.map((lk) => {
-            const a = nodes[lk.from]
-            const b = nodes[lk.to]
-            const isHot =
-              a.data.status === 'running' ||
-              b.data.status === 'running' ||
-              (a.data.status === 'completed' && b.data.status === 'completed')
-            const mx = (a.xPct + b.xPct) / 2
-            const my = (a.yPct + b.yPct) / 2 + lk.bend
-            const pathD = `M ${a.xPct} ${a.yPct} Q ${mx} ${my} ${b.xPct} ${b.yPct}`
-            return h(
-              React.Fragment,
-              { key: lk.id },
-              h('path', {
-                d: pathD,
-                fill: 'none',
-                vectorEffect: 'non-scaling-stroke',
-                stroke: isHot ? T.accentBlue : T.textMuted,
-                strokeOpacity: isHot ? 0.58 : 0.2,
-                strokeWidth: isHot ? 2 : 1.1,
-                strokeDasharray: isPipelineRunning ? '6 4' : '4 5',
-                className: isPipelineRunning && isHot ? 'dsh-vw-hud-flow' : '',
-              }),
-              isPipelineRunning || a.data.status === 'running' || b.data.status === 'running'
-                ? h(
-                    'circle',
-                    { r: 0.9, fill: T.accentGold, opacity: 0.95 },
-                    h('animateMotion', { dur: '2.0s', repeatCount: 'indefinite', path: pathD }),
-                  )
-                : null,
-            )
-          }),
-        ),
-
-        // Central Command Core Reactor Sphere
-        h(
-          'div',
-          {
-            style: {
-              position: 'absolute',
-              left: '50%',
-              top: '50%',
-              transform: 'translate(-50%, -50%)',
-              width: '154px',
-              height: '154px',
-              borderRadius: '50%',
-              background: dark ? 'rgba(7, 11, 20, 0.88)' : 'rgba(255, 255, 255, 0.92)',
-              border: `1.5px solid ${isPipelineRunning ? T.accentBlue : isPipelineDone ? T.accentGreen : T.accentGoldBorder}`,
-              boxShadow: isPipelineRunning
-                ? '0 0 36px rgba(34,211,238,0.34), inset 0 0 22px rgba(34,211,238,0.16)'
-                : isPipelineDone
-                  ? '0 0 30px rgba(34,197,94,0.28)'
-                  : '0 0 28px rgba(229,169,60,0.16)',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-              padding: '10px',
-              zIndex: 3,
-              backdropFilter: 'blur(12px)',
-            },
-          },
-          h(
-            'div',
-            { style: { fontSize: '9px', fontWeight: 800, letterSpacing: '0.12em', color: T.accentBlue, textTransform: 'uppercase' } },
-            isPipelineRunning ? 'SWARM ACTIVE' : isPipelineDone ? 'MISSION DONE' : 'SWARM READY',
-          ),
-          h(
-            'div',
-            {
-              style: {
-                fontSize: '24px',
-                fontWeight: 900,
-                fontFamily: 'Consolas, monospace',
-                lineHeight: 1.15,
-                margin: '3px 0',
-                color: isPipelineRunning ? T.accentBlue : isPipelineDone ? T.accentGreen : T.textPrimary,
-              },
-            },
-            activeRun ? `${runProgress}%` : '5 AGENTS',
-          ),
-          h(
-            'div',
-            { style: { fontSize: '10px', color: T.textSecondary, lineHeight: 1.32, maxWidth: '126px' } },
-            isPipelineRunning
-              ? '多智能体全速协同中'
-              : isPipelineDone
-                ? '视频已合成就绪'
-                : '右侧输入创意一键出片',
-          ),
-          hasMp4 || previewHtmlUrl
-            ? h(
-                'button',
-                {
-                  className: 'dsh-vw-btn',
-                  onClick: onSwitchToMonitor,
-                  style: {
-                    marginTop: '6px',
-                    padding: '4px 9px',
-                    borderRadius: '999px',
-                    border: `1px solid ${hasMp4 ? T.accentGreen : T.accentBlueBorder}`,
-                    background: hasMp4 ? T.accentGreenBg : T.accentBlueBg,
-                    color: hasMp4 ? T.accentGreen : T.accentBlue,
-                    fontSize: '10px',
-                    fontWeight: 800,
-                  },
-                },
-                hasMp4 ? '▶ 播放 MP4' : '▶ 看监看台',
-              )
-            : null,
-        ),
-
-        // 5 Clickable FUI Agent Nodes
-        nodes.map((node) => {
-          const sv = statusVisual(node.data.status)
-          const isAct = node.data.status === 'running'
-          return h(
-            'button',
-            {
-              key: node.id,
-              className: `dsh-vw-btn dsh-vw-hud-node ${isAct ? 'is-running' : ''}`,
-              onClick: () => onJumpStep(node.step),
-              title: `点击进入人工精修: ${node.title}`,
-              style: {
-                position: 'absolute',
-                left: `${node.xPct}%`,
-                top: `${node.yPct}%`,
-                transform: 'translate(-50%, -50%)',
-                width: '154px',
-                padding: '7px 9px',
-                textAlign: 'left',
-                borderRadius: '10px',
-                background: dark ? 'rgba(9, 14, 24, 0.88)' : 'rgba(255, 255, 255, 0.90)',
-                border: `1px solid ${sv.border}`,
-                boxShadow: isAct
-                  ? `0 0 22px ${T.accentBlueBg}`
-                  : '0 10px 24px rgba(0, 0, 0, 0.22)',
-                backdropFilter: 'blur(14px)',
-                zIndex: 4,
-              },
-            },
-            h(
-              'div',
-              { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' } },
-              h(
-                'span',
-                { style: { fontSize: '10px', fontFamily: 'Consolas, monospace', fontWeight: 800, color: sv.color } },
-                `NODE ${node.code}`,
-              ),
-              h(
-                'span',
-                {
-                  style: {
-                    fontSize: '9.5px',
-                    padding: '1px 6px',
-                    borderRadius: '999px',
-                    background: sv.bg,
-                    color: sv.color,
-                    fontWeight: 800,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                  },
-                },
-                isAct
-                  ? h('span', { className: 'dsh-vw-rec-dot', style: { width: '5px', height: '5px', borderRadius: '50%', background: sv.color } })
-                  : null,
-                sv.text,
-              ),
-            ),
-            h(
-              'div',
-              { style: { fontSize: '12.5px', fontWeight: 800, color: T.textPrimary, marginTop: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } },
-              node.title,
-            ),
-            h(
-              'div',
-              { style: { fontSize: '10px', color: T.textMuted, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } },
-              node.data.message || node.sub,
-            ),
-            h(
-              'div',
-              { style: { marginTop: '6px', height: '3px', borderRadius: '99px', background: 'rgba(128,128,128,0.2)', overflow: 'hidden' } },
-              h('div', {
-                style: {
-                  width: `${node.data.status === 'completed' ? 100 : Math.max(isAct ? 14 : 0, Math.round(Number(node.data.progress || 0)))}%`,
-                  height: '100%',
-                  background: sv.color,
-                  transition: 'width 0.3s ease',
-                },
-              }),
-            ),
-          )
-        }),
+    // =========================================================================
+    // 5. MAIN APPLICATION
+    // =========================================================================
+    function VideoWorkbenchApp({ ctx, isMainSlot = false }) {
+      const connFetch = useMemo(
+        () =>
+          typeof ctx?.connection?.fetch === 'function'
+            ? ctx.connection.fetch.bind(ctx.connection)
+            : (url, init = {}) => window.fetch(url, { credentials: 'same-origin', ...init }),
+        [ctx],
       )
-    }
 
-    function VideoWorkbenchApp({ ctx, isMainSlot }) {
-      const connFetch = useConnectionFetch(ctx)
-
-      // Host slot integration
+      // Host Mode & Theme
       const [mode, setMode] = useState('video')
       const [mainSlotActive, setMainSlotActive] = useState(false)
-
-      // 3-Mode Adaptive Theme ('auto' | 'dark' | 'light')
       const [themePref, setThemePref] = useState(() => {
         try {
-          return localStorage.getItem('dsh_vw_theme') || 'auto'
+          return localStorage.getItem('dsh-vw-theme-pref') || 'follow-dsh'
         } catch {
-          return 'auto'
+          return 'follow-dsh'
         }
       })
-      const [hostIsDark, setHostIsDark] = useState(() => detectHostDarkMode())
+      const [hostIsDark, setHostIsDark] = useState(() => detectDshThemeIsDark())
+      const resolvedDark = themePref === 'follow-dsh' ? hostIsDark : themePref === 'dark'
+      const T = resolvedDark ? DARK_THEME : LIGHT_THEME
+
       useEffect(() => {
-        const update = () => setHostIsDark(detectHostDarkMode())
+        if (themePref !== 'follow-dsh') return undefined
+        const update = () => setHostIsDark(detectDshThemeIsDark())
+        update()
         const obs = new MutationObserver(update)
-        obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-color-mode', 'class', 'style'] })
-        if (document.body) obs.observe(document.body, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] })
-        const mq = window.matchMedia?.('(prefers-color-scheme: dark)')
+        obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
+        if (document.body) obs.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
+        const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null
         mq?.addEventListener?.('change', update)
         return () => {
           obs.disconnect()
           mq?.removeEventListener?.('change', update)
         }
-      }, [])
+      }, [themePref])
 
-      const selectThemePref = (next) => {
+      const cycleThemePref = () => {
+        const next = themePref === 'follow-dsh' ? 'dark' : themePref === 'dark' ? 'light' : 'follow-dsh'
         setThemePref(next)
         try {
-          localStorage.setItem('dsh_vw_theme', next)
+          localStorage.setItem('dsh-vw-theme-pref', next)
         } catch {}
       }
 
-      const resolvedDark = themePref === 'auto' ? hostIsDark : themePref === 'dark'
-      const T = resolvedDark ? DARK_THEME : LIGHT_THEME
+      // Navigation: Streamlined 3 Top Modes (`warroom` | `studio` | `tasks`) + Studio Step `1..4`
+      const [activeNav, setActiveNav] = useState('warroom')
+      const [studioStep, setStudioStep] = useState(1)
+      const [warCenterTab, setWarCenterTab] = useState('theater') // 'theater' | 'mp4' | 'preview'
+      const [showProjectDrawer, setShowProjectDrawer] = useState(false)
+      const [showAdvancedDirector, setShowAdvancedDirector] = useState(false)
 
-      // Workspace & Active Project State
+      const goToStudioStep = (step) => {
+        setIsPlaying(false)
+        setActiveNav('studio')
+        setStudioStep(step)
+      }
+
+      // Project & Backend Workspace State
       const [projects, setProjects] = useState([])
       const [activeProjectDir, setActiveProjectDir] = useState('')
       const [script, setScript] = useState(null)
       const [projectAssets, setProjectAssets] = useState([])
-      const [assetSummary, setAssetSummary] = useState({ image: 0, video: 0, music: 0, sfx: 0, notes: 0 })
+      const [assetSummary, setAssetSummary] = useState({ image: 0, video: 0, music: 0, sfx: 0, notes: 0, hostVideo: 0, avatarBase: 0, voiceClone: 0 })
       const [hasMp4, setHasMp4] = useState(false)
       const [hasSnapshot, setHasSnapshot] = useState(false)
       const [hasMasterAudio, setHasMasterAudio] = useState(false)
       const [qaReport, setQaReport] = useState(null)
       const [buildLog, setBuildLog] = useState(null)
       const [historyCount, setHistoryCount] = useState(0)
-
-      // Voices & TTS
       const [voiceCatalog, setVoiceCatalog] = useState([])
-      const [availableEmotions, setAvailableEmotions] = useState(['平静', '高兴', '激动', '深沉', '温暖'])
-      const [ttsStatus, setTtsStatus] = useState({ reachable: false, ready: false })
+      const [availableEmotions, setAvailableEmotions] = useState(['平静', '昂扬', '温和', '严肃', '兴奋', '深沉'])
+      const [ttsStatus, setTtsStatus] = useState({ reachable: false, ready: false, engine: 'IndexTTS-2.5' })
 
-      // Model-Agnostic LLM Config (Default: follow-dsh; Supports all 4 wire protocols)
-      const [llmConfig, setLlmConfig] = useState(null)
-      const [showLlmModal, setShowLlmModal] = useState(false)
-      const [llmForm, setLlmForm] = useState({
-        mode: 'follow-dsh',
-        dshProviderId: 'active',
-        provider: 'custom',
-        format: 'auto',
-        baseUrl: '',
-        apiKey: '',
-        model: '',
-        maxRepairRounds: 3,
-      })
-      const [llmTestResult, setLlmTestResult] = useState(null)
-      const [llmTesting, setLlmTesting] = useState(false)
-
-      // Navigation & UI Modals
-      const [activeStep, setActiveStep] = useState(0) // 0 = AI Agent 作战大屏, 1..4 = 分步精修, 5 = 完整任务日志
-      const [warCenterTab, setWarCenterTab] = useState('map') // 'map' | 'monitor'
-      const [showProjectDrawer, setShowProjectDrawer] = useState(false)
-      const [selectedSceneIdx, setSelectedSceneIdx] = useState(0)
-      const [assetFilter, setAssetFilter] = useState('all')
-      const [isDragging, setIsDragging] = useState(false)
-      const [assetDirInput, setAssetDirInput] = useState('')
-      const [showNewModal, setShowNewModal] = useState(false)
-      const [newProjectTitle, setNewProjectTitle] = useState('')
-      const [confirmDeleteDir, setConfirmDeleteDir] = useState('')
-      const [showVoiceModal, setShowVoiceModal] = useState(false)
-      const [voiceModalTarget, setVoiceModalTarget] = useState('global')
-      const [voiceSearch, setVoiceSearch] = useState('')
-      const [voiceGenderFilter, setVoiceGenderFilter] = useState('all')
-      const [voiceImportPath, setVoiceImportPath] = useState('')
-      const [voiceImportName, setVoiceImportName] = useState('')
-      const [voiceImportGender, setVoiceImportGender] = useState('female')
-      const [showCodeDrawer, setShowCodeDrawer] = useState(false)
-      const [codeFiles, setCodeFiles] = useState([])
-      const [selectedCodePath, setSelectedCodePath] = useState('')
-      const [showSafeGuides, setShowSafeGuides] = useState(false)
-      const [showMatrixPreview, setShowMatrixPreview] = useState(false)
-      const [voiceTab, setVoiceTab] = useState('library') // 'library' | 'clone'
-      const [cloneSubMode, setCloneSubMode] = useState('mic') // 'mic' | 'file' | 'path'
-      const [micRecording, setMicRecording] = useState(false)
-      const [micSeconds, setMicSeconds] = useState(0)
-      const [recordedB64, setRecordedB64] = useState('')
-      const [recordedFileName, setRecordedFileName] = useState('')
-      const [cloneVoiceName, setCloneVoiceName] = useState('')
-      const [cloneVoiceGender, setCloneVoiceGender] = useState('female')
-      const [cloneVoicePrompt, setCloneVoicePrompt] = useState('')
-      const [cloneAuditionText, setCloneAuditionText] = useState('你好，这是用 IndexTTS-2.5 声音克隆实验室刚刚生成的效果试听，音色自然饱满。')
-      const [cloneAuditionVoiceId, setCloneAuditionVoiceId] = useState('')
-      const [cloneAuditionUrl, setCloneAuditionUrl] = useState('')
-      const [safeZonePreflight, setSafeZonePreflight] = useState(null)
-      const [showVendorModal, setShowVendorModal] = useState(false)
-      const [vendorSourceDir, setVendorSourceDir] = useState('')
-      const [vendorName, setVendorName] = useState('')
-      const [vendorDurationSec, setVendorDurationSec] = useState(4)
-      const [publishPackResult, setPublishPackResult] = useState(null)
-      const [bgmComposePreviewUrl, setBgmComposePreviewUrl] = useState('')
-
-      // Director Studio Form (Step 2)
+      // Director & Production Configuration
       const [directorForm, setDirectorForm] = useState({
         topic: '',
-        style: 'cinematic',
+        style: 'tech',
         engine: 'remotion',
         creationMode: 'ai-coded',
         bgmMode: 'llm-coded',
-        bgmTtsPrompt: '科技光影律动 温暖深沉氛围铺底',
+        narrationMode: 'tts',
+        pacingMode: 'auto',
+        bgmTtsPrompt: '科技光影律动 温暖氛围铺底',
         targetPlatform: 'universal',
         aspectRatio: 'auto',
         quality: '1080p',
         customWidth: 1080,
         customHeight: 1920,
         aiBadge: true,
+        aiBadgeEnabled: true,
+        aiBadgePosition: 'top-right',
+        aiBadgeText: '',
         useDraftReference: true,
         fps: 30,
         voiceId: 'auto',
       })
+      const [polishingTopic, setPolishingTopic] = useState(false)
+      const [unpolishedTopicBackup, setUnpolishedTopicBackup] = useState('')
+      const [showAvatarEndpointCfg, setShowAvatarEndpointCfg] = useState(false)
+      const [avatarEndpointForm, setAvatarEndpointForm] = useState({ provider: 'auto', endpoint: '', apiKey: '' })
 
-      // Step 3 AI Natural Language Refine & Script State
-      const [refinePrompt, setRefinePrompt] = useState('')
-      const [refineScope, setRefineScope] = useState('scene') // 'scene' | 'global'
-      const [scriptDirty, setScriptDirty] = useState(false)
-
-      // Async Job Progress & Notifications
-      const [busyLabel, setBusyLabel] = useState('')
-      const [busyProgress, setBusyProgress] = useState(0)
-      const [toast, setToast] = useState(null)
-      const [assetVersion, setAssetVersion] = useState(1)
-
-      // Playback State
-      const [currentFrame, setCurrentFrame] = useState(0)
-      const [isPlaying, setIsPlaying] = useState(false)
-      const [playingVoiceId, setPlayingVoiceId] = useState('')
-
-      const initialLoadedRef = useRef(false)
-      const iframeRef = useRef(null)
-      const stageAudioRef = useRef(null)
-      const previewAudioRef = useRef(null)
-      const fileInputRef = useRef(null)
-      const folderInputRef = useRef(null)
-      const bgmInputRef = useRef(null)
-      const cloneFileInputRef = useRef(null)
-      const mediaRecorderRef = useRef(null)
-      const micTimerRef = useRef(null)
-      const micChunksRef = useRef([])
-
-      // Command Deck v5 States: Skin, Teleprompter Camera, Avatar, Task Center & Pipeline
-      const [skinConfig, setSkinConfig] = useState(() => {
-        try {
-          const raw = localStorage.getItem('dsh-vw-skin-v5')
-          if (raw) return { id: 'obsidian-nebula', customUrl: '', blurPx: 14, opacity: 0.78, ...JSON.parse(raw) }
-        } catch {}
-        return { id: 'obsidian-nebula', customUrl: '', blurPx: 14, opacity: 0.78 }
-      })
-      const [showSkinModal, setShowSkinModal] = useState(false)
+      // Step 1: Uploads, Drag State & Teleprompter Camera
+      const [isDraggingUpload, setIsDraggingUpload] = useState(false)
+      const [uploadProgressState, setUploadProgressState] = useState(null) // { current, total, fileName, percent }
+      const [assetDirInput, setAssetDirInput] = useState('')
+      const [assetFilter, setAssetFilter] = useState('all')
       const [showTeleprompter, setShowTeleprompter] = useState(false)
       const [teleLinesText, setTeleLinesText] = useState(
-        '欢迎来到 AI Agent 作战大屏。\n只需在第一步导入你的素材、背景音乐，或直接打开提词板现场口播，\n四位智能体就会协同完成分镜、剪辑、修音、数字人与 1080p 高清成片导出。',
+        '欢迎来到 DSH 电影视频工坊。\n只要在这里导入素材或现场录制一段口播，\n四位 AI 智能体就会协同完成分镜、剪辑、配音混音与 1080P 成片渲染。',
       )
       const [teleScrollSpeed, setTeleScrollSpeed] = useState(1.1)
       const [teleFontSize, setTeleFontSize] = useState(26)
       const [teleLineHeight, setTeleLineHeight] = useState(1.65)
       const [teleBgOpacity, setTeleBgOpacity] = useState(0.62)
+      const [camSelfieMirror, setCamSelfieMirror] = useState(true)
       const [teleMirror, setTeleMirror] = useState(false)
       const [teleAutoScroll, setTeleAutoScroll] = useState(false)
+      const [teleCountdown, setTeleCountdown] = useState(0) // 3 -> 2 -> 1 -> 0
       const [camStreaming, setCamStreaming] = useState(false)
-      const [camError, setCamError] = useState('')
       const [camRecording, setCamRecording] = useState(false)
       const [camSeconds, setCamSeconds] = useState(0)
+      const [camError, setCamError] = useState('')
+      const [camMicLevel, setCamMicLevel] = useState(0)
       const [camTargetRole, setCamTargetRole] = useState('host_video')
       const [camExtractClone, setCamExtractClone] = useState(true)
-      const [taskRuns, setTaskRuns] = useState([])
-      const [selectedRunId, setSelectedRunId] = useState('')
-      const [taskFilter, setTaskFilter] = useState('all')
+      const [pendingRecPreview, setPendingRecPreview] = useState(null) // { blob, url, fileName, durationEst }
+
+      // Step 2: Avatar & Advanced Options
       const [avatarTemplates, setAvatarTemplates] = useState([])
       const [avatarProvider, setAvatarProvider] = useState({ provider: 'auto', endpoint: '' })
+      const [avatarVisualNotice, setAvatarVisualNotice] = useState('')
       const [avatarCfg, setAvatarCfg] = useState({
         enabled: false,
         mode: 'ai-human',
@@ -1343,18 +1041,86 @@ window.__ModuleLoader__.load({
       const [aiAuthorCode, setAiAuthorCode] = useState(true)
       const [trimClipSec, setTrimClipSec] = useState(0)
       const [clipSpeedMult, setClipSpeedMult] = useState(1.0)
-      const [assetImportRole, setAssetImportRole] = useState('')
-      const camVideoRef = useRef(null)
-      const camStreamRef = useRef(null)
-      const camRecorderRef = useRef(null)
-      const camTimerRef = useRef(null)
-      const camChunksRef = useRef([])
-      const teleBoxRef = useRef(null)
-      const teleRafRef = useRef(0)
-      const skinFileInputRef = useRef(null)
-      const avatarBaseInputRef = useRef(null)
-      const voiceCloneInputRef = useRef(null)
-      const pendingUploadRoleRef = useRef('')
+      const [bgmComposePreviewUrl, setBgmComposePreviewUrl] = useState('')
+
+      // Step 3: Monitor, Safe Zone, Script Edits & AI Refine
+      const [selectedSceneIdx, setSelectedSceneIdx] = useState(0)
+      const [currentFrame, setCurrentFrame] = useState(0)
+      const [isPlaying, setIsPlaying] = useState(false)
+      const [showSafeGuides, setShowSafeGuides] = useState(false)
+      const [safeZonePreflight, setSafeZonePreflight] = useState(null)
+      const [refinePrompt, setRefinePrompt] = useState('')
+      const [refineScope, setRefineScope] = useState('scene')
+      const [scriptDirty, setScriptDirty] = useState(false)
+
+      // Step 4: Publish Pack & QA
+      const [publishPackResult, setPublishPackResult] = useState(null)
+      const [showMatrixPreview, setShowMatrixPreview] = useState(false)
+
+      // Task Center / Agent Pipeline Runs
+      const [taskRuns, setTaskRuns] = useState([])
+      const [selectedRunId, setSelectedRunId] = useState('')
+      const [taskFilter, setTaskFilter] = useState('all')
+
+      // Modals & Drawers
+      const [showNewModal, setShowNewModal] = useState(false)
+      const [newProjectTitle, setNewProjectTitle] = useState('')
+      const [confirmDeleteDir, setConfirmDeleteDir] = useState('')
+
+      const [showLlmModal, setShowLlmModal] = useState(false)
+      const [llmConfig, setLlmConfig] = useState(null)
+      const [llmForm, setLlmForm] = useState({
+        mode: 'follow-dsh',
+        dshProviderId: 'active',
+        provider: 'custom',
+        format: 'auto',
+        baseUrl: '',
+        apiKey: '',
+        model: '',
+        maxRepairRounds: 3,
+      })
+      const [llmTesting, setLlmTesting] = useState(false)
+      const [llmTestResult, setLlmTestResult] = useState(null)
+
+      const [showVoiceModal, setShowVoiceModal] = useState(false)
+      const [voiceModalTab, setVoiceModalTab] = useState('library') // 'library' | 'clone'
+      const [voiceModalTarget, setVoiceModalTarget] = useState('global')
+      const [voiceSearch, setVoiceSearch] = useState('')
+      const [voiceGenderFilter, setVoiceGenderFilter] = useState('all')
+      const [playingVoiceId, setPlayingVoiceId] = useState('')
+      const [voiceImportPath, setVoiceImportPath] = useState('')
+      const [voiceImportName, setVoiceImportName] = useState('')
+      const [voiceImportGender, setVoiceImportGender] = useState('female')
+      const [cloneSubMode, setCloneSubMode] = useState('mic') // 'mic' | 'file' | 'path'
+      const [micRecording, setMicRecording] = useState(false)
+      const [micSeconds, setMicSeconds] = useState(0)
+      const [micVuLevel, setMicVuLevel] = useState(0)
+      const [recordedB64, setRecordedB64] = useState('')
+      const [recordedFileName, setRecordedFileName] = useState('')
+      const [cloneVoiceName, setCloneVoiceName] = useState('')
+      const [cloneVoiceGender, setCloneVoiceGender] = useState('female')
+      const [cloneVoicePrompt, setCloneVoicePrompt] = useState('')
+      const [cloneAuditionVoiceId, setCloneAuditionVoiceId] = useState('')
+      const [cloneAuditionText, setCloneAuditionText] = useState('你好，这是我刚克隆完成的专属声线，用大模型驱动的动画配音听起来自然流畅吗？')
+      const [cloneAuditionUrl, setCloneAuditionUrl] = useState('')
+
+      const [showVendorModal, setShowVendorModal] = useState(false)
+      const [vendorSourceDir, setVendorSourceDir] = useState('')
+      const [vendorName, setVendorName] = useState('')
+      const [vendorDurationSec, setVendorDurationSec] = useState(6)
+
+      const [showCodeDrawer, setShowCodeDrawer] = useState(false)
+      const [codeFiles, setCodeFiles] = useState([])
+      const [selectedCodePath, setSelectedCodePath] = useState('')
+
+      const [showSkinModal, setShowSkinModal] = useState(false)
+      const [skinConfig, setSkinConfig] = useState(() => {
+        try {
+          const raw = localStorage.getItem('dsh-vw-skin-v5')
+          if (raw) return { id: 'obsidian-nebula', customUrl: '', blurPx: 14, opacity: 0.78, ...JSON.parse(raw) }
+        } catch {}
+        return { id: 'obsidian-nebula', customUrl: '', blurPx: 14, opacity: 0.78 }
+      })
 
       useEffect(() => {
         try {
@@ -1362,84 +1128,104 @@ window.__ModuleLoader__.load({
         } catch {}
       }, [skinConfig])
 
+      // Busy & Toast Notifications
+      const [busyLabel, setBusyLabel] = useState('')
+      const [busyProgress, setBusyProgress] = useState(0)
+      const [toast, setToast] = useState(null)
+      const [showRawError, setShowRawError] = useState(false)
+      const [assetVersion, setAssetVersion] = useState(1)
+
+      // DOM & Stream Refs
+      const initialLoadedRef = useRef(false)
+      const iframeRef = useRef(null)
+      const stageAudioRef = useRef(null)
+      const previewAudioRef = useRef(null)
+      const fileInputRef = useRef(null)
+      const folderInputRef = useRef(null)
+      const bgmInputRef = useRef(null)
+      const cloneFileInputRef = useRef(null)
+      const skinFileInputRef = useRef(null)
+      const avatarBaseInputRef = useRef(null)
+      const voiceCloneInputRef = useRef(null)
+      const camVideoRef = useRef(null)
+      const camStreamRef = useRef(null)
+      const camRecorderRef = useRef(null)
+      const camTimerRef = useRef(null)
+      const camCountdownTimerRef = useRef(null)
+      const camAudioCtxRef = useRef(null)
+      const camVuRafRef = useRef(0)
+      const camChunksRef = useRef([])
+      const teleBoxRef = useRef(null)
+      const teleRafRef = useRef(0)
+      const mediaRecorderRef = useRef(null)
+      const micTimerRef = useRef(null)
+      const micChunksRef = useRef([])
+      const micAudioCtxRef = useRef(null)
+      const micVuRafRef = useRef(0)
+
       const notify = useCallback((message, type = 'info') => {
+        setShowRawError(false)
         setToast({ message, type, id: Date.now() })
       }, [])
 
       useEffect(() => {
-        if (!toast || toast.type === 'error') return
-        const id = setTimeout(() => setToast(null), 6000)
+        if (!toast || toast.type === 'error') return undefined
+        const id = setTimeout(() => setToast(null), 5500)
         return () => clearTimeout(id)
       }, [toast])
 
-      // Inject dynamic theme-aware CSS + FUI War Room motion keyframes
+      // Inject CSS keyframes + glass utilities dynamically
       const themeCss = useMemo(
         () => `
         .dsh-vw-root { color-scheme: ${resolvedDark ? 'dark' : 'light'}; }
         .dsh-vw-root * { box-sizing: border-box; }
-        .dsh-vw-root select, .dsh-vw-root input, .dsh-vw-root textarea { color-scheme: ${resolvedDark ? 'dark' : 'light'}; }
-        .dsh-vw-root select option {
-          background-color: ${resolvedDark ? '#0B101B' : '#FFFFFF'};
-          color: ${resolvedDark ? '#F3F4F8' : '#0F172A'};
-        }
-        .dsh-vw-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+        .dsh-vw-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
         .dsh-vw-scroll::-webkit-scrollbar-track { background: transparent; }
         .dsh-vw-scroll::-webkit-scrollbar-thumb { background: ${T.scrollThumb}; border-radius: 99px; }
-        .dsh-vw-btn { transition: background-color 0.14s ease, border-color 0.14s ease, box-shadow 0.16s ease, opacity 0.14s ease, transform 0.1s ease; cursor: pointer; }
-        .dsh-vw-btn:hover:not(:disabled) { filter: brightness(1.08); }
-        .dsh-vw-btn:active:not(:disabled) { transform: scale(0.985); }
+        .dsh-vw-btn { transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.2s ease, transform 0.12s ease, opacity 0.15s ease; cursor: pointer; }
+        .dsh-vw-btn:hover:not(:disabled) { filter: brightness(1.07); }
+        .dsh-vw-btn:active:not(:disabled) { transform: scale(0.982); }
         .dsh-vw-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-        .dsh-vw-glass { backdrop-filter: blur(18px) saturate(135%); -webkit-backdrop-filter: blur(18px) saturate(135%); }
-        .dsh-vw-hud-node { transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, transform 0.16s ease; }
-        .dsh-vw-hud-node:hover:not(:disabled) { transform: translate(-50%, -52%); }
-        .dsh-vw-hud-node.is-running {
-          border-color: rgba(34, 211, 238, 0.85) !important;
-          box-shadow: 0 0 24px rgba(34, 211, 238, 0.34), inset 0 0 12px rgba(34, 211, 238, 0.12) !important;
-        }
-        .dsh-vw-fui-card {
-          position: relative;
-          border-radius: 14px;
-          backdrop-filter: blur(20px) saturate(140%);
-          -webkit-backdrop-filter: blur(20px) saturate(140%);
-        }
-        .dsh-vw-reticle {
-          position: absolute;
-          width: 14px;
-          height: 14px;
-          pointer-events: none;
-          z-index: 5;
-          opacity: 0.78;
-        }
-        .dsh-vw-reticle-tl { top: 8px; left: 8px; border-top: 2px solid; border-left: 2px solid; }
-        .dsh-vw-reticle-tr { top: 8px; right: 8px; border-top: 2px solid; border-right: 2px solid; }
-        .dsh-vw-reticle-bl { bottom: 8px; left: 8px; border-bottom: 2px solid; border-left: 2px solid; }
-        .dsh-vw-reticle-br { bottom: 8px; right: 8px; border-bottom: 2px solid; border-right: 2px solid; }
-        .dsh-vw-reactor-btn {
+        .dsh-vw-popover-in { animation: dshPopoverIn 0.14s cubic-bezier(0.16, 1, 0.3, 1); }
+        .dsh-vw-plasma-cta {
           position: relative;
           overflow: hidden;
+          background: ${resolvedDark ? 'linear-gradient(135deg, #0891B2 0%, #2563EB 50%, #D97706 100%)' : 'linear-gradient(135deg, #0369A1 0%, #1D4ED8 54%, #B45309 100%)'};
+          background-size: 200% 200%;
+          animation: dshPlasmaShift 6s ease infinite;
+          text-shadow: 0 1px 4px rgba(0, 0, 0, 0.42);
         }
-        .dsh-vw-reactor-btn::after {
+        .dsh-vw-plasma-cta::after {
           content: '';
           position: absolute;
           top: -20%;
-          left: -60%;
-          width: 45%;
+          left: -55%;
+          width: 42%;
           height: 140%;
-          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.42), transparent);
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
           transform: skewX(-24deg);
-          animation: dshReactorSweep 3.2s ease-in-out infinite;
+          animation: dshReactorSweep 3.4s ease-in-out infinite;
           pointer-events: none;
         }
-        @keyframes dshHudDash { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
-        @keyframes dshRecPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.28; } }
-        @keyframes dshOrbitCw { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @keyframes dshOrbitCcw { from { transform: rotate(360deg); } to { transform: rotate(0deg); } }
-        @keyframes dshReactorSweep { 0% { left: -65%; } 55%, 100% { left: 135%; } }
-        .dsh-vw-hud-flow { stroke-dasharray: 5 5; animation: dshHudDash 1.1s linear infinite; }
-        .dsh-vw-rec-dot { animation: dshRecPulse 1s ease-in-out infinite; }
-        .dsh-vw-orbit-cw { animation: dshOrbitCw 38s linear infinite; transform-origin: 0px 0px; }
-        .dsh-vw-orbit-ccw { animation: dshOrbitCcw 26s linear infinite; transform-origin: 0px 0px; }
-        .dsh-vw-radar-spin { animation: dshOrbitCw 7s linear infinite; transform-origin: 0px 0px; }
+        .dsh-vw-rec-dot { animation: dshRecPulse 1.1s ease-in-out infinite; }
+        .dsh-vw-topbar { min-height: 60px; padding: 8px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: nowrap; }
+        .dsh-vw-grid-agents { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: stretch; margin-top: 6px; }
+        .dsh-vw-grid-dock { display: grid; grid-template-columns: 1.05fr 1.35fr 1.05fr; gap: 18px; align-items: stretch; }
+        .dsh-vw-grid-filmstrip { display: grid; grid-template-columns: 1.6fr 1fr auto; gap: 16px; align-items: center; }
+        .dsh-vw-grid-tasks { display: grid; grid-template-columns: 320px 1fr; gap: 18px; align-items: start; }
+        .dsh-vw-grid-studio-2col { display: grid; grid-template-columns: 1.15fr 1fr; gap: 20px; align-items: start; }
+        @media (max-width: 1180px) {
+          .dsh-vw-topbar { flex-wrap: wrap; padding: 8px 14px; row-gap: 8px; }
+          .dsh-vw-grid-agents { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .dsh-vw-grid-dock { grid-template-columns: 1fr; }
+          .dsh-vw-grid-filmstrip { grid-template-columns: 1fr; }
+          .dsh-vw-grid-tasks { grid-template-columns: 1fr; }
+          .dsh-vw-grid-studio-2col { grid-template-columns: 1fr; }
+        }
+        @keyframes dshPopoverIn { from { opacity: 0; transform: translateY(-4px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes dshReactorSweep { 0% { left: -60%; } 55%, 100% { left: 135%; } }
+        @keyframes dshPlasmaShift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+        @keyframes dshRecPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.38; transform: scale(0.86); } }
       `,
         [T.scrollThumb, resolvedDark],
       )
@@ -1454,6 +1240,7 @@ window.__ModuleLoader__.load({
         el.textContent = themeCss
       }, [themeCss])
 
+      // Main Slot / Shell Overlay Arbitration
       useEffect(() => {
         if (isMainSlot) {
           window.dispatchEvent(new CustomEvent('dsh-video:main-mounted', { detail: { mounted: true } }))
@@ -1465,12 +1252,23 @@ window.__ModuleLoader__.load({
       }, [isMainSlot])
 
       useEffect(() => {
+        const handler = (ev) => {
+          if (ev.detail?.mode) setMode(ev.detail.mode)
+        }
+        window.addEventListener('dsh-video:switch-mode', handler)
+        return () => window.removeEventListener('dsh-video:switch-mode', handler)
+      }, [])
+
+      useEffect(() => {
         const onKey = (ev) => {
           if (ev.key === 'Escape') {
             setShowNewModal(false)
             setShowVoiceModal(false)
             setShowLlmModal(false)
             setShowCodeDrawer(false)
+            setShowSkinModal(false)
+            setShowVendorModal(false)
+            setShowProjectDrawer(false)
             setConfirmDeleteDir('')
           }
         }
@@ -1494,7 +1292,7 @@ window.__ModuleLoader__.load({
       }
 
       const refreshState = useCallback(
-        async (targetDir = activeProjectDir, opts = {}) => {
+        async (targetDir = activeProjectDir) => {
           try {
             const q = targetDir ? `?projectDir=${encodeURIComponent(targetDir)}` : ''
             const res = await connFetch(`/api/video-workbench/state${q}`)
@@ -1511,13 +1309,18 @@ window.__ModuleLoader__.load({
             setTtsStatus(data.ttsStatus || { reachable: false, ready: false })
             if (data.llmConfig) syncLlmFormFromSummary(data.llmConfig)
             if (Array.isArray(data.avatarTemplates)) setAvatarTemplates(data.avatarTemplates)
-            if (data.avatarProvider) setAvatarProvider(data.avatarProvider)
+            if (data.avatarProvider) {
+              setAvatarProvider(data.avatarProvider)
+              setAvatarEndpointForm({
+                provider: data.avatarProvider.provider || 'auto',
+                endpoint: data.avatarProvider.endpoint || '',
+                apiKey: data.avatarProvider.hasApiKey ? 'KEEP_EXISTING' : '',
+              })
+            }
             if (Array.isArray(data.taskRuns)) {
               setTaskRuns(data.taskRuns)
               const firstId = data.taskRuns[0]?.id || data.taskRuns[0]?.runId
-              if (firstId) {
-                setSelectedRunId((prev) => prev || firstId)
-              }
+              if (firstId) setSelectedRunId((prev) => prev || firstId)
             }
 
             if (data.activeProject) {
@@ -1543,29 +1346,36 @@ window.__ModuleLoader__.load({
                   presetId: ap.script.avatarClip.presetId || prev.presetId,
                   sourcePath: ap.script.avatarClip.sourceVideoPath || ap.script.avatarClip.sourceImagePath || prev.sourcePath,
                 }))
+                if (ap.script.avatarClip.visualNotice) {
+                  setAvatarVisualNotice(ap.script.avatarClip.visualNotice)
+                }
               }
 
               setDirectorForm((prev) => ({
                 ...prev,
                 topic: ap.script?.topic || prev.topic || '',
-                style: ap.script?.style || prev.style || 'cinematic',
+                style: UNIFIED_STYLES.some((s) => s.id === ap.script?.style) ? ap.script.style : prev.style || 'tech',
                 engine: ap.script?.engine || prev.engine || 'remotion',
                 creationMode: ap.script?.creationMode || prev.creationMode || 'ai-coded',
                 bgmMode: ap.script?.bgmMode || ap.script?.audioSpec?.bgmMode || prev.bgmMode || 'llm-coded',
+                narrationMode: ap.script?.narrationMode || prev.narrationMode || 'tts',
+                pacingMode: ap.script?.pacingMode || prev.pacingMode || 'auto',
                 targetPlatform: ap.script?.targetPlatform || prev.targetPlatform || 'universal',
                 aspectRatio: ap.script?.requestedAspectRatio || ap.script?.aspectRatio || prev.aspectRatio || 'auto',
                 quality: ap.script?.quality || prev.quality || '1080p',
                 customWidth: Number(ap.script?.width) || prev.customWidth || 1080,
                 customHeight: Number(ap.script?.height) || prev.customHeight || 1920,
                 aiBadge: ap.script?.aiBadge !== undefined ? Boolean(ap.script.aiBadge) : true,
+                aiBadgeEnabled: ap.script?.aiBadgeEnabled !== undefined ? Boolean(ap.script.aiBadgeEnabled) : (ap.script?.aiBadge !== false),
+                aiBadgePosition: ap.script?.aiBadgePosition || prev.aiBadgePosition || 'top-right',
+                aiBadgeText: ap.script?.aiBadgeText || prev.aiBadgeText || '',
                 fps: Number(ap.script?.fps) || prev.fps || 30,
                 voiceId: ap.script?.defaultVoiceId || prev.voiceId || 'auto',
               }))
 
-              if (!initialLoadedRef.current || opts.autoStep) {
+              if (!initialLoadedRef.current) {
                 initialLoadedRef.current = true
-                if (typeof opts.preferredStep === 'number') setActiveStep(opts.preferredStep)
-                else setActiveStep(0) // 默认进入「AI Agent 团队数字信息作战大屏」
+                setActiveNav('warroom')
               }
             }
             return data
@@ -1581,8 +1391,15 @@ window.__ModuleLoader__.load({
         refreshState('')
       }, [])
 
+      const switchWorkbenchMode = (nextMode) => {
+        setMode(nextMode)
+        window.dispatchEvent(new CustomEvent('dsh-video:switch-mode', { detail: { mode: nextMode } }))
+        if (nextMode === 'video') refreshState(activeProjectDir)
+      }
+
+      // Safe-zone preflight watcher
       useEffect(() => {
-        if (!activeProjectDir) return
+        if (!activeProjectDir) return undefined
         let cancelled = false
         const plat = directorForm.targetPlatform || script?.targetPlatform || 'universal'
         connFetch(`/api/video-workbench/safe-zone?projectDir=${encodeURIComponent(activeProjectDir)}&platform=${encodeURIComponent(plat)}`)
@@ -1596,19 +1413,62 @@ window.__ModuleLoader__.load({
         }
       }, [activeProjectDir, directorForm.targetPlatform, script?.width, script?.height, script?.targetPlatform, assetVersion, connFetch])
 
-      useEffect(() => {
-        const handler = (ev) => {
-          if (ev.detail?.mode) setMode(ev.detail.mode)
-        }
-        window.addEventListener('dsh-video:switch-mode', handler)
-        return () => window.removeEventListener('dsh-video:switch-mode', handler)
-      }, [])
+      // Live Pipeline Tasks Poller
+      const fetchTaskRuns = useCallback(async () => {
+        if (!activeProjectDir) return
+        try {
+          const res = await connFetch(`/api/video-workbench/tasks?projectDir=${encodeURIComponent(activeProjectDir)}`)
+          const d = await res.json()
+          if (d.ok && Array.isArray(d.runs)) {
+            setTaskRuns(d.runs)
+            if (d.runs[0]?.id) setSelectedRunId((prev) => prev || d.runs[0].id)
+          }
+        } catch {}
+      }, [activeProjectDir, connFetch])
 
-      const switchWorkbenchMode = (nextMode) => {
-        setMode(nextMode)
-        window.dispatchEvent(new CustomEvent('dsh-video:switch-mode', { detail: { mode: nextMode } }))
-        if (nextMode === 'video') refreshState(activeProjectDir)
-      }
+      const activeProjectTaskRuns = useMemo(
+        () => taskRuns.filter((r) => !activeProjectDir || !r.projectDir || r.projectDir === activeProjectDir),
+        [taskRuns, activeProjectDir],
+      )
+
+      const hasLiveTask = useMemo(
+        () => activeProjectTaskRuns.some((r) => r.status === 'running' || r.status === 'paused' || r.status === 'queued'),
+        [activeProjectTaskRuns],
+      )
+
+      const prevLiveRef = useRef(false)
+      useEffect(() => {
+        if (prevLiveRef.current && !hasLiveTask && activeProjectDir) {
+          // A live pipeline just finished — reload assets, script & switch War Stage to Cinema MP4 Player if ready!
+          setAssetVersion((v) => v + 1)
+          refreshState(activeProjectDir).then((d) => {
+            if (d?.activeProject?.hasMp4) setWarCenterTab('mp4')
+          })
+        }
+        prevLiveRef.current = hasLiveTask
+      }, [hasLiveTask, activeProjectDir, refreshState])
+
+      useEffect(() => {
+        if (!activeProjectDir || (!hasLiveTask && activeNav !== 'tasks')) return undefined
+        const ms = hasLiveTask ? 900 : 3500
+        const timer = setInterval(fetchTaskRuns, ms)
+        return () => clearInterval(timer)
+      }, [activeProjectDir, hasLiveTask, activeNav, fetchTaskRuns])
+
+      // Teleprompter auto-scroll loop
+      useEffect(() => {
+        if (!teleAutoScroll || !teleBoxRef.current) return undefined
+        let raf = 0
+        let last = performance.now()
+        const tick = (now) => {
+          const dt = (now - last) / 1000
+          last = now
+          if (teleBoxRef.current) teleBoxRef.current.scrollTop += dt * teleScrollSpeed * 38
+          raf = requestAnimationFrame(tick)
+        }
+        raf = requestAnimationFrame(tick)
+        return () => cancelAnimationFrame(raf)
+      }, [teleAutoScroll, teleScrollSpeed])
 
       // Async Job Poller
       const pollBackgroundJob = useCallback(
@@ -1628,7 +1488,7 @@ window.__ModuleLoader__.load({
         [connFetch],
       )
 
-      // Monitor Seek & Playback Sync
+      // Monitor Seek & Audio Sync
       const seekToFrame = useCallback(
         (frame, syncAudio = true) => {
           const fps = Number(script?.fps) || 30
@@ -1638,7 +1498,7 @@ window.__ModuleLoader__.load({
           if (syncAudio && stageAudioRef.current) {
             try {
               const targetSec = clamped / fps
-              if (Math.abs((stageAudioRef.current.currentTime || 0) - targetSec) > 0.1) {
+              if (Math.abs((stageAudioRef.current.currentTime || 0) - targetSec) > 0.12) {
                 stageAudioRef.current.currentTime = targetSec
               }
             } catch {}
@@ -1657,11 +1517,12 @@ window.__ModuleLoader__.load({
       )
 
       useEffect(() => {
-        if (!isPlaying || activeStep !== 3) {
+        const previewActive = (activeNav === 'studio' && studioStep === 3) || (activeNav === 'warroom' && warCenterTab === 'preview')
+        if (!isPlaying || !previewActive) {
           try {
             stageAudioRef.current?.pause()
           } catch {}
-          return
+          return undefined
         }
         const fps = Number(script?.fps) || 30
         const total = Math.max(1, Number(script?.totalDurationInFrames) || 300)
@@ -1692,8 +1553,9 @@ window.__ModuleLoader__.load({
         }
         rafId = requestAnimationFrame(tick)
         return () => cancelAnimationFrame(rafId)
-      }, [isPlaying, activeStep, script, hasMasterAudio, seekToFrame])
+      }, [isPlaying, activeNav, studioStep, warCenterTab, script, hasMasterAudio, seekToFrame])
 
+      // Derived Values
       const scenes = useMemo(() => script?.scenes || [], [script])
       useEffect(() => {
         if (scenes.length === 0) setSelectedSceneIdx(0)
@@ -1711,13 +1573,15 @@ window.__ModuleLoader__.load({
 
       const selectedScene = scenes[selectedSceneIdx] || null
 
+      const specialRoleCount = useMemo(
+        () => (assetSummary.hostVideo || 0) + (assetSummary.avatarBase || 0) + (assetSummary.voiceClone || 0),
+        [assetSummary],
+      )
+
       const filteredAssets = useMemo(() => {
         if (assetFilter === 'all') return projectAssets
-        if (assetFilter === 'audio') return projectAssets.filter((a) => a.type === 'audio')
         if (assetFilter === 'music') return projectAssets.filter((a) => a.role === 'music')
-        if (assetFilter === 'special') {
-          return projectAssets.filter((a) => ['host_video', 'avatar_base', 'voice_clone'].includes(a.role))
-        }
+        if (assetFilter === 'special') return projectAssets.filter((a) => ['host_video', 'avatar_base', 'voice_clone'].includes(a.role))
         return projectAssets.filter((a) => a.type === assetFilter)
       }, [projectAssets, assetFilter])
 
@@ -1735,19 +1599,36 @@ window.__ModuleLoader__.load({
         })
       }, [voiceCatalog, voiceSearch, voiceGenderFilter])
 
-      // Handlers: Projects
+      const currentTaskRun = useMemo(() => {
+        if (!activeProjectTaskRuns.length) return null
+        return activeProjectTaskRuns.find((r) => r.id === selectedRunId) || activeProjectTaskRuns[0]
+      }, [activeProjectTaskRuns, selectedRunId])
+
+      const mountedBgmItem = useMemo(() => {
+        const up = script?.bgm?.uploadedPath || script?.bgm?.path
+        if (up) {
+          const found = projectAssets.find((a) => a.path === up)
+          if (found) return found
+        }
+        return projectAssets.find((a) => a.role === 'music') || null
+      }, [script, projectAssets])
+
+      // =======================================================================
+      // 6. ACTION HANDLERS (FULL PIPELINE + BINARY UPLOAD + TELEPROMPTER + LLM)
+      // =======================================================================
       const handleSelectProject = async (dir) => {
         setIsPlaying(false)
         setPublishPackResult(null)
         setBgmComposePreviewUrl('')
+        setSelectedRunId('')
         setShowProjectDrawer(false)
         setActiveProjectDir(dir)
-        await refreshState(dir, { autoStep: activeStep === 0 })
+        await refreshState(dir)
       }
 
       const handleCreateProject = async () => {
-        const title = newProjectTitle.trim() || `电影工坊工程 ${projects.length + 1}`
-        setBusyLabel('正在初始化双引擎工程目录...')
+        const title = newProjectTitle.trim() || `影视作品 ${projects.length + 1}`
+        setBusyLabel('正在创建新工程目录...')
         try {
           const res = await connFetch('/api/video-workbench/projects', {
             method: 'POST',
@@ -1758,1156 +1639,162 @@ window.__ModuleLoader__.load({
               style: directorForm.style,
               aspectRatio: directorForm.aspectRatio,
               quality: directorForm.quality,
-              width: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? directorForm.customWidth : undefined,
-              height: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? directorForm.customHeight : undefined,
-              aiBadge: directorForm.aiBadge,
+              width: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customWidth) : undefined,
+              height: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customHeight) : undefined,
+              aiBadge: directorForm.aiBadgeEnabled,
+              aiBadgeEnabled: directorForm.aiBadgeEnabled,
+              aiBadgePosition: directorForm.aiBadgePosition || 'top-right',
+              aiBadgeText: directorForm.aiBadgeText || '',
+              pacingMode: directorForm.pacingMode || 'auto',
               targetPlatform: directorForm.targetPlatform,
               bgmMode: directorForm.bgmMode,
               creationMode: directorForm.creationMode,
               defaultVoiceId: directorForm.voiceId,
             }),
           })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`创建项目失败: ${data.error}`, 'error')
+          const d = await res.json()
+          if (!d.ok) {
+            notify(d.error || '新建工程失败', 'error')
             return
           }
           setShowNewModal(false)
           setNewProjectTitle('')
-          await refreshState(data.projectDir, { autoStep: true, preferredStep: 1 })
-          notify(`已创建工程「${title}」，请先导入媒体素材`, 'success')
+          setActiveProjectDir(d.projectDir)
+          await refreshState(d.projectDir)
+          notify(`已新建并切换到工程「${title}」`, 'success')
+        } catch (err) {
+          notify(`新建工程异常: ${err.message}`, 'error')
         } finally {
           setBusyLabel('')
         }
       }
 
       const handleDeleteProject = async (dir) => {
-        setBusyLabel('正在清理项目目录...')
+        if (!dir) return
+        setBusyLabel('正在删除工程目录...')
         try {
           const res = await connFetch('/api/video-workbench/projects/delete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectDir: dir }),
           })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`删除失败: ${data.error}`, 'error')
+          const d = await res.json()
+          if (!d.ok) {
+            notify(d.error || '删除失败', 'error')
             return
           }
           setConfirmDeleteDir('')
-          await refreshState('', { autoStep: true })
-          notify('已移除项目', 'success')
+          await refreshState(dir === activeProjectDir ? '' : activeProjectDir)
+          notify('工程已清理移除', 'success')
         } finally {
           setBusyLabel('')
         }
       }
 
-      // Handlers: Assets
-      const handleImportByPath = async () => {
-        if (!activeProjectDir || !assetDirInput.trim()) {
-          notify('请输入本地图片/视频/音频文件或文件夹路径', 'error')
+      // Raw Binary Streaming Upload (Zero Base64 bloat on large MP4s!)
+      const handleUploadFiles = async (fileList, forcedRole = '') => {
+        const files = Array.from(fileList || []).filter(Boolean)
+        if (!files.length || !activeProjectDir) return
+        let uploadedCount = 0
+        try {
+          for (let i = 0; i < files.length; i += 1) {
+            const file = files[i]
+            setUploadProgressState({
+              current: i + 1,
+              total: files.length,
+              fileName: file.name,
+              percent: Math.round(((i + 0.4) / files.length) * 100),
+            })
+            const q = `projectDir=${encodeURIComponent(activeProjectDir)}&fileName=${encodeURIComponent(file.name)}&role=${encodeURIComponent(forcedRole || '')}`
+            const res = await connFetch(`/api/video-workbench/assets/upload?${q}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/octet-stream' },
+              body: file,
+            })
+            const d = await res.json()
+            if (!d.ok) {
+              notify(`文件「${file.name}」上传失败: ${d.error}`, 'error')
+            } else {
+              uploadedCount += d.uploadedCount || 1
+            }
+          }
+          if (uploadedCount > 0) {
+            setAssetVersion((v) => v + 1)
+            await refreshState(activeProjectDir)
+            notify(`已高速流式导入 ${uploadedCount} 个素材文件`, 'success')
+          }
+        } catch (err) {
+          notify(`上传过程中出错: ${err.message}`, 'error')
+        } finally {
+          setUploadProgressState(null)
+        }
+      }
+
+      const handleLoadStarterPack = async () => {
+        if (!activeProjectDir) return
+        setBusyLabel('🎁 正在一键生成新手体验包 (3 张高清概念画 + 电影级配乐)...')
+        try {
+          const res = await connFetch('/api/video-workbench/assets/starter-pack', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectDir: activeProjectDir }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(d.error || '生成演示素材失败', 'error')
+            return
+          }
+          setAssetVersion((v) => v + 1)
+          if (!directorForm.topic.trim()) {
+            const tpl = LAUNCH_INSPIRATION_TEMPLATES[0]
+            setDirectorForm((p) => ({ ...p, topic: tpl.topic, style: tpl.style }))
+          }
+          await refreshState(activeProjectDir)
+          notify(`已装载 ${d.addedCount || 4} 份演示素材与配乐！直接点右侧「一键启动」即可出片`, 'success')
+        } catch (err) {
+          notify(`演示包生成异常: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleImportByPath = async (forcedRole = '') => {
+        if (!assetDirInput.trim() || !activeProjectDir) {
+          notify('请输入本地文件夹或文件路径后再导入', 'error')
           return
         }
-        setBusyLabel('正在扫描素材并通过 ffprobe 测算分辨率与时长...')
+        setBusyLabel('正在扫描本机素材目录并检测规格...')
         try {
           const res = await connFetch('/api/video-workbench/assets/import', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              projectDir: activeProjectDir,
-              sources: assetDirInput.split(/[;\n]+/).map((s) => s.trim()).filter(Boolean),
-              role: assetImportRole || undefined,
-            }),
+            body: JSON.stringify({ projectDir: activeProjectDir, sources: assetDirInput.trim(), role: forcedRole }),
           })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`导入失败: ${data.error}`, 'error')
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`扫描导入失败: ${d.error}`, 'error')
             return
           }
           setAssetDirInput('')
           setAssetVersion((v) => v + 1)
           await refreshState(activeProjectDir)
-          notify(`已导入 ${data.importedCount || 0} 份素材`, 'success')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleUploadFiles = async (fileList, forcedRole = '') => {
-        if (!activeProjectDir || !fileList || fileList.length === 0) return
-        const chosenRole = forcedRole || pendingUploadRoleRef.current || ''
-        pendingUploadRoleRef.current = ''
-        setBusyLabel(`正在上传 ${fileList.length} 个媒体文件...`)
-        try {
-          const filesPayload = []
-          for (const f of Array.from(fileList)) {
-            const b64 = await readFileAsBase64(f)
-            filesPayload.push({ name: f.webkitRelativePath || f.name, dataBase64: b64 })
-          }
-          const res = await connFetch('/api/video-workbench/assets/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              projectDir: activeProjectDir,
-              files: filesPayload,
-              role: chosenRole || undefined,
-            }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`上传失败: ${data.error}`, 'error')
-            return
-          }
-          const firstAdded = data.added?.[0]
-          if (chosenRole === 'avatar_base' && firstAdded?.path) {
-            setAvatarCfg((prev) => ({ ...prev, enabled: true, mode: 'cloned-human', sourcePath: firstAdded.path }))
-          } else if (chosenRole === 'voice_clone' && firstAdded?.path) {
-            setAvatarCfg((prev) => ({ ...prev, enabled: true, voiceSamplePath: firstAdded.path }))
-          } else if (chosenRole === 'music' && firstAdded?.path) {
-            setDirectorForm((prev) => ({ ...prev, bgmMode: 'uploaded' }))
-          }
-          setAssetVersion((v) => v + 1)
-          await refreshState(activeProjectDir)
-          notify(`成功导入 ${data.uploadedCount || filesPayload.length} 个素材`, 'success')
+          notify(`已识别导入 ${d.importedCount || 0} 份本地素材`, 'success')
         } finally {
           setBusyLabel('')
         }
       }
 
       const handleDeleteAsset = async (assetId) => {
+        if (!activeProjectDir || !assetId) return
         const res = await connFetch('/api/video-workbench/assets/delete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectDir: activeProjectDir, assetId }),
         })
-        const data = await res.json()
-        if (data.ok) await refreshState(activeProjectDir)
-      }
-
-      // Handlers: LLM Settings
-      const handleProviderTemplateChange = (providerId) => {
-        const tpl = llmConfig?.templates?.find((t) => t.id === providerId)
-        setLlmForm((prev) => ({
-          ...prev,
-          mode: 'custom',
-          provider: providerId,
-          format: tpl?.defaultFormat || 'auto',
-          baseUrl: tpl?.defaultBaseUrl !== undefined && (prev.baseUrl === '' || prev.provider !== providerId) ? tpl.defaultBaseUrl : prev.baseUrl,
-          model: prev.provider !== providerId && tpl?.suggestedModels?.[0] ? tpl.suggestedModels[0] : prev.model,
-        }))
-        setLlmTestResult(null)
-      }
-
-      const handleSelectDshProvider = (provId) => {
-        if (provId === 'active') {
-          const defProv = llmConfig?.dshClient?.providers?.find((p) => p.id === llmConfig?.dshClient?.defaultProviderId)
-          setLlmForm((prev) => ({
-            ...prev,
-            mode: 'follow-dsh',
-            dshProviderId: 'active',
-            format: 'auto',
-            model: '',
-            baseUrl: defProv?.baseURL || '',
-          }))
-        } else {
-          const picked = llmConfig?.dshClient?.providers?.find((p) => p.id === provId)
-          setLlmForm((prev) => ({
-            ...prev,
-            mode: 'follow-dsh',
-            dshProviderId: provId,
-            format: picked?.api || 'auto',
-            baseUrl: picked?.baseURL || '',
-            model: picked?.models?.[0]?.id || '',
-          }))
-        }
-        setLlmTestResult(null)
-      }
-
-      const handleSaveLlmConfig = async () => {
-        setBusyLabel('正在保存大模型配置...')
-        try {
-          const res = await connFetch('/api/video-workbench/llm-config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(llmForm),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`保存失败: ${data.error}`, 'error')
-            return
-          }
-          syncLlmFormFromSummary(data.config)
-          setShowLlmModal(false)
-          notify('大模型接口配置已保存（密钥仅存本地，绝不上链）', 'success')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleTestLlm = async () => {
-        setLlmTesting(true)
-        setLlmTestResult(null)
-        try {
-          const res = await connFetch('/api/video-workbench/llm-test', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(llmForm),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            setLlmTestResult({ ok: false, error: data.error })
-            return
-          }
-          setLlmTestResult(data)
-        } catch (err) {
-          setLlmTestResult({ ok: false, error: err.message })
-        } finally {
-          setLlmTesting(false)
-        }
-      }
-
-      // Handlers: Dual-Track Creation (Draft vs AI Coding Studio)
-      const handlePlanLocalDraft = async (andRender = false) => {
-        if (!activeProjectDir) return
-        setBusyProgress(8)
-        setBusyLabel(andRender ? '正在生成本地演练草稿 + 真人配音 + MP4...' : '正在免费规划本地演练草稿...')
-        try {
-          const endpoint = andRender ? '/api/video-workbench/produce' : '/api/video-workbench/plan'
-          const payload = {
-            ...(andRender ? { async: true } : {}),
-            projectDir: activeProjectDir,
-            sources: assetDirInput.trim() || undefined,
-            topic: directorForm.topic.trim() || script?.title || '',
-            style: directorForm.style,
-            engine: directorForm.engine,
-            aspectRatio: directorForm.aspectRatio,
-            quality: directorForm.quality,
-            width: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customWidth) : undefined,
-            height: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customHeight) : undefined,
-            aiBadge: directorForm.aiBadge,
-            targetPlatform: directorForm.targetPlatform,
-            bgmMode: directorForm.bgmMode,
-            creationMode: directorForm.creationMode,
-            fps: directorForm.fps,
-            voiceId: directorForm.voiceId,
-          }
-          const res = await connFetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          })
-          const initData = await res.json()
-          if (!initData.ok) {
-            notify(`草稿生成失败: ${initData.error}`, 'error')
-            return
-          }
-          const finalData = initData.jobId ? await pollBackgroundJob(initData.jobId) : initData
-          setAssetVersion((v) => v + 1)
-          setSelectedSceneIdx(0)
-          await refreshState(activeProjectDir, { autoStep: true, preferredStep: andRender ? 4 : 3 })
-          notify(
-            andRender
-              ? `本地演练草稿成片已输出！分辨率 ${finalData.script?.width}×${finalData.script?.height} (${finalData.script?.aspectRatio})`
-              : `已生成 ${finalData.sceneCount} 幕本地草稿（${finalData.script?.dimensionReason || ''}），可预览后交由大模型 AI 精修`,
-            'success',
-          )
-        } catch (err) {
-          notify(`草稿生成出错: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-          setBusyProgress(0)
-        }
-      }
-
-      const handleAiCodingProduce = async (forceDraftRef = directorForm.useDraftReference) => {
-        if (!activeProjectDir) return
-        if (!llmConfig?.configured) {
-          setShowLlmModal(true)
-          notify('请先配置您的大模型接口（如 Claude / DeepSeek / OpenAI 或自定义中转），再启动 AI 编程创作', 'info')
-          return
-        }
-        setBusyProgress(4)
-        setBusyLabel(`正在启动大模型 (${llmConfig.model}) AI 编程出片工作流...`)
-        try {
-          const res = await connFetch('/api/video-workbench/ai-produce', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              async: true,
-              projectDir: activeProjectDir,
-              sources: assetDirInput.trim() || undefined,
-              topic: directorForm.topic.trim() || script?.title || '',
-              userPrompt: directorForm.topic.trim() || script?.goal || '',
-              engine: directorForm.engine,
-              aspectRatio: directorForm.aspectRatio,
-              quality: directorForm.quality,
-              width: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customWidth) : undefined,
-              height: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customHeight) : undefined,
-              aiBadge: directorForm.aiBadge,
-              creationMode: directorForm.creationMode,
-              bgmMode: directorForm.bgmMode,
-              bgmTtsPrompt: directorForm.bgmTtsPrompt,
-              targetPlatform: directorForm.targetPlatform,
-              useDraftReference: forceDraftRef,
-              fps: directorForm.fps,
-              voiceId: directorForm.voiceId,
-              render: true,
-            }),
-          })
-          const initData = await res.json()
-          if (!initData.ok) {
-            notify(`AI 编程任务启动失败: ${initData.error}`, 'error')
-            return
-          }
-          const finalData = initData.jobId ? await pollBackgroundJob(initData.jobId) : initData
-          setAssetVersion((v) => v + 1)
-          setSelectedSceneIdx(0)
-          await refreshState(activeProjectDir, { autoStep: true, preferredStep: 4 })
-          const rounds = finalData.buildLog?.repairRoundsUsed ?? 0
-          const tierNote = finalData.buildLog?.tierUsed ? ` · 降级策略 Tier ${finalData.buildLog.tierUsed}` : ''
-          notify(
-            `${finalData.buildLog?.creationMode === 'schema-plan' ? 'Schema 结构化导演' : '大模型 AI 编程'}出片完成！编译与 ${rounds} 轮自检通过${tierNote}，画幅 ${finalData.script?.width}×${finalData.script?.height}`,
-            'success',
-          )
-        } catch (err) {
-          notify(`AI 编程出片失败: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-          setBusyProgress(0)
-        }
-      }
-
-      // Handlers: Step 3 Script & Scene Edit, Voice Synth, Natural Language Refine & Rollback
-      const updateSelectedScene = (patch) => {
-        if (!script || !selectedScene) return
-        const nextScenes = script.scenes.map((sc, idx) => (idx === selectedSceneIdx ? { ...sc, ...patch } : sc))
-        setScript({ ...script, scenes: nextScenes })
-        setScriptDirty(true)
-      }
-
-      const handleSaveScriptEdits = async () => {
-        if (!activeProjectDir || !script) return
-        setBusyLabel('正在保存脚本修改并刷新画布...')
-        try {
-          const res = await connFetch('/api/video-workbench/script', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectDir: activeProjectDir, script, regenerateCode: true }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`保存失败: ${data.error}`, 'error')
-            return
-          }
-          setScript(data.script)
-          setScriptDirty(false)
-          setAssetVersion((v) => v + 1)
-          notify('修改已同步', 'success')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleUpdateFormatQuick = async (nextRatio, nextQuality, nextPlatform) => {
-        if (!activeProjectDir) return
-        if (nextPlatform) {
-          setDirectorForm((prev) => ({ ...prev, targetPlatform: nextPlatform }))
-        }
-        setBusyLabel('正在切换视频比例、平台安全区与画布尺寸...')
-        try {
-          const res = await connFetch('/api/video-workbench/action', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              projectDir: activeProjectDir,
-              action: 'update-format',
-              aspectRatio: nextRatio,
-              quality: nextQuality,
-              ...(nextPlatform ? { targetPlatform: nextPlatform } : {}),
-            }),
-          })
-          const data = await res.json()
-          if (data.ok) {
-            setAssetVersion((v) => v + 1)
-            await refreshState(activeProjectDir)
-            notify(nextPlatform ? `已切换至「${PLATFORM_OPTIONS.find((p) => p.id === nextPlatform)?.label || nextPlatform}」安全区基准` : data.dimensions?.reason || '画幅已更新', 'success')
-          }
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleSynthesizeSceneTts = async (scene) => {
-        if (!activeProjectDir || !scene) return
-        setBusyLabel(`正在用本地音色库为「${scene.title}」配音...`)
-        try {
-          if (scriptDirty) await handleSaveScriptEdits()
-          const res = await connFetch('/api/video-workbench/action', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              projectDir: activeProjectDir,
-              action: 'tts-scene',
-              sceneId: scene.id,
-              text: scene.narration,
-              emotion: scene.emotion || '平静',
-              voiceId: scene.voiceId || 'auto',
-            }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`配音失败: ${data.error}`, 'error')
-            return
-          }
-          setAssetVersion((v) => v + 1)
+        const d = await res.json()
+        if (d.ok) {
           await refreshState(activeProjectDir)
-          notify(`已生成配音 (${data.result?.durationSec || ''}s) 并自动对齐时间轴`, 'success')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleAiRefine = async (overrideInstruction) => {
-        const finalInstruction =
-          typeof overrideInstruction === 'string' && overrideInstruction.trim()
-            ? overrideInstruction.trim()
-            : refinePrompt.trim()
-        if (!activeProjectDir || !finalInstruction) {
-          notify('请输入你希望 AI 调整画面/特效/文案的意见', 'error')
-          return
-        }
-        if (!llmConfig?.configured) {
-          setRefinePrompt(finalInstruction)
-          setShowLlmModal(true)
-          notify('已填入修改指令；请先配置大模型接口后再启动精修', 'info')
-          return
-        }
-        setBusyProgress(10)
-        setBusyLabel(`大模型正在根据你的意见精修${refineScope === 'scene' ? `「${selectedScene?.title || '当前幕'}」` : '全片'}...`)
-        try {
-          const res = await connFetch('/api/video-workbench/ai-refine', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              async: true,
-              projectDir: activeProjectDir,
-              sceneId: refineScope === 'scene' ? selectedScene?.id || '' : '',
-              instruction: finalInstruction,
-              render: true,
-            }),
-          })
-          const initData = await res.json()
-          if (!initData.ok) {
-            notify(`AI 精修失败: ${initData.error}`, 'error')
-            return
-          }
-          await pollBackgroundJob(initData.jobId)
-          setRefinePrompt('')
-          setAssetVersion((v) => v + 1)
-          await refreshState(activeProjectDir)
-          notify('AI 局部精修完成并已通过自动编译与质检！如需还原可随时点「撤回」', 'success')
-        } catch (err) {
-          notify(`AI 精修失败: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-          setBusyProgress(0)
-        }
-      }
-
-      const handleRollbackVersion = async () => {
-        if (!activeProjectDir) return
-        setBusyLabel('正在恢复上一个保存的版本快照...')
-        try {
-          const res = await connFetch('/api/video-workbench/ai-refine', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectDir: activeProjectDir, rollback: true }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(data.message || data.error || '没有可撤回的历史版本', 'info')
-            return
-          }
-          setAssetVersion((v) => v + 1)
-          await refreshState(activeProjectDir)
-          notify('已撤回至上一版本快照', 'success')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleOpenCodeDrawer = async () => {
-        if (!activeProjectDir) return
-        const res = await connFetch(`/api/video-workbench/code?projectDir=${encodeURIComponent(activeProjectDir)}`)
-        const data = await res.json()
-        if (data.ok) {
-          setCodeFiles(data.files || [])
-          setSelectedCodePath((data.files || [])[0]?.path || '')
-          setShowCodeDrawer(true)
-        }
-      }
-
-      const handleAiMasterVoice = async (sceneId = '') => {
-        if (!activeProjectDir) return
-        setBusyProgress(12)
-        setBusyLabel(
-          sceneId
-            ? `正在对分镜 ${sceneId} 执行配音后 AI 大模型声学修音...`
-            : '正在对全片配音执行 AI 大模型声学修音 (LUFS / EQ / 齿音 / 混音)...',
-        )
-        try {
-          const res = await connFetch('/api/video-workbench/action', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              async: true,
-              action: 'ai-master-voice',
-              projectDir: activeProjectDir,
-              sceneIds: sceneId ? [sceneId] : [],
-              useLlm: true,
-            }),
-          })
-          const initData = await res.json()
-          if (!initData.ok) {
-            notify(`AI 修音失败: ${initData.error}`, 'error')
-            return
-          }
-          const finalData = initData.jobId ? await pollBackgroundJob(initData.jobId) : initData
-          setAssetVersion((v) => v + 1)
-          await refreshState(activeProjectDir)
-          const rpt = finalData.report
-          notify(
-            `配音修音完成 (${rpt?.mode === 'ai-llm' ? `大模型 ${rpt.model}` : '自适应母带'} · 处理 ${rpt?.scenesCount || 0} 幕并重混母带)`,
-            'success',
-          )
-        } catch (err) {
-          notify(`AI 修音失败: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-          setBusyProgress(0)
-        }
-      }
-
-      // Handlers: Step 4 Render & QA
-      const handleRenderMp4 = async (draft720p = false) => {
-        if (!activeProjectDir) return
-        if (scriptDirty) await handleSaveScriptEdits()
-        setBusyProgress(6)
-        setBusyLabel(draft720p ? '正在快速渲染 720P 预览 MP4...' : '正在渲染全分辨率高质量 MP4 并执行 QA 质检...')
-        try {
-          const res = await connFetch('/api/video-workbench/action', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              async: true,
-              projectDir: activeProjectDir,
-              action: 'render',
-              engine: script?.engine || directorForm.engine,
-              draft720p,
-            }),
-          })
-          const initData = await res.json()
-          if (!initData.ok) {
-            notify(`导出失败: ${initData.error}`, 'error')
-            return
-          }
-          await pollBackgroundJob(initData.jobId)
-          setAssetVersion((v) => v + 1)
-          await refreshState(activeProjectDir, { autoStep: true, preferredStep: 4 })
-          notify('高清成片 MP4 导出并完成自动化音画质检！', 'success')
-        } catch (err) {
-          notify(`渲染失败: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-          setBusyProgress(0)
-        }
-      }
-
-      const handleRunQaOnly = async () => {
-        if (!activeProjectDir) return
-        setBusyLabel('正在运行 FFmpeg 黑屏与 EBU R128 响度质检...')
-        try {
-          const res = await connFetch('/api/video-workbench/qa', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectDir: activeProjectDir }),
-          })
-          const data = await res.json()
-          if (data.ok) {
-            setQaReport(data.qa)
-            notify(data.qa.passed ? '自动化质检全部通过' : '质检完成，请查看详细指标', data.qa.passed ? 'success' : 'info')
-          }
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      // Handlers: Voices
-      const handlePreviewVoice = (v) => {
-        if (playingVoiceId === v.id) {
-          previewAudioRef.current?.pause()
-          setPlayingVoiceId('')
-          return
-        }
-        if (previewAudioRef.current) {
-          previewAudioRef.current.src = `/api/video-workbench/voices/preview?id=${encodeURIComponent(v.id)}&v=${Date.now()}`
-          previewAudioRef.current.play().catch(() => {
-            notify('该 .pt 音色向量文件暂无原声样本，请直接选用后配音试听', 'info')
-            setPlayingVoiceId('')
-          })
-          setPlayingVoiceId(v.id)
-        }
-      }
-
-      const handleAssignVoice = async (v) => {
-        setShowVoiceModal(false)
-        if (voiceModalTarget === 'global') {
-          setDirectorForm((prev) => ({ ...prev, voiceId: v.id }))
-          notify(`全局首选音色设为「${v.name}」`, 'success')
-          return
-        }
-        if (selectedScene) {
-          updateSelectedScene({ voiceId: v.id, voiceLocked: true })
-          notify(`已为「${selectedScene.title}」指定音色「${v.name}」`, 'success')
-        }
-      }
-
-      const handleImportVoicePack = async () => {
-        if (!voiceImportPath.trim()) {
-          notify('请输入本地 .wav 或 .pt 音色文件路径', 'error')
-          return
-        }
-        setBusyLabel('正在导入自定义音色包...')
-        try {
-          const res = await connFetch('/api/video-workbench/voices/import', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sourcePath: voiceImportPath.trim(),
-              name: voiceImportName.trim() || undefined,
-              gender: voiceImportGender,
-            }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`导入音色失败: ${data.error}`, 'error')
-            return
-          }
-          setVoiceCatalog(data.voiceCatalog || [])
-          setVoiceImportPath('')
-          setVoiceImportName('')
-          notify('自定义音色已加入本地音色库！', 'success')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      // Handlers: 3-Mode BGM (Upload / LLM Code / IndexTTS-2.5), Voice Cloning Lab, Publish Pack & Vendor Motion
-      const handleUploadBgmFile = async (file) => {
-        if (!activeProjectDir || !file) return
-        setBusyLabel(`正在上传背景音乐「${file.name}」...`)
-        try {
-          const dataBase64 = await readFileAsBase64(file)
-          const res = await connFetch('/api/video-workbench/bgm/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              projectDir: activeProjectDir,
-              fileName: file.name,
-              dataBase64,
-            }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`上传 BGM 失败: ${data.error}`, 'error')
-            return
-          }
-          setDirectorForm((prev) => ({ ...prev, bgmMode: 'uploaded' }))
-          setAssetVersion((v) => v + 1)
-          await refreshState(activeProjectDir)
-          notify(`已切换为自由上传 BGM「${data.asset?.name || file.name}」（混音时人声进入会自动压低配乐音量）`, 'success')
-        } catch (err) {
-          notify(`上传 BGM 出错: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleLlmComposeBgm = async () => {
-        if (!activeProjectDir) return
-        if (!llmConfig?.configured) {
-          setShowLlmModal(true)
-          notify('请先配置大模型接口，才能让 AI 编写配乐合成代码', 'info')
-          return
-        }
-        setBusyLabel('大模型正在编写纯 JS 数字音频合成代码并运算 48kHz 配乐...')
-        try {
-          const res = await connFetch('/api/video-workbench/audio/llm-compose', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectDir: activeProjectDir }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`AI 写配乐失败: ${data.error}`, 'error')
-            return
-          }
-          setDirectorForm((prev) => ({ ...prev, bgmMode: 'llm-coded' }))
-          setBgmComposePreviewUrl(data.previewUrl || '')
-          setAssetVersion((v) => v + 1)
-          await refreshState(activeProjectDir)
-          notify(`AI 配乐代码已完成写入 (${data.relScriptPath}) 并生成试听母带`, 'success')
-        } catch (err) {
-          notify(`AI 写配乐出错: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleTtsComposeBgm = async () => {
-        if (!activeProjectDir) return
-        setBusyLabel('IndexTTS-2.5 正在用选定音色合成氛围音乐垫底...')
-        try {
-          const res = await connFetch('/api/video-workbench/audio/tts-compose', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              projectDir: activeProjectDir,
-              promptText: directorForm.bgmTtsPrompt || script?.title || '深沉空灵氛围音景',
-              voiceId: directorForm.voiceId || 'auto',
-              mode: 'bgm-pad',
-              durationSec: Math.min(18, Math.max(6, Number(script?.totalDurationSec) || 10)),
-              emotion: '深沉',
-            }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`配音引擎作曲失败: ${data.error}`, 'error')
-            return
-          }
-          setDirectorForm((prev) => ({ ...prev, bgmMode: 'tts-engine' }))
-          setBgmComposePreviewUrl(data.previewUrl || '')
-          setAssetVersion((v) => v + 1)
-          await refreshState(activeProjectDir)
-          notify('IndexTTS-2.5 已合成氛围音景并绑定为主配乐！', 'success')
-        } catch (err) {
-          notify(`配音引擎作曲失败: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleStopMicRecord = () => {
-        if (micTimerRef.current) {
-          clearInterval(micTimerRef.current)
-          micTimerRef.current = null
-        }
-        try {
-          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-            mediaRecorderRef.current.stop()
-          }
-        } catch {}
-        setMicRecording(false)
-      }
-
-      const handleStartMicRecord = async () => {
-        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-          notify('当前浏览器或环境不支持麦克风直录，请切换到「上传本地音频」选择录音文件', 'error')
-          return
-        }
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-          micChunksRef.current = []
-          const mr = new MediaRecorder(stream)
-          mediaRecorderRef.current = mr
-          mr.ondataavailable = (ev) => {
-            if (ev.data && ev.data.size > 0) micChunksRef.current.push(ev.data)
-          }
-          mr.onstop = async () => {
-            stream.getTracks().forEach((t) => t.stop())
-            const blob = new Blob(micChunksRef.current, { type: mr.mimeType || 'audio/webm' })
-            const b64 = await readFileAsBase64(blob)
-            setRecordedB64(b64)
-            setRecordedFileName(`mic-clone-${Date.now()}.webm`)
-            if (!cloneVoiceName.trim()) setCloneVoiceName(`我的声音-${new Date().toTimeString().slice(0, 5).replace(':', '')}`)
-            notify('麦克风采样完成！点击「生成并加入专属音色库」即可立即使用与试听', 'success')
-          }
-          mr.start(250)
-          setMicRecording(true)
-          setMicSeconds(0)
-          micTimerRef.current = setInterval(() => {
-            setMicSeconds((s) => {
-              if (s + 1 >= 15) {
-                handleStopMicRecord()
-                return 15
-              }
-              return s + 1
-            })
-          }, 1000)
-        } catch (err) {
-          notify(`无法开启麦克风 (${err.message})，可改用「上传本地音频」导入`, 'error')
-        }
-      }
-
-      const handlePickCloneFile = async (file) => {
-        if (!file) return
-        const b64 = await readFileAsBase64(file)
-        setRecordedB64(b64)
-        setRecordedFileName(file.name)
-        if (!cloneVoiceName.trim()) {
-          setCloneVoiceName(file.name.replace(/\.[^.]+$/, ''))
-        }
-        notify(`已载入参考人声文件「${file.name}」，点击提交即可完成降噪与音色克隆`, 'info')
-      }
-
-      const handleSubmitVoiceClone = async () => {
-        if (cloneSubMode === 'path') {
-          if (!voiceImportPath.trim()) {
-            notify('请填写本机参考音频路径 (.wav/.mp3/.pt)', 'error')
-            return
-          }
-          setVoiceImportName(cloneVoiceName || voiceImportName)
-          setVoiceImportGender(cloneVoiceGender)
-          await handleImportVoicePack()
-          return
-        }
-        if (!recordedB64) {
-          notify('请先录制 5–12 秒清晰人声，或选择一个本地参考音频文件', 'error')
-          return
-        }
-        setBusyLabel('正在用 FFmpeg 执行 80Hz 滤波、去静音与响度归一标准化克隆...')
-        try {
-          const res = await connFetch('/api/video-workbench/voices/clone-upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              audioBase64: recordedB64,
-              fileName: recordedFileName || 'voice-clone.webm',
-              name: cloneVoiceName.trim() || '我的专属声音',
-              gender: cloneVoiceGender,
-              promptText: cloneVoicePrompt.trim(),
-              stripSilence: true,
-            }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`声音克隆入库失败: ${data.error}`, 'error')
-            return
-          }
-          setVoiceCatalog(data.voiceCatalog || [])
-          setCloneAuditionVoiceId(data.voice?.id || '')
-          setRecordedB64('')
-          setRecordedFileName('')
-          notify(`声音克隆成功！音色「${data.voice?.name}」(${data.durationSec}s 有效人声) 已入库，可点击下方即时试听`, 'success')
-        } catch (err) {
-          notify(`声音克隆失败: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleAuditionClonedVoice = async (overrideId) => {
-        const vid =
-          overrideId ||
-          cloneAuditionVoiceId ||
-          voiceCatalog.find((v) => v.isCloned || v.id?.startsWith('clone-') || v.category === '专属声纹克隆')?.id ||
-          'auto'
-        setBusyLabel(`IndexTTS-2.5 正在实时克隆合成试听...`)
-        try {
-          const res = await connFetch('/api/video-workbench/voices/clone-preview', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              voiceId: vid,
-              text: cloneAuditionText.trim(),
-              emotion: '温暖',
-            }),
-          })
-          const data = await res.json()
-          if (!data.ok || !data.audioDataUrl) {
-            notify(`实时试听合成失败: ${data.error || '未返回音频流'}`, 'error')
-            return
-          }
-          setCloneAuditionUrl(data.audioDataUrl)
-          setCloneAuditionVoiceId(data.voiceUsed || vid)
-          if (previewAudioRef.current) {
-            previewAudioRef.current.src = data.audioDataUrl
-            previewAudioRef.current.play().catch(() => {})
-            setPlayingVoiceId(data.voiceUsed || vid)
-          }
-          notify(`克隆声线试听生成完成 (${data.durationSec || ''}s)`, 'success')
-        } catch (err) {
-          notify(`实时试听出错: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleExportPublishPack = async (overridePlatform) => {
-        if (!activeProjectDir) return
-        setBusyLabel('正在打包平台封面图、三×三质检墙、标题标签与 AI 合规说明...')
-        try {
-          const res = await connFetch('/api/video-workbench/publish-pack', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              projectDir: activeProjectDir,
-              platform: overridePlatform || directorForm.targetPlatform || 'universal',
-            }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`生成发布包失败: ${data.error}`, 'error')
-            return
-          }
-          setPublishPackResult(data)
-          notify(`平台发布包已导出至: ${data.packDir}`, 'success')
-        } catch (err) {
-          notify(`生成发布包失败: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleImportVendorMotion = async () => {
-        if (!activeProjectDir || !vendorSourceDir.trim()) {
-          notify('请填写 .motion 或外部 HTML 动效模板目录路径', 'error')
-          return
-        }
-        setBusyLabel('正在使用无头 Chromium 隔离渲染外部动效模板并剥离音轨 (-an)...')
-        try {
-          const res = await connFetch('/api/video-workbench/vendor/import', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              projectDir: activeProjectDir,
-              sourceDir: vendorSourceDir.trim(),
-              name: vendorName.trim() || undefined,
-              durationSec: Number(vendorDurationSec) || 4,
-            }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`隔离渲染导入失败: ${data.error}`, 'error')
-            return
-          }
-          setShowVendorModal(false)
-          setVendorSourceDir('')
-          setVendorName('')
-          setAssetVersion((v) => v + 1)
-          await refreshState(activeProjectDir)
-          notify(`外部动效片段已隔离压制并导入至「${data.assetPath}」`, 'success')
-        } catch (err) {
-          notify(`导入 .motion 出错: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      // -----------------------------------------------------------------------
-      // v5 AI AGENT COMMAND DECK HANDLERS (Pipeline, Task Center, Teleprompter, Avatar, Skins)
-      // -----------------------------------------------------------------------
-      const currentTaskRun = useMemo(() => {
-        if (!taskRuns.length) return null
-        if (selectedRunId) {
-          const hit = taskRuns.find((r) => r.id === selectedRunId)
-          if (hit) return hit
-        }
-        return taskRuns.find((r) => r.status === 'running' || r.status === 'paused') || taskRuns[0]
-      }, [taskRuns, selectedRunId])
-
-      const hasLiveTask = useMemo(
-        () => taskRuns.some((r) => r.status === 'running' || r.status === 'paused' || r.status === 'queued'),
-        [taskRuns],
-      )
-
-      const fetchTaskRuns = useCallback(
-        async (dir = activeProjectDir) => {
-          if (!dir) return
-          try {
-            const res = await connFetch(`/api/video-workbench/tasks?projectDir=${encodeURIComponent(dir)}`)
-            const data = await res.json()
-            if (data.ok && Array.isArray(data.runs)) {
-              setTaskRuns(data.runs)
-              if (data.runs[0]?.id) {
-                setSelectedRunId((prev) => prev || data.runs[0].id)
-              }
-            }
-          } catch {}
-        },
-        [connFetch, activeProjectDir],
-      )
-
-      useEffect(() => {
-        if (activeProjectDir) fetchTaskRuns(activeProjectDir)
-      }, [activeProjectDir, fetchTaskRuns])
-
-      useEffect(() => {
-        if (!activeProjectDir || !hasLiveTask) return undefined
-        const timer = setInterval(async () => {
-          const prevActive = taskRuns.find((r) => r.status === 'running' || r.status === 'paused')
-          try {
-            const res = await connFetch(`/api/video-workbench/tasks?projectDir=${encodeURIComponent(activeProjectDir)}`)
-            const data = await res.json()
-            if (data.ok && Array.isArray(data.runs)) {
-              setTaskRuns(data.runs)
-              const nowLive = data.runs.some((r) => r.status === 'running' || r.status === 'paused' || r.status === 'queued')
-              if (prevActive && !nowLive) {
-                setAssetVersion((v) => v + 1)
-                await refreshState(activeProjectDir)
-              }
-            }
-          } catch {}
-        }, 1400)
-        return () => clearInterval(timer)
-      }, [activeProjectDir, hasLiveTask, connFetch])
-
-      // Teleprompter smooth scroll engine (requestAnimationFrame)
-      useEffect(() => {
-        if (!showTeleprompter || !teleAutoScroll) {
-          if (teleRafRef.current) cancelAnimationFrame(teleRafRef.current)
-          teleRafRef.current = 0
-          return undefined
-        }
-        let lastTs = 0
-        const step = (ts) => {
-          if (!lastTs) lastTs = ts
-          const dt = Math.min(100, ts - lastTs)
-          lastTs = ts
-          const box = teleBoxRef.current
-          if (box) {
-            const pxPerSec = Math.max(8, Number(teleScrollSpeed) * 42)
-            box.scrollTop += (pxPerSec * dt) / 1000
-          }
-          teleRafRef.current = requestAnimationFrame(step)
-        }
-        teleRafRef.current = requestAnimationFrame(step)
-        return () => {
-          if (teleRafRef.current) cancelAnimationFrame(teleRafRef.current)
-          teleRafRef.current = 0
-        }
-      }, [showTeleprompter, teleAutoScroll, teleScrollSpeed])
-
-      // Attach camera MediaStream whenever <video> mounts
-      useEffect(() => {
-        if (camStreaming && camVideoRef.current && camStreamRef.current) {
-          camVideoRef.current.srcObject = camStreamRef.current
-          camVideoRef.current.play().catch(() => {})
-        }
-      }, [camStreaming, showTeleprompter])
-
-      // Stop camera stream cleanly on unmount
-      useEffect(() => {
-        return () => {
-          try {
-            if (camTimerRef.current) clearInterval(camTimerRef.current)
-            if (camStreamRef.current) camStreamRef.current.getTracks().forEach((t) => t.stop())
-          } catch {}
-        }
-      }, [])
-
-      const handleStartOneClickPipeline = async (modeOverride = '', opts = {}) => {
-        if (!activeProjectDir) return
-        const chosenMode = modeOverride || directorForm.creationMode || 'ai-coded'
-        if (chosenMode === 'ai-coded' && !llmConfig?.configured) {
-          setShowLlmModal(true)
-          notify('AI 团队一键全自动成片需要先连接大模型，或改用【极速草稿预览】体验大屏协同', 'info')
-          return
-        }
-        setBusyLabel('⚡ 正在唤醒 5 大 AI Agent 战队进入全自动协同出片流程...')
-        try {
-          const uploadedMusic = projectAssets.find((a) => a.type === 'audio' && a.role === 'music')
-          const uploadedBgmPath = script?.bgm?.uploadedPath || uploadedMusic?.path || ''
-          const avatarSourceFallback =
-            avatarCfg.sourcePath ||
-            projectAssets.find((a) => a.role === 'avatar_base' || a.role === 'host_video')?.path ||
-            ''
-          const voiceCloneFallback =
-            avatarCfg.voiceSamplePath ||
-            projectAssets.find((a) => a.role === 'voice_clone')?.path ||
-            ''
-          const res = await connFetch('/api/video-workbench/pipeline/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              projectDir: activeProjectDir,
-              topic: directorForm.topic,
-              mode: chosenMode === 'schema-plan' ? 'fast-draft' : 'ai-coded',
-              engine: directorForm.engine,
-              style: directorForm.style,
-              aspectRatio: directorForm.aspectRatio,
-              quality: directorForm.quality,
-              width: Number(directorForm.customWidth) || 1920,
-              height: Number(directorForm.customHeight) || 1080,
-              targetPlatform: directorForm.targetPlatform,
-              bgmMode: directorForm.bgmMode,
-              uploadedBgmPath,
-              voiceId: directorForm.voiceId,
-              speechTempo: Number(speechTempo) || 1.0,
-              useHostVocal,
-              aiBadge: Boolean(directorForm.aiBadge),
-              avatarEnabled: Boolean(avatarCfg.enabled),
-              avatarMode: avatarCfg.mode,
-              avatarLayout: avatarCfg.layout,
-              avatarPresetId: avatarCfg.presetId,
-              avatarSourcePath: avatarSourceFallback,
-              voiceSamplePath: voiceCloneFallback,
-              avatarChromaKeyColor: avatarCfg.chromaKeyColor || '',
-              trimSeconds: Number(trimClipSec) || 0,
-              clipSpeed: Number(clipSpeedMult) || 1.0,
-              aiAuthorCode: Boolean(aiAuthorCode),
-            }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`启动协同流水线失败: ${data.error}`, 'error')
-            return
-          }
-          if (Array.isArray(data.runs)) setTaskRuns(data.runs)
-          if (data.runId) setSelectedRunId(data.runId)
-          if (!opts.stayOnCurrentTab) {
-            setActiveStep(0)
-            setWarCenterTab('map')
-          }
-          notify('⚡ 5 大 AI Agent 已进入星图作战大屏，可实时观看节点脉冲协同、日志推演与一键急停', 'success')
-        } catch (err) {
-          notify(`启动失败: ${err.message}`, 'error')
-        } finally {
-          setBusyLabel('')
-        }
-      }
-
-      const handleTaskControl = async (action, runId = currentTaskRun?.id, taskId = '') => {
-        if (!activeProjectDir && !runId) return
-        try {
-          const res = await connFetch('/api/video-workbench/tasks/control', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action,
-              runId,
-              taskId,
-              projectDir: activeProjectDir,
-            }),
-          })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`任务控制失败: ${data.error}`, 'error')
-            return
-          }
-          if (Array.isArray(data.runs)) setTaskRuns(data.runs)
-          const labelMap = {
-            pause: '已暂停流水线调度（完成当前原子步骤后挂起）',
-            resume: '已恢复执行流水线',
-            start: '已恢复执行流水线',
-            stop: '已发送停止指令并立即强杀关联子进程',
-            retry: '正在重试任务流水线',
-            'pause-all': '已暂停全部运行中任务',
-            'stop-all': '已紧急停止全部任务及子进程',
-          }
-          notify(labelMap[action] || '操作已执行', action.includes('stop') ? 'info' : 'success')
-        } catch (err) {
-          notify(`任务控制异常: ${err.message}`, 'error')
+          notify('素材已移除', 'info')
         }
       }
 
@@ -2919,15 +1806,15 @@ window.__ModuleLoader__.load({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectDir: activeProjectDir, assetId, role: newRole }),
           })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`更新素材用途失败: ${data.error}`, 'error')
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`切换角色失败: ${d.error}`, 'error')
             return
           }
           await refreshState(activeProjectDir)
-          notify(`已标记素材用途为「${newRole}」`, 'success')
+          notify(`素材角色已标定为「${newRole}」`, 'success')
         } catch (err) {
-          notify(`标记失败: ${err.message}`, 'error')
+          notify(`切换失败: ${err.message}`, 'error')
         }
       }
 
@@ -2948,68 +1835,714 @@ window.__ModuleLoader__.load({
               chromaKeyColor: avatarCfg.chromaKeyColor || '',
             }),
           })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`素材精修失败: ${data.error}`, 'error')
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`素材精修失败: ${d.error}`, 'error')
             return
           }
           setAssetVersion((v) => v + 1)
           await refreshState(activeProjectDir)
-          notify(`已完成 ${data.editedCount || 0} 份素材的构图裁切与电影调色精修`, 'success')
+          notify(`已完成 ${d.editedCount || 0} 份素材精修 (存放于 assets/edited/)`, 'success')
         } finally {
           setBusyLabel('')
         }
       }
 
-      const handleGenerateTeleprompter = async () => {
-        if (!activeProjectDir) return
-        setBusyLabel('📝 正在请大模型生成适配出镜节奏的口播提词稿...')
+      const handlePolishTopic = async () => {
+        const rawPrompt = String(directorForm.topic || '').trim()
+        if (!rawPrompt) {
+          notify('请先在框里写一句简单想法（例如：帮我做一个墨次元漫画客户端介绍片），再点 AI 润色', 'info')
+          return
+        }
+        if (!llmConfig?.configured) {
+          setShowLlmModal(true)
+          notify('请先在右上角「模型配置」连接大模型接口，才能使用 AI 润色指令', 'info')
+          return
+        }
+        setPolishingTopic(true)
         try {
-          const res = await connFetch('/api/video-workbench/teleprompter/generate', {
+          const res = await connFetch('/api/video-workbench/polish-topic', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               projectDir: activeProjectDir,
-              topic: directorForm.topic || script?.title || '个人品牌/产品介绍',
-              durationSec: 45,
-              tone: directorForm.style || 'cinematic',
+              rawPrompt,
+              style: directorForm.style,
+              aspectRatio: directorForm.aspectRatio,
+              targetPlatform: directorForm.targetPlatform,
+              pacingMode: directorForm.pacingMode,
+              creationMode: directorForm.creationMode,
+              narrationMode: directorForm.narrationMode,
             }),
           })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`生成提词稿失败: ${data.error}`, 'error')
+          const d = await res.json()
+          if (!d.ok || !d.polishedTopic) {
+            notify(`AI 润色失败: ${d.error || '未返回有效指令'}`, 'error')
             return
           }
-          setTeleLinesText(data.text || (data.lines || []).join('\n'))
-          if (teleBoxRef.current) teleBoxRef.current.scrollTop = 0
-          notify(`已加载口播提词稿 (${data.model || '脚本引擎'})，可点击「开始滚动」边看边录`, 'success')
+          setUnpolishedTopicBackup(rawPrompt)
+          setDirectorForm((p) => ({ ...p, topic: d.polishedTopic }))
+          if (activeProjectDir && script) {
+            try {
+              await connFetch('/api/video-workbench/script', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  projectDir: activeProjectDir,
+                  script: { ...script, topic: d.polishedTopic, goal: d.polishedTopic },
+                  regenerateHtml: false,
+                  regenerateCode: false,
+                }),
+              })
+            } catch {}
+          }
+          notify(`✨ 已由 ${d.model || 'AI 大模型'} 润色生成专业导演指令并覆盖替换！`, 'success')
+        } catch (err) {
+          notify(`AI 润色请求异常: ${err.message}`, 'error')
+        } finally {
+          setPolishingTopic(false)
+        }
+      }
+
+      const handleSaveAvatarEndpointConfig = async () => {
+        try {
+          const res = await connFetch('/api/video-workbench/avatar/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(avatarEndpointForm),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`保存数字人接口失败: ${d.error}`, 'error')
+            return
+          }
+          if (d.avatarProvider) setAvatarProvider(d.avatarProvider)
+          setShowAvatarEndpointCfg(false)
+          notify(d.avatarProvider?.neuralReady ? '✓ 外接唇形驱动服务已保存启用' : '已切换为内置本地声波驱动/抠像引擎', 'success')
+        } catch (err) {
+          notify(`保存失败: ${err.message}`, 'error')
+        }
+      }
+
+      // One-Click 4-Agent Collaborative Pipeline Launch
+      const handleStartOneClickPipeline = async (overrideMode) => {
+        if (!activeProjectDir) return
+        const modeToRun = overrideMode || directorForm.creationMode || 'ai-coded'
+        if (modeToRun === 'ai-coded' && !llmConfig?.configured) {
+          setShowLlmModal(true)
+          notify('尚未配置 AI 大模型接口，请先填入 API Key 或切换为「本地草稿预演」一键生成', 'info')
+          return
+        }
+        setBusyLabel('🚀 正在唤醒 4 位 AI Agent 作战团队流水线...')
+        try {
+          const uploadedMusicAsset = projectAssets.find((a) => a.role === 'music')
+          const res = await connFetch('/api/video-workbench/pipeline/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectDir: activeProjectDir,
+              topic: directorForm.topic.trim() || script?.title || 'AI 影视概念短片',
+              mode: modeToRun,
+              engine: directorForm.engine,
+              style: directorForm.style,
+              aspectRatio: directorForm.aspectRatio,
+              quality: directorForm.quality,
+              width: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customWidth) : undefined,
+              height: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customHeight) : undefined,
+              targetPlatform: directorForm.targetPlatform,
+              bgmMode: directorForm.bgmMode,
+              narrationMode: directorForm.narrationMode,
+              pacingMode: directorForm.pacingMode || 'auto',
+              uploadedBgmPath: script?.bgm?.uploadedPath || uploadedMusicAsset?.path || '',
+              voiceId: directorForm.voiceId,
+              speechTempo: Number(speechTempo) || 1.0,
+              useHostVocal: Boolean(useHostVocal),
+              aiBadge: Boolean(directorForm.aiBadgeEnabled),
+              aiBadgeEnabled: Boolean(directorForm.aiBadgeEnabled),
+              aiBadgePosition: directorForm.aiBadgePosition || 'top-right',
+              aiBadgeText: directorForm.aiBadgeText || '',
+              avatarEnabled: Boolean(avatarCfg.enabled),
+              avatarMode: avatarCfg.mode,
+              avatarLayout: avatarCfg.layout,
+              avatarPresetId: avatarCfg.presetId,
+              avatarSourcePath: avatarCfg.sourcePath,
+              voiceSamplePath: avatarCfg.voiceSamplePath,
+              avatarChromaKeyColor: avatarCfg.chromaKeyColor,
+              trimSeconds: Number(trimClipSec) || 0,
+              clipSpeed: Number(clipSpeedMult) || 1.0,
+              aiAuthorCode: Boolean(aiAuthorCode),
+            }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`流水线启动失败: ${d.error}`, 'error')
+            return
+          }
+          if (Array.isArray(d.runs)) setTaskRuns(d.runs)
+          if (d.runId) setSelectedRunId(d.runId)
+          setWarCenterTab('theater')
+          notify('⚡ 4 位 AI Agent 已全速启动！你可在大屏直观观看实时产出与交接过程', 'success')
+        } catch (err) {
+          notify(`启动失败: ${err.message}`, 'error')
         } finally {
           setBusyLabel('')
         }
       }
 
-      const handleStopWebcam = () => {
+      const handleTaskControl = async (action, runId = currentTaskRun?.id, taskId = '') => {
+        if (!activeProjectDir) return
         try {
-          if (camTimerRef.current) {
-            clearInterval(camTimerRef.current)
-            camTimerRef.current = null
+          const res = await connFetch('/api/video-workbench/tasks/control', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, runId, projectDir: activeProjectDir, taskId }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(d.error || '控制指令执行失败', 'error')
+            return
           }
-          if (camRecorderRef.current && camRecorderRef.current.state === 'recording') {
-            camRecorderRef.current.stop()
+          if (Array.isArray(d.runs)) setTaskRuns(d.runs)
+          const map = { pause: '已暂停任务', resume: '已恢复执行', stop: '已停止任务与子进程', retry: '已发起重新执行', 'pause-all': '已全部暂停', 'stop-all': '已紧急停止全部任务' }
+          notify(map[action] || '操作成功', action.includes('stop') ? 'info' : 'success')
+        } catch (err) {
+          notify(`任务控制异常: ${err.message}`, 'error')
+        }
+      }
+
+      // Direct Local Draft & Direct AI Coding (Precision Studio Buttons)
+      const handlePlanLocalDraft = async (andRender = false) => {
+        if (!activeProjectDir) return
+        setBusyProgress(8)
+        setBusyLabel(andRender ? '正在快速生成本地草稿成片 (含配音与 MP4)...' : '正在快速构建本地导演剧本草稿...')
+        try {
+          const endpoint = andRender ? '/api/video-workbench/produce' : '/api/video-workbench/plan'
+          const res = await connFetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              async: Boolean(andRender),
+              projectDir: activeProjectDir,
+              sources: assetDirInput.trim() || undefined,
+              topic: directorForm.topic.trim() || script?.title || '个人品牌介绍',
+              style: directorForm.style,
+              engine: directorForm.engine,
+              aspectRatio: directorForm.aspectRatio,
+              quality: directorForm.quality,
+              width: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customWidth) : undefined,
+              height: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customHeight) : undefined,
+              aiBadge: Boolean(directorForm.aiBadgeEnabled),
+              aiBadgeEnabled: Boolean(directorForm.aiBadgeEnabled),
+              aiBadgePosition: directorForm.aiBadgePosition || 'top-right',
+              aiBadgeText: directorForm.aiBadgeText || '',
+              pacingMode: directorForm.pacingMode || 'auto',
+              bgmMode: directorForm.bgmMode,
+              targetPlatform: directorForm.targetPlatform,
+              fps: directorForm.fps,
+              voiceId: directorForm.voiceId,
+            }),
+          })
+          const initData = await res.json()
+          if (!initData.ok) {
+            notify(`草稿生成失败: ${initData.error}`, 'error')
+            return
           }
+          const finalData = initData.jobId ? await pollBackgroundJob(initData.jobId) : initData
+          setAssetVersion((v) => v + 1)
+          setSelectedSceneIdx(0)
+          await refreshState(activeProjectDir)
+          goToStudioStep(andRender ? 4 : 3)
+          notify(
+            andRender
+              ? `本地演练成片已输出 (${finalData.script?.width}×${finalData.script?.height})`
+              : `已生成 ${finalData.sceneCount} 幕剧本草稿，请先预览`,
+            'success',
+          )
+        } catch (err) {
+          notify(`草稿生成失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+          setBusyProgress(0)
+        }
+      }
+
+      const handleAiCodingProduce = async (forceDraftRef = directorForm.useDraftReference) => {
+        if (!activeProjectDir) return
+        if (!llmConfig?.configured) {
+          setShowLlmModal(true)
+          notify('请先配置您的大模型接口再启动 AI 编程创作', 'info')
+          return
+        }
+        setBusyProgress(6)
+        setBusyLabel(`大模型 (${llmConfig.model}) 正在编写动画源码与音轨并渲染...`)
+        try {
+          const res = await connFetch('/api/video-workbench/ai-produce', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              async: true,
+              projectDir: activeProjectDir,
+              sources: assetDirInput.trim() || undefined,
+              topic: directorForm.topic.trim() || script?.title || '',
+              userPrompt: directorForm.topic.trim() || script?.goal || '',
+              engine: directorForm.engine,
+              aspectRatio: directorForm.aspectRatio,
+              quality: directorForm.quality,
+              width: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customWidth) : undefined,
+              height: directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom' ? Number(directorForm.customHeight) : undefined,
+              aiBadge: Boolean(directorForm.aiBadgeEnabled),
+              aiBadgeEnabled: Boolean(directorForm.aiBadgeEnabled),
+              aiBadgePosition: directorForm.aiBadgePosition || 'top-right',
+              aiBadgeText: directorForm.aiBadgeText || '',
+              pacingMode: directorForm.pacingMode || 'auto',
+              creationMode: directorForm.creationMode,
+              bgmMode: directorForm.bgmMode,
+              narrationMode: directorForm.narrationMode,
+              bgmTtsPrompt: directorForm.bgmTtsPrompt,
+              targetPlatform: directorForm.targetPlatform,
+              useDraftReference: forceDraftRef,
+              fps: directorForm.fps,
+              voiceId: directorForm.voiceId,
+              render: true,
+            }),
+          })
+          const initData = await res.json()
+          if (!initData.ok) {
+            notify(`AI 编程任务启动失败: ${initData.error}`, 'error')
+            return
+          }
+          const finalData = initData.jobId ? await pollBackgroundJob(initData.jobId) : initData
+          setAssetVersion((v) => v + 1)
+          setSelectedSceneIdx(0)
+          await refreshState(activeProjectDir)
+          goToStudioStep(4)
+          notify(`大模型 AI 编程出片完成 (修复轮次 ${finalData.buildLog?.repairRoundsUsed ?? 0})`, 'success')
+        } catch (err) {
+          notify(`AI 编程出片失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+          setBusyProgress(0)
+        }
+      }
+
+      // Step 3 Scene Editing, Voice Synth & Refine
+      const updateSelectedScene = (patch) => {
+        if (!script || !selectedScene) return
+        const nextScenes = script.scenes.map((sc, idx) => (idx === selectedSceneIdx ? { ...sc, ...patch } : sc))
+        setScript({ ...script, scenes: nextScenes })
+        setScriptDirty(true)
+      }
+
+      const handleSaveScriptEdits = async () => {
+        if (!activeProjectDir || !script) return
+        setBusyLabel('正在保存剧本修改并同步源码...')
+        try {
+          const res = await connFetch('/api/video-workbench/script', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectDir: activeProjectDir, script, regenerateCode: true }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`保存失败: ${d.error}`, 'error')
+            return
+          }
+          setScript(d.script)
+          setScriptDirty(false)
+          setAssetVersion((v) => v + 1)
+          notify('修改已同步至预览画面', 'success')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleUpdateFormatQuick = async (nextRatio, nextQuality, nextPlatform) => {
+        if (!activeProjectDir) return
+        if (nextPlatform) setDirectorForm((p) => ({ ...p, targetPlatform: nextPlatform }))
+        setBusyLabel('正在更新视频比例、平台安全区与画面代码...')
+        try {
+          const res = await connFetch('/api/video-workbench/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectDir: activeProjectDir,
+              action: 'update-format',
+              aspectRatio: nextRatio,
+              quality: nextQuality,
+              ...(nextPlatform ? { targetPlatform: nextPlatform } : {}),
+            }),
+          })
+          const d = await res.json()
+          if (d.ok) {
+            setAssetVersion((v) => v + 1)
+            await refreshState(activeProjectDir)
+            notify(d.dimensions?.reason || '画幅与安全区基准已更新', 'success')
+          }
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleSynthesizeSceneTts = async (scene) => {
+        if (!activeProjectDir || !scene) return
+        setBusyLabel(`IndexTTS-2.5 正在配音「${scene.title}」...`)
+        try {
+          if (scriptDirty) await handleSaveScriptEdits()
+          const res = await connFetch('/api/video-workbench/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectDir: activeProjectDir,
+              action: 'tts-scene',
+              sceneId: scene.id,
+              text: scene.narration,
+              emotion: scene.emotion || '平静',
+              voiceId: scene.voiceId || 'auto',
+            }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`配音失败: ${d.error}`, 'error')
+            return
+          }
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify(`配音完成 (${d.result?.durationSec || ''}s) 并已同步时间轴`, 'success')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleAiRefine = async (overrideInstruction) => {
+        const finalInstruction = typeof overrideInstruction === 'string' && overrideInstruction.trim() ? overrideInstruction.trim() : refinePrompt.trim()
+        if (!activeProjectDir || !finalInstruction) {
+          notify('请输入你希望 AI 改哪里的具体要求', 'error')
+          return
+        }
+        if (!llmConfig?.configured) {
+          setRefinePrompt(finalInstruction)
+          setShowLlmModal(true)
+          notify('已为您保留指令，请先配置大模型再发起精修', 'info')
+          return
+        }
+        setBusyProgress(10)
+        setBusyLabel(`大模型正在按您的要求精修${refineScope === 'scene' ? `「${selectedScene?.title || '当前幕'}」` : '全片'}...`)
+        try {
+          const res = await connFetch('/api/video-workbench/ai-refine', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              async: true,
+              projectDir: activeProjectDir,
+              sceneId: refineScope === 'scene' ? selectedScene?.id || '' : '',
+              instruction: finalInstruction,
+              render: true,
+            }),
+          })
+          const initData = await res.json()
+          if (!initData.ok) {
+            notify(`AI 精修启动失败: ${initData.error}`, 'error')
+            return
+          }
+          await pollBackgroundJob(initData.jobId)
+          setRefinePrompt('')
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify('AI 局部精修已生效！若需恢复原版可随时点「撤回」', 'success')
+        } catch (err) {
+          notify(`AI 精修失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+          setBusyProgress(0)
+        }
+      }
+
+      const handleRollbackVersion = async () => {
+        if (!activeProjectDir) return
+        setBusyLabel('正在恢复上一个保存快照...')
+        try {
+          const res = await connFetch('/api/video-workbench/ai-refine', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectDir: activeProjectDir, rollback: true }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(d.message || d.error || '暂无可撤回的历史版本', 'info')
+            return
+          }
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify('已撤回至上一版本快照', 'success')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleAiMasterVoice = async (sceneId = '') => {
+        if (!activeProjectDir) return
+        setBusyProgress(12)
+        setBusyLabel(sceneId ? `正在对分镜 ${sceneId} 执行 AI 声学修音...` : '正在执行全片 AI 声学修音与响度标准化 (-14 LUFS)...')
+        try {
+          const res = await connFetch('/api/video-workbench/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ async: true, action: 'ai-master-voice', projectDir: activeProjectDir, sceneIds: sceneId ? [sceneId] : [], useLlm: true }),
+          })
+          const initData = await res.json()
+          if (!initData.ok) {
+            notify(`修音失败: ${initData.error}`, 'error')
+            return
+          }
+          const finalData = initData.jobId ? await pollBackgroundJob(initData.jobId) : initData
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify(`声学修音完成 (已处理 ${finalData.report?.scenesCount || 0} 幕并重混母带)`, 'success')
+        } catch (err) {
+          notify(`AI 修音失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+          setBusyProgress(0)
+        }
+      }
+
+      const handleOpenCodeDrawer = async () => {
+        if (!activeProjectDir) return
+        const res = await connFetch(`/api/video-workbench/code?projectDir=${encodeURIComponent(activeProjectDir)}`)
+        const d = await res.json()
+        if (d.ok) {
+          setCodeFiles(d.files || [])
+          setSelectedCodePath((d.files || [])[0]?.path || '')
+          setShowCodeDrawer(true)
+        }
+      }
+
+      // Render, QA & Publish Pack
+      const handleRenderMp4 = async (draft720p = false) => {
+        if (!activeProjectDir) return
+        if (scriptDirty) await handleSaveScriptEdits()
+        setBusyProgress(6)
+        setBusyLabel(draft720p ? '正在快速渲染 720P 预览视频...' : '正在渲染全高清成品 MP4 并运行音画质检...')
+        try {
+          const res = await connFetch('/api/video-workbench/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ async: true, projectDir: activeProjectDir, action: 'render', engine: script?.engine || directorForm.engine, draft720p }),
+          })
+          const initData = await res.json()
+          if (!initData.ok) {
+            notify(`渲染启动失败: ${initData.error}`, 'error')
+            return
+          }
+          await pollBackgroundJob(initData.jobId)
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          goToStudioStep(4)
+          notify('高清成片 MP4 导出并质检完成！', 'success')
+        } catch (err) {
+          notify(`渲染失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+          setBusyProgress(0)
+        }
+      }
+
+      const handleRunQaOnly = async () => {
+        if (!activeProjectDir) return
+        setBusyLabel('正在运行 FFmpeg 黑屏检测与 -14 LUFS 响度校验...')
+        try {
+          const res = await connFetch('/api/video-workbench/qa', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectDir: activeProjectDir }),
+          })
+          const d = await res.json()
+          if (d.ok) {
+            setQaReport(d.qa)
+            notify(d.qa.passed ? '全部音画质检项目均达标 ✓' : '质检已完成，请查阅指标建议', d.qa.passed ? 'success' : 'info')
+          }
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleExportPublishPack = async (overridePlat) => {
+        if (!activeProjectDir) return
+        setBusyLabel('正在打包高清封面图、推荐标题、标签与合规清单...')
+        try {
+          const res = await connFetch('/api/video-workbench/publish-pack', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectDir: activeProjectDir, platform: overridePlat || directorForm.targetPlatform || 'universal' }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`打包失败: ${d.error}`, 'error')
+            return
+          }
+          setPublishPackResult(d)
+          notify(`发布素材包已输出至 ${d.packDir}`, 'success')
+        } catch (err) {
+          notify(`打包失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      // 3-Mode Audio / BGM
+      const handleUploadBgmFile = async (file) => {
+        if (!activeProjectDir || !file) return
+        setBusyLabel(`正在高速导入配乐「${file.name}」...`)
+        try {
+          const res = await connFetch(`/api/video-workbench/bgm/upload?projectDir=${encodeURIComponent(activeProjectDir)}&fileName=${encodeURIComponent(file.name)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: file,
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`上传 BGM 失败: ${d.error}`, 'error')
+            return
+          }
+          setDirectorForm((p) => ({ ...p, bgmMode: 'uploaded' }))
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify(`已绑定背景音乐「${d.asset?.name || file.name}」（混音时人声进入自动闪避压低）`, 'success')
+        } catch (err) {
+          notify(`上传 BGM 出错: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleLlmComposeBgm = async () => {
+        if (!activeProjectDir) return
+        if (!llmConfig?.configured) {
+          setShowLlmModal(true)
+          notify('请先配置大模型接口，才能让 AI 编写纯代码配乐', 'info')
+          return
+        }
+        setBusyLabel('AI 大模型正在编写纯 JS 合成器代码并生成 48kHz 配乐母带...')
+        try {
+          const res = await connFetch('/api/video-workbench/audio/llm-compose', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectDir: activeProjectDir }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`AI 写配乐失败: ${d.error}`, 'error')
+            return
+          }
+          setDirectorForm((p) => ({ ...p, bgmMode: 'llm-coded' }))
+          setBgmComposePreviewUrl(d.previewUrl || '')
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify(`AI 配乐合成完毕 (${d.relScriptPath})，可直接点击播放器试听`, 'success')
+        } catch (err) {
+          notify(`AI 写配乐出错: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleTtsComposeBgm = async () => {
+        if (!activeProjectDir) return
+        setBusyLabel('IndexTTS-2.5 正在合成沉浸式氛围音景 BGM...')
+        try {
+          const res = await connFetch('/api/video-workbench/audio/tts-compose', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectDir: activeProjectDir,
+              promptText: directorForm.bgmTtsPrompt || script?.title || '深沉空灵氛围音景',
+              voiceId: directorForm.voiceId || 'auto',
+              mode: 'bgm-pad',
+              durationSec: Math.min(18, Math.max(6, Number(script?.totalDurationSec) || 10)),
+              emotion: '深沉',
+            }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`配音引擎作曲失败: ${d.error}`, 'error')
+            return
+          }
+          setDirectorForm((p) => ({ ...p, bgmMode: 'tts-engine' }))
+          setBgmComposePreviewUrl(d.previewUrl || '')
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify('IndexTTS-2.5 氛围音景已绑定为主配乐', 'success')
+        } catch (err) {
+          notify(`作曲失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      // Teleprompter Camera Studio (with WebAudio VU Meter + 3-2-1 Countdown + Keep/Retake Preview)
+      const cleanupCamAudioMeter = () => {
+        if (camVuRafRef.current) {
+          cancelAnimationFrame(camVuRafRef.current)
+          camVuRafRef.current = 0
+        }
+        try {
+          camAudioCtxRef.current?.close()
+        } catch {}
+        camAudioCtxRef.current = null
+        setCamMicLevel(0)
+      }
+
+      const startCamAudioMeter = (stream) => {
+        cleanupCamAudioMeter()
+        try {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext
+          if (!AudioCtx || !stream.getAudioTracks().length) return
+          const ac = new AudioCtx()
+          camAudioCtxRef.current = ac
+          const src = ac.createMediaStreamSource(stream)
+          const analyser = ac.createAnalyser()
+          analyser.fftSize = 256
+          src.connect(analyser)
+          const buf = new Uint8Array(analyser.frequencyBinCount)
+          const tick = () => {
+            analyser.getByteFrequencyData(buf)
+            let sum = 0
+            for (let i = 0; i < buf.length; i += 1) sum += buf[i]
+            const avg = sum / buf.length
+            setCamMicLevel(Math.min(100, Math.round((avg / 110) * 100)))
+            camVuRafRef.current = requestAnimationFrame(tick)
+          }
+          camVuRafRef.current = requestAnimationFrame(tick)
+        } catch {}
+      }
+
+      const handleStopWebcam = () => {
+        if (camCountdownTimerRef.current) {
+          clearInterval(camCountdownTimerRef.current)
+          camCountdownTimerRef.current = null
+        }
+        setTeleCountdown(0)
+        if (camTimerRef.current) {
+          clearInterval(camTimerRef.current)
+          camTimerRef.current = null
+        }
+        try {
+          if (camRecorderRef.current && camRecorderRef.current.state === 'recording') camRecorderRef.current.stop()
           if (camStreamRef.current) {
             camStreamRef.current.getTracks().forEach((t) => t.stop())
             camStreamRef.current = null
           }
         } catch {}
+        cleanupCamAudioMeter()
         setCamStreaming(false)
         setCamRecording(false)
+        setTeleAutoScroll(false)
       }
 
       const handleStartWebcam = async () => {
         setCamError('')
         if (!navigator.mediaDevices?.getUserMedia) {
-          setCamError('当前宿主环境不支持摄像头/麦克风采集（MediaDevices 不可用）')
+          setCamError('当前环境不支持摄像头或麦克风访问 (MediaDevices 不可用)')
           return
         }
         try {
@@ -3019,6 +2552,7 @@ window.__ModuleLoader__.load({
           })
           camStreamRef.current = stream
           setCamStreaming(true)
+          startCamAudioMeter(stream)
           setTimeout(() => {
             if (camVideoRef.current) {
               camVideoRef.current.srcObject = stream
@@ -3026,16 +2560,13 @@ window.__ModuleLoader__.load({
             }
           }, 40)
         } catch (err) {
-          setCamError(`无法开启摄像头或麦克风: ${err.message}`)
+          setCamError(`无法开启摄像头: ${err.message}`)
           notify(`摄像头打开失败: ${err.message}`, 'error')
         }
       }
 
-      const handleStartCamRecord = () => {
-        if (!camStreamRef.current || typeof MediaRecorder === 'undefined') {
-          notify('请先点击「开启摄像头预览」授权音视频设备', 'error')
-          return
-        }
+      const beginActualCamRecording = () => {
+        if (!camStreamRef.current || typeof MediaRecorder === 'undefined') return
         camChunksRef.current = []
         const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
           ? 'video/webm;codecs=vp9,opus'
@@ -3047,7 +2578,7 @@ window.__ModuleLoader__.load({
         mr.ondataavailable = (ev) => {
           if (ev.data && ev.data.size > 0) camChunksRef.current.push(ev.data)
         }
-        mr.onstop = async () => {
+        mr.onstop = () => {
           if (camTimerRef.current) {
             clearInterval(camTimerRef.current)
             camTimerRef.current = null
@@ -3055,41 +2586,13 @@ window.__ModuleLoader__.load({
           setCamRecording(false)
           setTeleAutoScroll(false)
           const blob = new Blob(camChunksRef.current, { type: mr.mimeType || 'video/webm' })
-          if (blob.size < 256 || !activeProjectDir) return
-          setBusyLabel('📹 正在保存出镜录像至 assets/recordings/ 并测算时长...')
-          try {
-            const dataBase64 = await readFileAsBase64(blob)
-            const fileName = `host-cam-${Date.now()}.webm`
-            const res = await connFetch('/api/video-workbench/assets/recording', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                projectDir: activeProjectDir,
-                fileName,
-                role: camTargetRole,
-                extractVoiceClone: Boolean(camExtractClone),
-                dataBase64,
-              }),
-            })
-            const data = await res.json()
-            if (!data.ok) {
-              notify(`保存录制失败: ${data.error}`, 'error')
-              return
-            }
-            if (camTargetRole === 'avatar_base') {
-              setAvatarCfg((prev) => ({ ...prev, enabled: true, mode: 'cloned-human', sourcePath: data.relPath }))
-            }
-            setAssetVersion((v) => v + 1)
-            await refreshState(activeProjectDir)
-            notify(
-              `出镜录像已保存 (${Number(data.durationSec || 0).toFixed(1)}s)${data.clonedVoice ? ` · 已同步克隆声纹「${data.clonedVoice.name}」` : ''}`,
-              'success',
-            )
-          } catch (err) {
-            notify(`保存录像异常: ${err.message}`, 'error')
-          } finally {
-            setBusyLabel('')
-          }
+          if (blob.size < 256) return
+          const url = URL.createObjectURL(blob)
+          setPendingRecPreview((prev) => {
+            if (prev?.url) URL.revokeObjectURL(prev.url)
+            return { blob, url, fileName: `host-cam-${Date.now()}.webm` }
+          })
+          notify('录制结束！请下方回看效果，满意再点「确认入库」', 'info')
         }
         mr.start(300)
         setCamSeconds(0)
@@ -3099,24 +2602,119 @@ window.__ModuleLoader__.load({
         camTimerRef.current = setInterval(() => setCamSeconds((s) => s + 1), 1000)
       }
 
+      const handleStartCamRecordWithCountdown = () => {
+        if (!camStreamRef.current || typeof MediaRecorder === 'undefined') {
+          notify('请先点击「开启摄像头预演」', 'error')
+          return
+        }
+        if (pendingRecPreview?.url) {
+          URL.revokeObjectURL(pendingRecPreview.url)
+          setPendingRecPreview(null)
+        }
+        if (camCountdownTimerRef.current) clearInterval(camCountdownTimerRef.current)
+        let n = 3
+        setTeleCountdown(3)
+        camCountdownTimerRef.current = setInterval(() => {
+          n -= 1
+          if (n <= 0) {
+            clearInterval(camCountdownTimerRef.current)
+            camCountdownTimerRef.current = null
+            setTeleCountdown(0)
+            beginActualCamRecording()
+          } else {
+            setTeleCountdown(n)
+          }
+        }, 1000)
+      }
+
       const handleStopCamRecord = () => {
+        if (camCountdownTimerRef.current) {
+          clearInterval(camCountdownTimerRef.current)
+          camCountdownTimerRef.current = null
+          setTeleCountdown(0)
+          return
+        }
         if (camRecorderRef.current && camRecorderRef.current.state === 'recording') {
           camRecorderRef.current.stop()
         }
       }
 
+      const handleConfirmSaveRecording = async () => {
+        if (!pendingRecPreview?.blob || !activeProjectDir) return
+        setBusyLabel('📹 正在写入出镜录像至 assets/recordings/ 并测算精准时长...')
+        try {
+          const dataBase64 = await readFileAsBase64(pendingRecPreview.blob)
+          const res = await connFetch('/api/video-workbench/assets/recording', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectDir: activeProjectDir,
+              fileName: pendingRecPreview.fileName,
+              role: camTargetRole,
+              extractVoiceClone: Boolean(camExtractClone),
+              dataBase64,
+            }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`入库保存失败: ${d.error}`, 'error')
+            return
+          }
+          if (pendingRecPreview.url) URL.revokeObjectURL(pendingRecPreview.url)
+          setPendingRecPreview(null)
+          if (camTargetRole === 'avatar_base') {
+            setAvatarCfg((p) => ({ ...p, enabled: true, mode: 'cloned-human', sourcePath: d.relPath }))
+          }
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify(`已保存出镜录像 (${Number(d.durationSec || 0).toFixed(1)}s)${d.clonedVoice ? ` · 已同步提取声纹「${d.clonedVoice.name}」` : ''}`, 'success')
+        } catch (err) {
+          notify(`保存录像失败: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleDiscardRecording = () => {
+        if (pendingRecPreview?.url) URL.revokeObjectURL(pendingRecPreview.url)
+        setPendingRecPreview(null)
+        notify('已作废刚才那条，请准备重新拍摄', 'info')
+      }
+
+      const handleGenerateTeleprompter = async () => {
+        if (!activeProjectDir) return
+        setBusyLabel('📝 AI 正在生成适合自然口播的提词稿...')
+        try {
+          const res = await connFetch('/api/video-workbench/teleprompter/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectDir: activeProjectDir,
+              topic: directorForm.topic || script?.title || '品牌与产品实战介绍',
+              durationSec: 45,
+              tone: directorForm.style || 'tech',
+            }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`提词稿生成失败: ${d.error}`, 'error')
+            return
+          }
+          setTeleLinesText(d.text || (d.lines || []).join('\n'))
+          if (teleBoxRef.current) teleBoxRef.current.scrollTop = 0
+          notify('口播提词稿已更新，点击「开始录制」倒数 3 秒即自动滚词', 'success')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      // Digital Avatar Generation (with transparent visualNotice fallback feedback)
       const handleGenerateAvatarClip = async () => {
         if (!activeProjectDir) return
-        setBusyLabel('🤖 正在生成带 Alpha 透明通道的数字人口播视频 (yuva420p WebM)...')
+        setBusyLabel('🤖 正在合成带 Alpha 透明通道的数字人出镜视频...')
         try {
-          const sourceFallback =
-            avatarCfg.sourcePath ||
-            projectAssets.find((a) => a.role === 'avatar_base' || a.role === 'host_video')?.path ||
-            ''
-          const voiceSampleFallback =
-            avatarCfg.voiceSamplePath ||
-            projectAssets.find((a) => a.role === 'voice_clone')?.path ||
-            ''
+          const sourceFallback = avatarCfg.sourcePath || projectAssets.find((a) => a.role === 'avatar_base' || a.role === 'host_video')?.path || ''
+          const voiceSampleFallback = avatarCfg.voiceSamplePath || projectAssets.find((a) => a.role === 'voice_clone')?.path || ''
           const res = await connFetch('/api/video-workbench/avatar/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3131,15 +2729,275 @@ window.__ModuleLoader__.load({
               chromaKeyColor: avatarCfg.chromaKeyColor || '',
             }),
           })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`数字人生成失败: ${data.error}`, 'error')
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`数字人生成失败: ${d.error}`, 'error')
             return
           }
-          setAvatarCfg((prev) => ({ ...prev, enabled: true }))
+          setAvatarCfg((p) => ({ ...p, enabled: true }))
+          if (d.visualNotice) setAvatarVisualNotice(d.visualNotice)
           setAssetVersion((v) => v + 1)
           await refreshState(activeProjectDir)
-          notify(`透明通道数字人已写入脚本 (${data.relPath})，可在监视器实时预览叠加效果`, 'success')
+          notify(d.visualNotice ? `数字人生成完成：${d.visualNotice}` : '透明通道数字人已写入时间轴，可在第 3 步实时监看', 'success')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      // Voice Library & 3-Step Clone Lab
+      const handlePreviewVoice = (v) => {
+        if (playingVoiceId === v.id) {
+          previewAudioRef.current?.pause()
+          setPlayingVoiceId('')
+          return
+        }
+        if (previewAudioRef.current) {
+          previewAudioRef.current.src = `/api/video-workbench/voices/preview?id=${encodeURIComponent(v.id)}&v=${Date.now()}`
+          previewAudioRef.current.play().catch(() => {
+            notify('该音色向量文件暂无原声预览，请选用后生成场景配音试听', 'info')
+            setPlayingVoiceId('')
+          })
+          setPlayingVoiceId(v.id)
+        }
+      }
+
+      const handleAssignVoice = (v) => {
+        setShowVoiceModal(false)
+        if (voiceModalTarget === 'global') {
+          setDirectorForm((p) => ({ ...p, voiceId: v.id }))
+          notify(`已将「${v.name}」设为全片主配音`, 'success')
+          return
+        }
+        if (selectedScene) {
+          updateSelectedScene({ voiceId: v.id, voiceLocked: true })
+          notify(`已为当前分镜指定「${v.name}」`, 'success')
+        }
+      }
+
+      const handleImportVoicePack = async () => {
+        if (!voiceImportPath.trim()) {
+          notify('请输入本地 .wav / .pt 音色文件路径', 'error')
+          return
+        }
+        setBusyLabel('正在导入外部音色样本...')
+        try {
+          const res = await connFetch('/api/video-workbench/voices/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sourcePath: voiceImportPath.trim(), name: voiceImportName.trim() || undefined, gender: voiceImportGender }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`导入失败: ${d.error}`, 'error')
+            return
+          }
+          setVoiceCatalog(d.voiceCatalog || [])
+          setVoiceImportPath('')
+          setVoiceImportName('')
+          notify('音色已加入专属库！', 'success')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleStopMicRecord = () => {
+        if (micTimerRef.current) {
+          clearInterval(micTimerRef.current)
+          micTimerRef.current = null
+        }
+        if (micVuRafRef.current) {
+          cancelAnimationFrame(micVuRafRef.current)
+          micVuRafRef.current = 0
+        }
+        try {
+          micAudioCtxRef.current?.close()
+        } catch {}
+        micAudioCtxRef.current = null
+        setMicVuLevel(0)
+        try {
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop()
+        } catch {}
+        setMicRecording(false)
+      }
+
+      const handleStartMicRecord = async () => {
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+          notify('当前环境不支持麦克风直录，请上传本地录音音频', 'error')
+          return
+        }
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+          micChunksRef.current = []
+          try {
+            const AC = window.AudioContext || window.webkitAudioContext
+            if (AC) {
+              const ac = new AC()
+              micAudioCtxRef.current = ac
+              const an = ac.createAnalyser()
+              an.fftSize = 128
+              ac.createMediaStreamSource(stream).connect(an)
+              const arr = new Uint8Array(an.frequencyBinCount)
+              const loop = () => {
+                an.getByteFrequencyData(arr)
+                const avg = arr.reduce((a, b) => a + b, 0) / arr.length
+                setMicVuLevel(Math.min(100, Math.round((avg / 100) * 100)))
+                micVuRafRef.current = requestAnimationFrame(loop)
+              }
+              micVuRafRef.current = requestAnimationFrame(loop)
+            }
+          } catch {}
+
+          const mr = new MediaRecorder(stream)
+          mediaRecorderRef.current = mr
+          mr.ondataavailable = (ev) => {
+            if (ev.data && ev.data.size > 0) micChunksRef.current.push(ev.data)
+          }
+          mr.onstop = async () => {
+            stream.getTracks().forEach((t) => t.stop())
+            const blob = new Blob(micChunksRef.current, { type: mr.mimeType || 'audio/webm' })
+            const b64 = await readFileAsBase64(blob)
+            setRecordedB64(b64)
+            setRecordedFileName(`mic-clone-${Date.now()}.webm`)
+            if (!cloneVoiceName.trim()) setCloneVoiceName(`我的声线-${new Date().toTimeString().slice(0, 5).replace(':', '')}`)
+            notify('录音采集完成！现在执行第 ② 步将其降噪入库', 'success')
+          }
+          mr.start(250)
+          setMicRecording(true)
+          setMicSeconds(0)
+          micTimerRef.current = setInterval(() => {
+            setMicSeconds((s) => {
+              if (s + 1 >= 15) {
+                handleStopMicRecord()
+                return 15
+              }
+              return s + 1
+            })
+          }, 1000)
+        } catch (err) {
+          notify(`无法开启麦克风: ${err.message}`, 'error')
+        }
+      }
+
+      const handlePickCloneFile = async (file) => {
+        if (!file) return
+        const b64 = await readFileAsBase64(file)
+        setRecordedB64(b64)
+        setRecordedFileName(file.name)
+        if (!cloneVoiceName.trim()) setCloneVoiceName(file.name.replace(/\.[^.]+$/, ''))
+        notify(`已载入参考人声「${file.name}」，请点第 ② 步按钮完成降噪克隆`, 'info')
+      }
+
+      const handleSubmitVoiceClone = async () => {
+        if (cloneSubMode === 'path') {
+          if (!voiceImportPath.trim()) {
+            notify('请先填写本机音频路径', 'error')
+            return
+          }
+          setVoiceImportName(cloneVoiceName || voiceImportName)
+          setVoiceImportGender(cloneVoiceGender)
+          await handleImportVoicePack()
+          return
+        }
+        if (!recordedB64) {
+          notify('请先完成第 ① 步（录制 5–12 秒清晰人声或上传本地音频）', 'error')
+          return
+        }
+        setBusyLabel('正在用 FFmpeg 滤波、去静音、响度标准化并建档入库...')
+        try {
+          const res = await connFetch('/api/video-workbench/voices/clone-upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              audioBase64: recordedB64,
+              fileName: recordedFileName || 'voice-clone.webm',
+              name: cloneVoiceName.trim() || '我的专属声线',
+              gender: cloneVoiceGender,
+              promptText: cloneVoicePrompt.trim(),
+              stripSilence: true,
+            }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`克隆入库失败: ${d.error}`, 'error')
+            return
+          }
+          setVoiceCatalog(d.voiceCatalog || [])
+          setCloneAuditionVoiceId(d.voice?.id || '')
+          setRecordedB64('')
+          setRecordedFileName('')
+          notify(`声纹克隆入库成功！音色「${d.voice?.name}」(${d.durationSec}s) 可在下放第 ③ 步实时试听`, 'success')
+        } catch (err) {
+          notify(`克隆入库异常: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      const handleAuditionClonedVoice = async () => {
+        const vid =
+          cloneAuditionVoiceId ||
+          voiceCatalog.find((v) => v.isCloned || v.id?.startsWith('clone-') || v.category === '专属声纹克隆')?.id ||
+          'auto'
+        setBusyLabel('IndexTTS-2.5 正在即时合成克隆试听音频...')
+        try {
+          const res = await connFetch('/api/video-workbench/voices/clone-preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ voiceId: vid, text: cloneAuditionText.trim(), emotion: '温暖' }),
+          })
+          const d = await res.json()
+          if (!d.ok || !d.audioDataUrl) {
+            notify(`试听生成失败: ${d.error || '未返回音频'}`, 'error')
+            return
+          }
+          setCloneAuditionUrl(d.audioDataUrl)
+          setCloneAuditionVoiceId(d.voiceUsed || vid)
+          if (previewAudioRef.current) {
+            previewAudioRef.current.src = dataUrlSafe(d.audioDataUrl)
+            previewAudioRef.current.play().catch(() => {})
+            setPlayingVoiceId(d.voiceUsed || vid)
+          }
+          notify(`试听合成完毕 (${d.durationSec || ''}s)`, 'success')
+        } catch (err) {
+          notify(`试听异常: ${err.message}`, 'error')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      function dataUrlSafe(u) {
+        return typeof u === 'string' ? u : ''
+      }
+
+      // Vendor Motion & Skin
+      const handleImportVendorMotion = async () => {
+        if (!activeProjectDir || !vendorSourceDir.trim()) {
+          notify('请填写外部 .motion / HTML 模板目录绝对路径', 'error')
+          return
+        }
+        setBusyLabel('🎬 正在独立无头 Chromium 容器中渲染无声动效贴片 (-an)...')
+        try {
+          const res = await connFetch('/api/video-workbench/vendor/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectDir: activeProjectDir,
+              sourceDir: vendorSourceDir.trim(),
+              name: vendorName.trim() || 'motion-overlay',
+              durationSec: Number(vendorDurationSec) || 6,
+            }),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`外部模板导入失败: ${d.error}`, 'error')
+            return
+          }
+          setShowVendorModal(false)
+          setVendorSourceDir('')
+          setVendorName('')
+          setAssetVersion((v) => v + 1)
+          await refreshState(activeProjectDir)
+          notify(`动效贴片已安全转码入库：${d.asset?.path}`, 'success')
         } finally {
           setBusyLabel('')
         }
@@ -3147,7 +3005,7 @@ window.__ModuleLoader__.load({
 
       const handleUploadSkinWallpaper = async (file) => {
         if (!file) return
-        setBusyLabel(`正在上传自定义大屏皮肤「${file.name}」...`)
+        setBusyLabel(`正在应用自定义大屏壁纸「${file.name}」...`)
         try {
           const dataBase64 = await readFileAsBase64(file)
           const res = await connFetch('/api/video-workbench/skin/upload', {
@@ -3155,41 +3013,110 @@ window.__ModuleLoader__.load({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ fileName: file.name, dataBase64 }),
           })
-          const data = await res.json()
-          if (!data.ok) {
-            notify(`上传皮肤失败: ${data.error}`, 'error')
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`壁纸设置失败: ${d.error}`, 'error')
             return
           }
-          setSkinConfig((prev) => ({ ...prev, id: 'custom-image', customUrl: data.url }))
-          notify('自定义大屏背景皮肤已生效，支持下方滑块调节模糊度与透明度', 'success')
-        } catch (err) {
-          notify(`上传皮肤出错: ${err.message}`, 'error')
+          setSkinConfig((p) => ({ ...p, id: 'custom-image', customUrl: d.url }))
+          notify('自定义大屏皮肤背景已应用', 'success')
         } finally {
           setBusyLabel('')
         }
       }
 
-      // -----------------------------------------------------------------------
-      // REUSABLE STYLES (Computed cleanly from Adaptive Theme `T` + FUI Geometry)
-      // -----------------------------------------------------------------------
+      // LLM Config & Test
+      const handleSelectDshProvider = (provId) => {
+        const dshProv = llmConfig?.dshClient?.providers?.find((p) => p.id === provId)
+        setLlmForm((p) => ({
+          ...p,
+          mode: 'follow-dsh',
+          dshProviderId: provId,
+          format: 'auto',
+          model: dshProv?.models?.[0]?.id || '',
+        }))
+        setLlmTestResult(null)
+      }
+
+      const handleProviderTemplateChange = (tplId) => {
+        const tpl = llmConfig?.templates?.find((t) => t.id === tplId)
+        setLlmForm((p) => ({
+          ...p,
+          provider: tplId,
+          format: tpl?.format || p.format,
+          baseUrl: tpl?.baseUrl || p.baseUrl,
+          model: tpl?.suggestedModels?.[0] || p.model,
+        }))
+        setLlmTestResult(null)
+      }
+
+      const handleTestLlm = async () => {
+        setLlmTesting(true)
+        setLlmTestResult(null)
+        try {
+          const res = await connFetch('/api/video-workbench/llm-test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mode: llmForm.mode,
+              dshProviderId: llmForm.dshProviderId,
+              provider: llmForm.provider,
+              format: llmForm.format,
+              baseUrl: llmForm.baseUrl,
+              apiKey: llmForm.apiKey,
+              model: llmForm.model,
+            }),
+          })
+          const d = await res.json()
+          setLlmTestResult(d)
+        } catch (err) {
+          setLlmTestResult({ ok: false, error: err.message })
+        } finally {
+          setLlmTesting(false)
+        }
+      }
+
+      const handleSaveLlmConfig = async () => {
+        setBusyLabel('正在加密持久化大模型配置...')
+        try {
+          const res = await connFetch('/api/video-workbench/llm-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(llmForm),
+          })
+          const d = await res.json()
+          if (!d.ok) {
+            notify(`保存模型配置失败: ${d.error}`, 'error')
+            return
+          }
+          if (d.config) syncLlmFormFromSummary(d.config)
+          setShowLlmModal(false)
+          notify(`已生效：${d.config?.label || d.config?.model || '大模型接口'}`, 'success')
+        } finally {
+          setBusyLabel('')
+        }
+      }
+
+      // =======================================================================
+      // 7. SHARED STYLE OBJECTS & ASSET URLS
+      // =======================================================================
       const panelStyle = {
         background: T.bgPanel,
         border: `1px solid ${T.borderSubtle}`,
-        borderRadius: '14px',
+        borderRadius: '16px',
         boxShadow: T.shadowCard,
-        backdropFilter: 'blur(20px) saturate(135%)',
-        WebkitBackdropFilter: 'blur(20px) saturate(135%)',
+        backdropFilter: 'blur(22px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(22px) saturate(140%)',
       }
 
       const inputStyle = {
         width: '100%',
-        padding: '9px 12px',
-        borderRadius: '9px',
+        padding: '10px 14px',
+        borderRadius: '10px',
         background: T.bgInput,
         border: `1px solid ${T.borderStrong}`,
         color: T.textPrimary,
-        colorScheme: resolvedDark ? 'dark' : 'light',
-        fontSize: '13px',
+        fontSize: '14px',
         fontFamily: 'Microsoft YaHei, PingFang SC, sans-serif',
         outline: 'none',
       }
@@ -3198,15 +3125,13 @@ window.__ModuleLoader__.load({
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: '7px',
-        padding: '9px 18px',
-        borderRadius: '10px',
-        background: resolvedDark
-          ? 'linear-gradient(135deg, #F0B64D, #C88318)'
-          : 'linear-gradient(135deg, #0F172A, #1E293B)',
-        border: resolvedDark ? '1px solid rgba(255, 224, 150, 0.45)' : '1px solid rgba(15, 23, 42, 0.25)',
-        color: resolvedDark ? '#07090E' : '#FFFFFF',
-        fontSize: '13px',
+        gap: '8px',
+        padding: '10px 18px',
+        borderRadius: '11px',
+        background: resolvedDark ? 'linear-gradient(135deg, #F5B942, #D97706)' : 'linear-gradient(135deg, #0F172A, #1E293B)',
+        border: resolvedDark ? '1px solid rgba(255,228,160,0.42)' : '1px solid rgba(15,23,42,0.28)',
+        color: resolvedDark ? '#07090F' : '#FFFFFF',
+        fontSize: '13.5px',
         fontWeight: 800,
         whiteSpace: 'nowrap',
       }
@@ -3215,14 +3140,14 @@ window.__ModuleLoader__.load({
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: '7px',
-        padding: '9px 16px',
-        borderRadius: '10px',
+        gap: '8px',
+        padding: '10px 18px',
+        borderRadius: '11px',
         background: T.accentBlue,
         border: 'none',
-        color: resolvedDark ? '#04131D' : '#FFFFFF',
-        fontSize: '13px',
-        fontWeight: 700,
+        color: resolvedDark ? '#03131E' : '#FFFFFF',
+        fontSize: '13.5px',
+        fontWeight: 800,
         whiteSpace: 'nowrap',
       }
 
@@ -3230,13 +3155,13 @@ window.__ModuleLoader__.load({
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: '6px',
-        padding: '7px 13px',
-        borderRadius: '9px',
+        gap: '7px',
+        padding: '8px 14px',
+        borderRadius: '10px',
         background: resolvedDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.05)',
         border: `1px solid ${T.borderSubtle}`,
         color: T.textPrimary,
-        fontSize: '12px',
+        fontSize: '13px',
         fontWeight: 600,
         whiteSpace: 'nowrap',
       }
@@ -3257,7 +3182,11 @@ window.__ModuleLoader__.load({
           ? `/api/video-workbench/asset?projectDir=${encodeURIComponent(activeProjectDir)}&rel=output/snapshot-3x3.png&v=${assetVersion}`
           : ''
 
-      // Shell overlay collapsed pill when inside DSH host chat view
+      const curW = Number(script?.width) || 1920
+      const curH = Number(script?.height) || 1080
+      const isPortraitVideo = curW < curH
+
+      // Non-main shell overlay collapsed pill
       if (!isMainSlot && mainSlotActive) return null
       if (!isMainSlot && mode !== 'video') {
         return h(
@@ -3268,9 +3197,9 @@ window.__ModuleLoader__.load({
             {
               className: 'dsh-vw-btn',
               onClick: () => switchWorkbenchMode('video'),
-              style: { ...goldBtnStyle, padding: '6px 14px', fontSize: '12px', borderRadius: '999px' },
+              style: { ...goldBtnStyle, padding: '7px 16px', fontSize: '13px', borderRadius: '999px' },
             },
-            h(Icon, { name: 'film', size: 13 }),
+            h(Icon, { name: 'film', size: 15 }),
             ' 打开电影视频工坊',
           ),
         )
@@ -3348,2799 +3277,1802 @@ window.__ModuleLoader__.load({
         }),
       )
 
-      const curW = Number(script?.width) || 1920
-      const curH = Number(script?.height) || 1080
-      const isPortraitVideo = curW < curH
-
-      // -----------------------------------------------------------------------
-      // SIDEBAR (Project Film Reel Drawer)
-      // -----------------------------------------------------------------------
-      const sidebar = h(
-        'aside',
-        {
-          style: {
-            width: '238px',
-            flexShrink: 0,
-            background: T.bgSidebar,
-            backdropFilter: 'blur(18px)',
-            WebkitBackdropFilter: 'blur(18px)',
-            borderRight: `1px solid ${T.borderSubtle}`,
-            display: 'flex',
-            flexDirection: 'column',
-            height: '100%',
-          },
-        },
-        h(
-          'div',
-          {
-            style: {
-              padding: '15px 14px',
-              borderBottom: `1px solid ${T.borderSubtle}`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-            },
-          },
-          h(
-            'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-            h(Icon, { name: 'film', size: 17, color: T.accentGold }),
-            h('span', { style: { fontWeight: 800, fontSize: '14px', letterSpacing: '0.02em' } }, '工程影片库'),
-          ),
-          h(
-            'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '4px' } },
-            h(
-              'button',
-              {
-                className: 'dsh-vw-btn',
-                onClick: () => setShowNewModal(true),
-                style: { ...ghostBtnStyle, padding: '4px 8px', fontSize: '11.5px', color: T.accentGold, borderColor: T.accentGoldBorder },
-              },
-              h(Icon, { name: 'plus', size: 12 }),
-              '新建',
-            ),
-            h(
-              'button',
-              {
-                className: 'dsh-vw-btn',
-                title: '收起工程库侧栏',
-                onClick: () => setShowProjectDrawer(false),
-                style: { ...ghostBtnStyle, padding: '4px 6px' },
-              },
-              h(Icon, { name: 'x', size: 12 }),
-            ),
-          ),
-        ),
-        h(
-          'div',
-          { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', padding: '10px' } },
-          projects.map((p) => {
-            const projId = p.id || p.slug || ''
-            const isSel = p.projectDir === activeProjectDir
-            const isDel = confirmDeleteDir === p.projectDir
-            const lockedBuiltIn = projId === 'demo-html-project' || projId === 'demo-remotion-project'
-            return h(
-              'div',
-              {
-                key: p.projectDir,
-                onClick: () => !isDel && handleSelectProject(p.projectDir),
-                style: {
-                  padding: '10px 11px',
-                  borderRadius: '10px',
-                  marginBottom: '6px',
-                  cursor: 'pointer',
-                  background: isSel ? T.accentGoldBg : 'transparent',
-                  border: `1px solid ${isSel ? T.accentGoldBorder : 'transparent'}`,
-                },
-              },
-              h(
-                'div',
-                { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' } },
-                h(
-                  'div',
-                  {
-                    style: {
-                      flex: 1,
-                      minWidth: 0,
-                      fontSize: '13px',
-                      fontWeight: isSel ? 700 : 500,
-                      color: isSel ? T.textPrimary : T.textSecondary,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    },
-                  },
-                  p.name || p.title || projId,
-                ),
-                !lockedBuiltIn
-                  ? h(
-                      'button',
-                      {
-                        className: 'dsh-vw-btn',
-                        onClick: (ev) => {
-                          ev.stopPropagation()
-                          setConfirmDeleteDir(isDel ? '' : p.projectDir)
-                        },
-                        style: { background: 'transparent', border: 'none', color: T.textMuted, padding: '2px' },
-                      },
-                      h(Icon, { name: 'trash', size: 12 }),
-                    )
-                  : null,
-              ),
-              isDel
-                ? h(
-                    'div',
-                    { style: { marginTop: '6px', display: 'flex', gap: '6px' }, onClick: (ev) => ev.stopPropagation() },
-                    h(
-                      'button',
-                      {
-                        className: 'dsh-vw-btn',
-                        onClick: () => handleDeleteProject(p.projectDir),
-                        style: { flex: 1, padding: '3px', borderRadius: '6px', background: T.accentRed, color: '#fff', border: 'none', fontSize: '11px' },
-                      },
-                      '确认删除',
-                    ),
-                    h(
-                      'button',
-                      {
-                        className: 'dsh-vw-btn',
-                        onClick: () => setConfirmDeleteDir(''),
-                        style: { flex: 1, padding: '3px', borderRadius: '6px', background: T.bgElevated, color: T.textPrimary, border: `1px solid ${T.borderSubtle}`, fontSize: '11px' },
-                      },
-                      '取消',
-                    ),
-                  )
-                : h(
-                    'div',
-                    { style: { marginTop: '4px', fontSize: '11px', color: T.textMuted, display: 'flex', gap: '6px', alignItems: 'center' } },
-                    h('span', null, `${p.sceneCount || 0} 幕`),
-                    h('span', null, '·'),
-                    h('span', { style: { textTransform: 'uppercase' } }, p.engine || 'html'),
-                    p.hasMp4 ? h('span', { style: { color: T.accentGreen, fontWeight: 700 } }, '● MP4') : null,
-                  ),
-            )
-          }),
-        ),
-        // Bottom Engine Status Readout
-        h(
-          'div',
-          { style: { padding: '11px 14px', borderTop: `1px solid ${T.borderSubtle}`, fontSize: '11px', color: T.textMuted, display: 'flex', flexDirection: 'column', gap: '4px' } },
-          h(
-            'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
-            h('span', { style: { width: '7px', height: '7px', borderRadius: '50%', background: ttsStatus.ready ? T.accentGreen : '#F59E0B' } }),
-            h('span', null, `IndexTTS-2.5 音色库: ${voiceCatalog.length} 个`),
-          ),
-          h(
-            'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
-            h('span', { style: { width: '7px', height: '7px', borderRadius: '50%', background: llmConfig?.configured ? T.accentBlue : T.textMuted } }),
-            h(
-              'span',
-              { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
-              llmConfig?.configured
-                ? `${llmConfig.mode === 'follow-dsh' ? 'DSH 默认' : '自定义'}: ${llmConfig.model}`
-                : '大模型: 待设置',
-            ),
-          ),
-        ),
-      )
-
-      // -----------------------------------------------------------------------
-      // TOP AI COMMAND DECK HEADER + AGENT TEAM HUD BAR
-      // -----------------------------------------------------------------------
-      const hudAgents = currentTaskRun?.agents?.length
-        ? currentTaskRun.agents
-        : AGENT_TEAM_DEFS.map((d) => ({
-            id: d.id,
-            name: d.short,
-            subtitle: d.desc,
-            status: 'idle',
-            progress: 0,
-            message: '待命中',
-          }))
+      // =======================================================================
+      // 8. TOP NAVIGATION BAR (STREAMLINED 3-MODE BAR + DSH CAPSULE)
+      // =======================================================================
+      const activeProjectObj = projects.find((p) => (p.projectDir || p.dir) === activeProjectDir)
+      const runningCount = taskRuns.filter((r) => r.status === 'running' || r.status === 'paused').length
 
       const topBar = h(
         'header',
         {
+          className: 'dsh-vw-topbar',
           style: {
             flexShrink: 0,
             background: T.bgSidebar,
-            backdropFilter: 'blur(20px) saturate(140%)',
-            WebkitBackdropFilter: 'blur(20px) saturate(140%)',
-            borderBottom: `1px solid ${hasLiveTask ? T.accentBlueBorder : T.borderSubtle}`,
-            boxShadow: hasLiveTask ? '0 4px 24px rgba(34,211,238,0.12)' : 'none',
-            display: 'flex',
-            flexDirection: 'column',
-            zIndex: 4,
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            borderBottom: `1px solid ${T.borderSubtle}`,
+            position: 'relative',
+            zIndex: 40,
           },
         },
-        // Row 1: Drawer Toggle & Specs · 6-Tab War Room Nav · Skin / LLM / 3-Way Theme
+        // Left: DSH Mode Capsule + Brand + Project Switcher Pill
         h(
           'div',
-          {
-            style: {
-              height: '52px',
-              padding: '0 16px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '8px',
-            },
-          },
-          // Left: Collapsible Project Drawer Trigger + Film Spec Badges
-          h(
-            'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, flexShrink: 1 } },
-            h(
-              'button',
-              {
-                className: 'dsh-vw-btn',
-                onClick: () => setShowProjectDrawer((v) => !v),
-                title: '展开/收起工程列表与新建工程',
-                style: {
-                  ...ghostBtnStyle,
-                  padding: '5px 10px',
-                  fontSize: '12px',
-                  fontWeight: 800,
-                  borderColor: showProjectDrawer ? T.accentGoldBorder : T.borderStrong,
-                  background: showProjectDrawer ? T.accentGoldBg : T.bgElevated,
-                  color: T.textPrimary,
-                },
-              },
-              h(Icon, { name: 'folder', size: 13, color: T.accentGold }),
-              h('span', { style: { maxWidth: '115px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, script?.title || '未命名影片'),
-              h('span', { style: { fontSize: '10px', color: T.accentGold } }, showProjectDrawer ? '▴' : `▾ ${projects.length}`),
-            ),
-            script
-              ? h(
-                  'span',
-                  {
-                    style: {
-                      fontSize: '10px',
-                      fontFamily: 'Consolas, monospace',
-                      padding: '2px 7px',
-                      borderRadius: '6px',
-                      background: T.accentBlueBg,
-                      color: T.accentBlue,
-                      border: `1px solid ${T.accentBlueBorder}`,
-                      whiteSpace: 'nowrap',
-                    },
-                  },
-                  `${script.aspectRatio || (curW < curH ? '9:16' : '16:9')} · ${curW}×${curH}`,
-                )
-              : null,
-            hasMp4
-              ? h(
-                  'span',
-                  {
-                    style: {
-                      fontSize: '10px',
-                      padding: '2px 6px',
-                      borderRadius: '6px',
-                      background: T.accentGreenBg,
-                      color: T.accentGreen,
-                      fontWeight: 700,
-                      whiteSpace: 'nowrap',
-                    },
-                  },
-                  '● MP4',
-                )
-              : null,
-          ),
-          // Center: 6-Tab Navigation (War Room Hero + 4 Precision Stages + Task Logs)
-          h(
-            'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'nowrap', flexShrink: 0 } },
-            [
-              { id: 0, label: '🛸 作战大屏', accent: 'war' },
-              { id: 1, label: '01 素材提词' },
-              { id: 2, label: '02 导演数字人' },
-              { id: 3, label: '03 三轨监视' },
-              { id: 4, label: '04 导出质检' },
-              { id: 5, label: '任务日志', icon: 'activity' },
-            ].map((st) => {
-              const active = activeStep === st.id
-              const isWarTab = st.id === 0
-              const isTaskTab = st.id === 5
-              return h(
-                'button',
+          { style: { display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flexShrink: 0 } },
+          !isMainSlot
+            ? h(
+                'div',
                 {
-                  key: st.id,
-                  className: 'dsh-vw-btn',
-                  onClick: () => {
-                    setIsPlaying(false)
-                    setActiveStep(st.id)
-                    if (isWarTab || isTaskTab) fetchTaskRuns()
-                  },
                   style: {
-                    padding: isWarTab ? '5px 12px' : '5px 9px',
-                    borderRadius: '999px',
-                    fontSize: '11.5px',
-                    fontWeight: active || isWarTab ? 800 : 500,
-                    whiteSpace: 'nowrap',
-                    background: active
-                      ? isWarTab || isTaskTab
-                        ? T.accentBlueBg
-                        : T.accentGoldBg
-                      : 'transparent',
-                    border: `1px solid ${
-                      active
-                        ? isWarTab || isTaskTab
-                          ? T.accentBlueBorder
-                          : T.accentGoldBorder
-                        : isWarTab
-                          ? T.borderStrong
-                          : T.borderSubtle
-                    }`,
-                    boxShadow: active && isWarTab ? `0 0 14px ${T.accentBlueBg}` : 'none',
-                    color: active ? (isWarTab || isTaskTab ? T.accentBlue : T.accentGold) : T.textSecondary,
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '4px',
-                  },
-                },
-                st.icon ? h(Icon, { name: st.icon, size: 12 }) : null,
-                st.label,
-                (isWarTab || isTaskTab) && hasLiveTask
-                  ? h('span', {
-                      className: 'dsh-vw-rec-dot',
-                      style: { width: '6px', height: '6px', borderRadius: '50%', background: T.accentBlue },
-                    })
-                  : null,
-              )
-            }),
-          ),
-          // Right: Skin · LLM Config · 3-Way Theme · Return to Chat
-          h(
-            'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 } },
-            h(
-              'button',
-              {
-                className: 'dsh-vw-btn',
-                onClick: () => setShowSkinModal(true),
-                title: '切换大屏皮肤与高斯模糊透明度',
-                style: { ...ghostBtnStyle, padding: '5px 9px', fontSize: '11.5px' },
-              },
-              h(Icon, { name: 'palette', size: 13 }),
-              '皮肤',
-            ),
-            h(
-              'button',
-              {
-                className: 'dsh-vw-btn',
-                onClick: () => setShowLlmModal(true),
-                style: {
-                  ...ghostBtnStyle,
-                  padding: '5px 9px',
-                  fontSize: '11.5px',
-                  borderColor: llmConfig?.configured ? T.accentBlueBorder : T.accentGoldBorder,
-                  color: llmConfig?.configured ? T.accentBlue : T.accentGold,
-                },
-              },
-              h(Icon, { name: 'cpu', size: 13 }),
-              llmConfig?.configured
-                ? `${llmConfig.mode === 'follow-dsh' ? 'DSH·' : ''}${String(llmConfig.model || '').slice(0, 14)}`
-                : '配置模型',
-            ),
-            h(
-              'div',
-              {
-                style: {
-                  display: 'inline-flex',
-                  padding: '2px',
-                  borderRadius: '8px',
-                  background: T.bgInput,
-                  border: `1px solid ${T.borderSubtle}`,
-                },
-              },
-              [
-                { id: 'auto', label: '跟随', title: '自动跟随 DSH / 系统浅色与深色主题' },
-                { id: 'dark', label: '暗夜', title: '深空曜石赛博电影暗色主题' },
-                { id: 'light', label: '浅色', title: '高定航天白昼主题' },
-              ].map((th) => {
-                const on = themePref === th.id
-                return h(
-                  'button',
-                  {
-                    key: th.id,
-                    title: th.title,
-                    className: 'dsh-vw-btn',
-                    onClick: () => selectThemePref(th.id),
-                    style: {
-                      padding: '4px 7px',
-                      borderRadius: '6px',
-                      border: 'none',
-                      fontSize: '11px',
-                      fontWeight: on ? 700 : 500,
-                      background: on ? T.bgPanel : 'transparent',
-                      color: on ? T.textPrimary : T.textMuted,
-                      boxShadow: on ? '0 1px 4px rgba(0,0,0,0.14)' : 'none',
-                    },
-                  },
-                  th.label,
-                )
-              }),
-            ),
-            !isMainSlot
-              ? h(
-                  'button',
-                  {
-                    className: 'dsh-vw-btn',
-                    onClick: () => switchWorkbenchMode('chat'),
-                    style: { ...ghostBtnStyle, padding: '5px 9px', fontSize: '11.5px' },
-                  },
-                  '返回对话',
-                )
-              : null,
-          ),
-        ),
-        // Row 2: Compact Agent Team HUD Bar ONLY when operating inside Manual Precision Steps 1..5
-        activeStep !== 0
-          ? h(
-              'div',
-              {
-                style: {
-                  minHeight: '36px',
-                  padding: '4px 16px',
-                  borderTop: `1px solid ${T.borderSubtle}`,
-                  background: resolvedDark ? 'rgba(7, 9, 14, 0.56)' : 'rgba(241, 244, 250, 0.72)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '10px',
-                  flexWrap: 'wrap',
-                },
-              },
-              h(
-                'div',
-                { style: { display: 'flex', alignItems: 'center', gap: '7px', flexShrink: 0 } },
-                h(Icon, { name: 'activity', size: 13, color: hasLiveTask ? T.accentBlue : T.accentGold }),
-                h('span', { style: { fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', color: T.textSecondary } }, 'AGENT 协同 HUD'),
-                currentTaskRun
-                  ? h(
-                      'span',
-                      {
-                        style: {
-                          fontSize: '10.5px',
-                          fontFamily: 'Consolas, monospace',
-                          padding: '2px 7px',
-                          borderRadius: '999px',
-                          background: currentTaskRun.status === 'running' ? T.accentBlueBg : T.bgElevated,
-                          color: currentTaskRun.status === 'running' ? T.accentBlue : T.textSecondary,
-                          border: `1px solid ${T.borderSubtle}`,
-                        },
-                      },
-                      `${Math.round(Number(currentTaskRun.progress || 0))}% · ${Math.round(Number(currentTaskRun.elapsedMs || 0) / 1000)}s`,
-                    )
-                  : null,
-              ),
-              h(
-                'div',
-                { style: { display: 'flex', alignItems: 'center', gap: '4px', flex: 1, justifyContent: 'center', minWidth: 0, overflowX: 'auto' } },
-                hudAgents.map((ag, idx) => {
-                  const def = AGENT_TEAM_DEFS[idx] || { short: ag.name, icon: 'sparkles', desc: ag.subtitle }
-                  const st = ag.status || 'idle'
-                  const isRunning = st === 'running'
-                  const isDone = st === 'completed'
-                  const isFail = st === 'failed' || st === 'stopped'
-                  const isPaused = st === 'paused'
-                  const nodeColor = isRunning ? T.accentBlue : isDone ? T.accentGreen : isPaused ? T.accentGold : isFail ? T.accentRed : T.textMuted
-                  return h(
-                    React.Fragment,
-                    { key: ag.id || idx },
-                    h(
-                      'button',
-                      {
-                        className: `dsh-vw-hud-node ${isRunning ? 'is-running' : ''}`,
-                        onClick: () => {
-                          setActiveStep(0)
-                          setWarCenterTab('map')
-                          fetchTaskRuns()
-                        },
-                        title: `返回星图态势查看: ${def.short}`,
-                        style: {
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '5px',
-                          padding: '3px 9px',
-                          borderRadius: '999px',
-                          cursor: 'pointer',
-                          background: isRunning ? T.accentBlueBg : isDone ? T.accentGreenBg : isPaused ? T.accentGoldBg : isFail ? T.accentRedBg : 'transparent',
-                          border: `1px solid ${isRunning ? T.accentBlueBorder : isDone ? T.accentGreen : isPaused ? T.accentGoldBorder : T.borderSubtle}`,
-                          color: st === 'idle' ? T.textSecondary : nodeColor,
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          whiteSpace: 'nowrap',
-                        },
-                      },
-                      h('span', { style: { width: '6px', height: '6px', borderRadius: '50%', background: nodeColor } }),
-                      def.short,
-                      isRunning ? h('span', { style: { fontFamily: 'Consolas, monospace', fontSize: '10px' } }, `${Math.round(Number(ag.progress || 0))}%`) : isDone ? '✓' : null,
-                    ),
-                    idx < hudAgents.length - 1
-                      ? h(
-                          'svg',
-                          { width: 20, height: 10, viewBox: '0 0 20 10', style: { flexShrink: 0, opacity: isRunning || isDone ? 0.95 : 0.35 } },
-                          h('line', {
-                            x1: 2,
-                            y1: 5,
-                            x2: 18,
-                            y2: 5,
-                            className: isRunning ? 'dsh-vw-hud-flow' : '',
-                            stroke: isRunning || isDone ? T.accentBlue : T.textMuted,
-                            strokeWidth: isRunning ? 2 : 1.5,
-                            strokeDasharray: '4 3',
-                          }),
-                        )
-                      : null,
-                  )
-                }),
-              ),
-              h(
-                'div',
-                { style: { display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 } },
-                currentTaskRun && (currentTaskRun.status === 'running' || currentTaskRun.status === 'paused')
-                  ? h(
-                      React.Fragment,
-                      null,
-                      h('button', { className: 'dsh-vw-btn', onClick: () => handleTaskControl(currentTaskRun.status === 'paused' ? 'resume' : 'pause', currentTaskRun.id), style: { ...ghostBtnStyle, padding: '3px 9px', fontSize: '11px', color: T.accentGold, borderColor: T.accentGoldBorder } }, currentTaskRun.status === 'paused' ? '▶ 恢复' : '⏸ 暂停'),
-                      h('button', { className: 'dsh-vw-btn', onClick: () => handleTaskControl('stop', currentTaskRun.id), style: { ...ghostBtnStyle, padding: '3px 9px', fontSize: '11px', color: T.accentRed, borderColor: 'rgba(244,63,94,0.45)' } }, '■ 停止'),
-                    )
-                  : h(
-                      'button',
-                      { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleStartOneClickPipeline(), style: { ...goldBtnStyle, padding: '4px 12px', fontSize: '11px', borderRadius: '999px' } },
-                      h(Icon, { name: 'zap', size: 12 }),
-                      '回作战大屏一键出片',
-                    ),
-              ),
-            )
-          : null,
-      )
-
-      const statusBanner =
-        busyLabel || toast
-          ? h(
-              'div',
-              {
-                style: {
-                  padding: '8px 20px',
-                  background: busyLabel
-                    ? T.accentBlueBg
-                    : toast?.type === 'error'
-                      ? T.accentRedBg
-                      : toast?.type === 'success'
-                        ? T.accentGreenBg
-                        : T.accentGoldBg,
-                  borderBottom: `1px solid ${T.borderSubtle}`,
-                  fontSize: '12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '12px',
-                },
-              },
-              h(
-                'div',
-                { style: { display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 } },
-                h('span', { style: { fontWeight: 600 } }, busyLabel || toast.message),
-                busyLabel && busyProgress > 0
-                  ? h(
-                      'div',
-                      { style: { flex: '0 0 180px', height: '5px', borderRadius: '99px', background: 'rgba(128,128,128,0.25)', overflow: 'hidden' } },
-                      h('div', { style: { width: `${busyProgress}%`, height: '100%', background: T.accentBlue } }),
-                    )
-                  : null,
-              ),
-              !busyLabel && toast
-                ? h(
-                    'button',
-                    { onClick: () => setToast(null), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } },
-                    h(Icon, { name: 'x', size: 13 }),
-                  )
-                : null,
-            )
-          : null
-
-      // -----------------------------------------------------------------------
-      // STEP 0 (DEFAULT HOME): AI AGENT 团队数字信息作战大屏 (MISSION CONTROL WAR ROOM)
-      // -----------------------------------------------------------------------
-      const taskStatusStyle = (st) => {
-        if (st === 'running') return { label: '运行中', color: T.accentBlue, bg: T.accentBlueBg }
-        if (st === 'paused') return { label: '已暂停', color: T.accentGold, bg: T.accentGoldBg }
-        if (st === 'completed') return { label: '已完成', color: T.accentGreen, bg: T.accentGreenBg }
-        if (st === 'stopped') return { label: '已停止', color: T.textMuted, bg: T.bgElevated }
-        if (st === 'failed') return { label: '异常', color: T.accentRed, bg: T.accentRedBg }
-        return { label: '等待中', color: T.textSecondary, bg: T.bgElevated }
-      }
-
-      const mountedBgmItem =
-        projectAssets.find((a) => a.path === script?.bgm?.uploadedPath) ||
-        projectAssets.find((a) => a.role === 'music')
-      const specialRoleCount = projectAssets.filter((a) => ['host_video', 'avatar_base', 'voice_clone'].includes(a.role)).length
-
-      const warRoomFuiCard = {
-        ...panelStyle,
-        borderColor: hasLiveTask ? T.accentBlueBorder : T.borderStrong,
-        boxShadow: hasLiveTask
-          ? `${T.shadowCard}, 0 0 28px rgba(34, 211, 238, 0.14)`
-          : T.shadowCard,
-      }
-
-      const warRoomView = h(
-        'div',
-        {
-          style: {
-            position: 'relative',
-            flex: 1,
-            minHeight: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-          },
-        },
-        h(
-          'div',
-          {
-            style: {
-              position: 'relative',
-              zIndex: 1,
-              flex: 1,
-              minHeight: 0,
-              display: 'grid',
-              gridTemplateColumns: '266px minmax(0, 1fr) 316px',
-              gap: '12px',
-              padding: '12px 14px',
-              overflow: 'hidden',
-            },
-          },
-          // LEFT WING: Consolidated 5-Channel Intake · Camera Teleprompter · Asset Telemetry · Live DSP Spectrum
-          h(
-            'aside',
-            {
-              className: 'dsh-vw-fui-card dsh-vw-scroll',
-              onDragOver: (ev) => {
-                ev.preventDefault()
-                setIsDragging(true)
-              },
-              onDragLeave: () => setIsDragging(false),
-              onDrop: (ev) => {
-                ev.preventDefault()
-                setIsDragging(false)
-                handleUploadFiles(ev.dataTransfer?.files)
-              },
-              style: {
-                ...warRoomFuiCard,
-                padding: '13px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '11px',
-                overflowY: 'auto',
-                minHeight: 0,
-                borderStyle: isDragging ? 'dashed' : 'solid',
-                borderColor: isDragging ? T.accentGold : warRoomFuiCard.borderColor,
-              },
-            },
-            h('div', { className: 'dsh-vw-reticle dsh-vw-reticle-tl', style: { borderColor: T.accentBlue } }),
-            h('div', { className: 'dsh-vw-reticle dsh-vw-reticle-tr', style: { borderColor: T.accentBlue } }),
-
-            // Wing Title + Jump to Step 1 Detail
-            h(
-              'div',
-              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-              h(
-                'div',
-                null,
-                h('div', { style: { fontSize: '10px', fontFamily: 'Consolas, monospace', letterSpacing: '0.1em', color: T.accentBlue, fontWeight: 800 } }, 'SUPPLY & TELEMETRY'),
-                h('div', { style: { fontSize: '14px', fontWeight: 800 } }, '📦 统一素材补给仓'),
-              ),
-              h(
-                'button',
-                {
-                  className: 'dsh-vw-btn',
-                  onClick: () => setActiveStep(1),
-                  style: { ...ghostBtnStyle, padding: '4px 8px', fontSize: '11px' },
-                },
-                '清单精修 →',
-              ),
-            ),
-
-            // 2x3 Consolidated Material Intake Matrix
-            h(
-              'div',
-              { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '7px' } },
-              h(
-                'button',
-                { className: 'dsh-vw-btn', onClick: () => fileInputRef.current?.click(), style: { ...blueBtnStyle, padding: '8px 6px', fontSize: '11.5px', justifyContent: 'center' } },
-                h(Icon, { name: 'upload', size: 13 }),
-                '图片/视频',
-              ),
-              h(
-                'button',
-                { className: 'dsh-vw-btn', onClick: () => folderInputRef.current?.click(), style: { ...ghostBtnStyle, padding: '8px 6px', fontSize: '11.5px', justifyContent: 'center' } },
-                h(Icon, { name: 'folder', size: 13 }),
-                '批量文件夹',
-              ),
-              h(
-                'button',
-                { className: 'dsh-vw-btn', onClick: () => bgmInputRef.current?.click(), style: { ...ghostBtnStyle, padding: '8px 6px', fontSize: '11.5px', justifyContent: 'center', borderColor: T.accentGoldBorder, color: T.accentGold } },
-                '🎵 BGM 配乐',
-              ),
-              h(
-                'button',
-                { className: 'dsh-vw-btn', onClick: () => avatarBaseInputRef.current?.click(), style: { ...ghostBtnStyle, padding: '8px 6px', fontSize: '11.5px', justifyContent: 'center', borderColor: T.accentBlueBorder, color: T.accentBlue } },
-                h(Icon, { name: 'avatar', size: 13 }),
-                '数字人底板',
-              ),
-              h(
-                'button',
-                { className: 'dsh-vw-btn', onClick: () => voiceCloneInputRef.current?.click(), style: { ...ghostBtnStyle, padding: '8px 6px', fontSize: '11.5px', justifyContent: 'center' } },
-                h(Icon, { name: 'mic', size: 12 }),
-                '克隆声纹',
-              ),
-              h(
-                'button',
-                { className: 'dsh-vw-btn', onClick: () => setShowVendorModal(true), style: { ...ghostBtnStyle, padding: '8px 6px', fontSize: '11.5px', justifyContent: 'center' } },
-                '✨ .motion',
-              ),
-            ),
-
-            // Promoted Webcam Teleprompter Studio Trigger
-            h(
-              'button',
-              {
-                className: 'dsh-vw-btn',
-                onClick: () => {
-                  setShowTeleprompter(true)
-                  setActiveStep(1)
-                },
-                style: {
-                  ...ghostBtnStyle,
-                  width: '100%',
-                  padding: '9px 10px',
-                  fontSize: '12px',
-                  justifyContent: 'space-between',
-                  background: resolvedDark ? 'rgba(34, 211, 238, 0.08)' : 'rgba(2, 132, 199, 0.07)',
-                  borderColor: T.accentBlueBorder,
-                  color: T.accentBlue,
-                },
-              },
-              h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } }, h(Icon, { name: 'camera', size: 14 }), '📹 打开提词器摄像头拍摄棚'),
-              h('span', { style: { fontSize: '10px', opacity: 0.8 } }, '去录制 →'),
-            ),
-
-            // Live Asset Counters Matrix
-            h(
-              'div',
-              { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' } },
-              [
-                { k: '视觉素材', v: (assetSummary.image || 0) + (assetSummary.video || 0), tone: T.accentBlue },
-                { k: 'BGM/声纹', v: (mountedBgmItem ? 1 : 0) + specialRoleCount, tone: T.accentGold },
-                { k: '分镜幕数', v: script?.scenes?.length || 0, tone: T.accentGreen },
-              ].map((st) =>
-                h(
-                  'div',
-                  {
-                    key: st.k,
-                    style: {
-                      padding: '8px 6px',
-                      borderRadius: '9px',
-                      background: T.bgElevated,
-                      border: `1px solid ${T.borderSubtle}`,
-                      textAlign: 'center',
-                    },
-                  },
-                  h('div', { style: { fontSize: '16px', fontWeight: 900, fontFamily: 'Consolas, monospace', color: st.tone } }, st.v),
-                  h('div', { style: { fontSize: '10px', color: T.textMuted, marginTop: '2px' } }, st.k),
-                ),
-              ),
-            ),
-
-            // Mounted Resource Feed
-            h(
-              'div',
-              {
-                style: {
-                  padding: '9px 10px',
-                  borderRadius: '9px',
-                  background: T.bgElevated,
-                  border: `1px solid ${T.borderSubtle}`,
-                  fontSize: '11px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '4px',
-                },
-              },
-              h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('span', { style: { color: T.textMuted } }, '挂载配乐'),
-                h('span', { style: { fontWeight: 700, color: mountedBgmItem ? T.accentGreen : T.textSecondary, maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, mountedBgmItem ? mountedBgmItem.name : directorForm.bgmMode === 'llm-coded' ? 'AI 代码现写配乐' : '待导入'),
-              ),
-              h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('span', { style: { color: T.textMuted } }, '数字人口播'),
-                h('span', { style: { fontWeight: 700, color: avatarCfg.enabled ? T.accentBlue : T.textSecondary } }, avatarCfg.enabled ? `${avatarCfg.mode === 'cloned-human' ? '克隆真人' : 'AI 数字人'} · 已激活` : '按需关闭'),
-              ),
-              h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('span', { style: { color: T.textMuted } }, 'TTS 声纹库'),
-                h('span', { style: { fontWeight: 700, color: ttsStatus.ready ? T.accentGreen : T.accentGold } }, `IndexTTS-2.5 · ${voiceCatalog.length} 音色`),
-              ),
-            ),
-
-            // Live Animated DSP Audio & Signal Waveform Card
-            h(
-              'div',
-              {
-                style: {
-                  marginTop: 'auto',
-                  padding: '9px 10px',
-                  borderRadius: '10px',
-                  background: resolvedDark ? 'rgba(5, 9, 18, 0.72)' : 'rgba(241, 245, 251, 0.9)',
-                  border: `1px solid ${hasLiveTask ? T.accentBlueBorder : T.borderSubtle}`,
-                },
-              },
-              h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' } },
-                h('span', { style: { fontSize: '10px', fontFamily: 'Consolas, monospace', fontWeight: 800, color: hasLiveTask ? T.accentBlue : T.textMuted } }, hasLiveTask ? '● DSP SIGNAL LOCKED' : '◆ ACOUSTIC SPECTRUM IDLE'),
-                h('span', { style: { fontSize: '10px', fontFamily: 'Consolas, monospace', color: T.accentGold } }, `${curW}×${curH}`),
-              ),
-              h(AudioWaveformCanvas, { active: hasLiveTask || Boolean(busyLabel), isPlaying, dark: resolvedDark }),
-            ),
-          ),
-
-          // CENTER STAGE (>50% focal core): Constellation Battle Map <-> Live MP4 / HTML5 Cinema Monitor
-          h(
-            'section',
-            {
-              className: 'dsh-vw-fui-card',
-              style: {
-                ...warRoomFuiCard,
-                padding: '12px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '10px',
-                minWidth: 0,
-                minHeight: 0,
-                overflow: 'hidden',
-              },
-            },
-            // Stage Switcher Header
-            h(
-              'div',
-              { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
-              h(
-                'div',
-                {
-                  style: {
-                    display: 'inline-flex',
+                    flexShrink: 0,
                     padding: '3px',
                     borderRadius: '999px',
                     background: T.bgInput,
                     border: `1px solid ${T.borderStrong}`,
                   },
                 },
-                [
-                  { id: 'map', label: '✦ Agent 星图作战态势' },
-                  { id: 'monitor', label: hasMp4 ? '🎞 实时成片监看台 (MP4就绪)' : '🎞 实时成片监看台' },
-                ].map((tb) => {
-                  const on = warCenterTab === tb.id
-                  return h(
-                    'button',
-                    {
-                      key: tb.id,
-                      className: 'dsh-vw-btn',
-                      onClick: () => setWarCenterTab(tb.id),
-                      style: {
-                        padding: '5px 13px',
-                        borderRadius: '999px',
-                        border: 'none',
-                        fontSize: '12px',
-                        fontWeight: on ? 800 : 500,
-                        background: on ? (tb.id === 'map' ? T.accentBlueBg : T.accentGoldBg) : 'transparent',
-                        color: on ? (tb.id === 'map' ? T.accentBlue : T.accentGold) : T.textSecondary,
-                      },
-                    },
-                    tb.label,
-                  )
-                }),
-              ),
-              // Live Telemetry Badges
-              h(
-                'div',
-                { style: { display: 'flex', alignItems: 'center', gap: '7px', fontSize: '11px', fontFamily: 'Consolas, monospace' } },
-                h(
-                  'span',
-                  {
-                    style: {
-                      padding: '3px 8px',
-                      borderRadius: '6px',
-                      background: hasLiveTask ? T.accentBlueBg : T.bgElevated,
-                      color: hasLiveTask ? T.accentBlue : T.textSecondary,
-                      border: `1px solid ${hasLiveTask ? T.accentBlueBorder : T.borderSubtle}`,
-                    },
-                  },
-                  hasLiveTask
-                    ? `MISSION ${Math.round(Number(currentTaskRun?.progress || 0))}% · ${Math.round(Number(currentTaskRun?.elapsedMs || 0) / 1000)}s`
-                    : `ENGINE: ${String(script?.engine || directorForm.engine || 'remotion').toUpperCase()}`,
-                ),
                 h(
                   'button',
                   {
+                    type: 'button',
                     className: 'dsh-vw-btn',
-                    onClick: () => setActiveStep(3),
-                    style: { ...ghostBtnStyle, padding: '4px 10px', fontSize: '11px' },
+                    onClick: () => switchWorkbenchMode('chat'),
+                    style: { padding: '5px 11px', borderRadius: '999px', border: 'none', background: 'transparent', color: T.textSecondary, fontSize: '12.5px', fontWeight: 600, whiteSpace: 'nowrap' },
                   },
-                  '打开三轨时间轴 →',
+                  'DeepSeek Harness',
                 ),
-              ),
-            ),
-
-            // Center Stage Main Viewport
-            warCenterTab === 'map'
-              ? h(WarRoomConstellationStage, {
-                  agents: hudAgents,
-                  activeRun: currentTaskRun,
-                  hasMp4,
-                  previewHtmlUrl,
-                  avatarEnabled: avatarCfg.enabled,
-                  dark: resolvedDark,
-                  T,
-                  onJumpStep: (st) => setActiveStep(st),
-                  onSwitchToMonitor: () => setWarCenterTab('monitor'),
-                })
-              : h(
-                  'div',
+                h(
+                  'span',
                   {
-                    style: {
-                      flex: 1,
-                      minHeight: 0,
-                      borderRadius: '12px',
-                      background: T.monitorShell,
-                      border: `1px solid ${T.borderStrong}`,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: '14px',
-                      position: 'relative',
-                      overflow: 'hidden',
-                    },
+                    style: { padding: '5px 11px', borderRadius: '999px', background: T.accentGoldBg, color: T.accentGold, fontSize: '12.5px', fontWeight: 800, whiteSpace: 'nowrap' },
                   },
-                  mp4Url
-                    ? h('video', {
-                        key: mp4Url,
-                        src: mp4Url,
-                        controls: true,
-                        playsInline: true,
-                        preload: 'auto',
-                        style: {
-                          maxWidth: '100%',
-                          maxHeight: '100%',
-                          borderRadius: '8px',
-                          aspectRatio: `${curW} / ${curH}`,
-                          boxShadow: '0 20px 50px rgba(0,0,0,0.65)',
-                        },
-                      })
-                    : previewHtmlUrl && (script?.scenes?.length || 0) > 0
-                      ? h('iframe', {
-                          ref: iframeRef,
-                          src: previewHtmlUrl,
-                          style: {
-                            height: isPortraitVideo ? '100%' : 'auto',
-                            width: isPortraitVideo ? 'auto' : '100%',
-                            maxWidth: '100%',
-                            maxHeight: '100%',
-                            aspectRatio: `${curW} / ${curH}`,
-                            border: 'none',
-                            borderRadius: '8px',
-                            background: '#000',
-                          },
-                          onLoad: () => seekToFrame(currentFrame, false),
-                        })
-                      : h(
-                          'div',
-                          { style: { textAlign: 'center', color: '#9CA3B5', padding: '32px' } },
-                          h('div', { style: { fontSize: '14px', fontWeight: 700, color: '#E2E8F0', marginBottom: '6px' } }, '成片监看台待命'),
-                          h('div', { style: { fontSize: '12px' } }, '点击右侧「⚡ 一键启动 AI Agent 团队全自动出片」或「极速演练出片」，合成后即可在此直接预览 MP4 与动态分镜。'),
-                        ),
+                  'HTML 视频',
                 ),
-          ),
-
-          // RIGHT WING: Zero-Barrier One-Click Launch Cockpit + Live Subtask & Telemetry Log Terminal
+              )
+            : null,
           h(
-            'aside',
+            'button',
             {
-              className: 'dsh-vw-fui-card',
+              type: 'button',
+              className: 'dsh-vw-btn',
+              title: '切换或管理视频工程',
+              onClick: () => setShowProjectDrawer((v) => !v),
               style: {
-                ...warRoomFuiCard,
-                padding: '13px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '10px',
-                minHeight: 0,
-                overflow: 'hidden',
+                ...ghostBtnStyle,
+                padding: '7px 12px',
+                borderColor: showProjectDrawer ? T.accentGoldBorder : T.borderSubtle,
+                color: T.textPrimary,
+                maxWidth: '240px',
               },
             },
-            h('div', { className: 'dsh-vw-reticle dsh-vw-reticle-bl', style: { borderColor: T.accentGold } }),
-            h('div', { className: 'dsh-vw-reticle dsh-vw-reticle-br', style: { borderColor: T.accentGold } }),
+            h(Icon, { name: 'folder', size: 15, color: T.accentGold }),
+            h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '13.5px', fontWeight: 700 } }, script?.title || activeProjectObj?.name || activeProjectObj?.title || '未命名工程'),
+            h(Icon, { name: 'chevron-down', size: 14, color: T.textMuted }),
+          ),
+        ),
 
-            // Header + Presets
-            h(
-              'div',
-              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
-              h('span', { style: { fontSize: '12.5px', fontWeight: 800, color: T.accentGold } }, '⚡ 一键协同出片控制台'),
-              h(
-                'div',
-                { style: { display: 'flex', gap: '4px' } },
-                TOPIC_PRESETS.map((pr) =>
-                  h(
-                    'button',
-                    {
-                      key: pr.label,
-                      className: 'dsh-vw-btn',
-                      onClick: () => setDirectorForm((prev) => ({ ...prev, topic: pr.topic })),
-                      style: { ...ghostBtnStyle, padding: '2px 7px', fontSize: '10px' },
-                    },
-                    pr.label.slice(0, 3),
-                  ),
-                ),
-              ),
-            ),
-
-            // Creative Topic Box
-            h('textarea', {
-              rows: 3,
-              value: directorForm.topic,
-              onChange: (ev) => setDirectorForm((prev) => ({ ...prev, topic: ev.target.value })),
-              placeholder: '输入视频主题、卖点或旁白需求；左侧导入素材后，AI 团队将自动剪辑、配音、合成动效并输出 MP4...',
-              style: { ...inputStyle, fontSize: '12px', padding: '8px 10px', resize: 'none', lineHeight: 1.48 },
-            }),
-
-            // Compact 2x2 Tactile Spec Selectors
-            h(
-              'div',
-              { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' } },
-              h(
-                'select',
-                {
-                  value: directorForm.aspectRatio,
-                  onChange: (ev) => setDirectorForm((prev) => ({ ...prev, aspectRatio: ev.target.value })),
-                  style: { ...inputStyle, padding: '6px 8px', fontSize: '11.5px' },
-                },
-                ASPECT_RATIO_OPTIONS.map((ar) => h('option', { key: ar.id, value: ar.id }, `${ar.icon} ${ar.label}`)),
-              ),
-              h(
-                'select',
-                {
-                  value: directorForm.quality,
-                  onChange: (ev) => setDirectorForm((prev) => ({ ...prev, quality: ev.target.value })),
-                  style: { ...inputStyle, padding: '6px 8px', fontSize: '11.5px' },
-                },
-                QUALITY_OPTIONS.map((q) => h('option', { key: q.id, value: q.id }, q.label)),
-              ),
-              h(
-                'select',
-                {
-                  value: avatarCfg.enabled ? avatarCfg.mode : 'off',
-                  onChange: (ev) => {
-                    const val = ev.target.value
-                    if (val === 'off') setAvatarCfg((prev) => ({ ...prev, enabled: false }))
-                    else setAvatarCfg((prev) => ({ ...prev, enabled: true, mode: val }))
-                  },
-                  style: { ...inputStyle, padding: '6px 8px', fontSize: '11.5px' },
-                },
-                h('option', { value: 'off' }, '数字人: 关闭'),
-                h('option', { value: 'ai-human' }, '🤖 AI 数字人'),
-                h('option', { value: 'cloned-human' }, '👤 克隆真人'),
-              ),
-              h(
-                'select',
-                {
-                  value: directorForm.bgmMode,
-                  onChange: (ev) => setDirectorForm((prev) => ({ ...prev, bgmMode: ev.target.value })),
-                  style: { ...inputStyle, padding: '6px 8px', fontSize: '11.5px' },
-                },
-                h('option', { value: 'llm-coded' }, 'BGM: AI代码配乐'),
-                h('option', { value: 'uploaded' }, `BGM: 个人上传`),
-                h('option', { value: 'tts-engine' }, 'BGM: TTS氛围'),
-              ),
-            ),
-
-            // Signature Reactor Plasma CTA Button
-            h(
+        // Center: Clean 3-Mode Navigation (`⚡ AI 作战大屏` | `🎛 分步精修工作台` | `📋 任务监控`)
+        h(
+          'nav',
+          {
+            style: {
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '4px',
+              borderRadius: '999px',
+              background: T.bgInput,
+              border: `1px solid ${T.borderStrong}`,
+            },
+          },
+          [
+            { id: 'warroom', label: '⚡ AI 作战大屏' },
+            { id: 'studio', label: '🎛 分步精修工作台' },
+            { id: 'tasks', label: runningCount > 0 ? `📋 任务监控 (${runningCount})` : '📋 任务监控' },
+          ].map((tab) => {
+            const on = activeNav === tab.id
+            const isWar = tab.id === 'warroom'
+            return h(
               'button',
               {
-                className: 'dsh-vw-btn dsh-vw-reactor-btn',
-                disabled: Boolean(busyLabel),
-                onClick: () => handleStartOneClickPipeline('', { stayOnCurrentTab: true }),
+                key: tab.id,
+                type: 'button',
+                className: 'dsh-vw-btn',
+                onClick: () => {
+                  setIsPlaying(false)
+                  setActiveNav(tab.id)
+                  if (tab.id === 'tasks' || tab.id === 'warroom') fetchTaskRuns()
+                },
                 style: {
-                  ...goldBtnStyle,
-                  width: '100%',
-                  padding: '11px 14px',
-                  fontSize: '13px',
-                  boxShadow: resolvedDark
-                    ? '0 0 26px rgba(229, 169, 60, 0.32)'
-                    : '0 8px 20px rgba(15, 23, 42, 0.2)',
+                  padding: '7px 18px',
+                  borderRadius: '999px',
+                  border: `1px solid ${on ? (isWar ? T.accentBlueBorder : T.accentGoldBorder) : 'transparent'}`,
+                  background: on ? (isWar ? T.accentBlueBg : T.accentGoldBg) : 'transparent',
+                  color: on ? (isWar ? T.accentBlue : T.accentGold) : T.textSecondary,
+                  fontSize: '13.5px',
+                  fontWeight: on ? 800 : 600,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '7px',
+                  whiteSpace: 'nowrap',
                 },
               },
-              h(Icon, { name: 'zap', size: 15 }),
-              llmConfig?.configured ? '⚡ 一键启动 AI Agent 团队出片' : '连接模型后 · ⚡ 一键全自动出片',
-            ),
-
-            // Secondary Fast Draft + Live Kill / Pause Switch Row
-            h(
-              'div',
-              { style: { display: 'flex', gap: '6px' } },
-              h(
-                'button',
-                {
-                  className: 'dsh-vw-btn',
-                  disabled: Boolean(busyLabel),
-                  onClick: () => handleStartOneClickPipeline('schema-plan', { stayOnCurrentTab: true }),
-                  style: { ...ghostBtnStyle, flex: 1, padding: '6px 8px', fontSize: '11px', justifyContent: 'center' },
-                },
-                '🎞 极速演练 (免大模型)',
-              ),
-              currentTaskRun && (currentTaskRun.status === 'running' || currentTaskRun.status === 'paused')
-                ? h(
-                    React.Fragment,
-                    null,
-                    h(
-                      'button',
-                      {
-                        className: 'dsh-vw-btn',
-                        onClick: () => handleTaskControl(currentTaskRun.status === 'paused' ? 'resume' : 'pause', currentTaskRun.id),
-                        style: { ...ghostBtnStyle, padding: '6px 9px', fontSize: '11px', color: T.accentGold, borderColor: T.accentGoldBorder },
-                      },
-                      currentTaskRun.status === 'paused' ? '▶ 恢复' : '⏸ 暂停',
-                    ),
-                    h(
-                      'button',
-                      {
-                        className: 'dsh-vw-btn',
-                        onClick: () => handleTaskControl('stop', currentTaskRun.id),
-                        style: { ...ghostBtnStyle, padding: '6px 9px', fontSize: '11px', color: T.accentRed, borderColor: 'rgba(244,63,94,0.45)' },
-                      },
-                      '■ 急停',
-                    ),
-                  )
-                : h(
-                    'button',
-                    {
-                      className: 'dsh-vw-btn',
-                      onClick: () => {
-                        setActiveStep(5)
-                        fetchTaskRuns()
-                      },
-                      style: { ...ghostBtnStyle, padding: '6px 9px', fontSize: '11px' },
-                    },
-                    '全量日志',
-                  ),
-            ),
-
-            // Live Subtask Meters + Streaming Telemetry Terminal
-            h(
-              'div',
-              { style: { flex: 1, minHeight: '130px', display: 'flex', flexDirection: 'column', gap: '7px', overflow: 'hidden', borderTop: `1px solid ${T.borderSubtle}`, paddingTop: '9px' } },
-              h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('span', { style: { fontSize: '10.5px', fontWeight: 800, color: T.accentBlue, fontFamily: 'Consolas, monospace' } }, 'LIVE TELEMETRY & LOG STREAM'),
-                h('span', { style: { fontSize: '10px', color: T.textMuted, fontFamily: 'Consolas, monospace' } }, currentTaskRun ? currentTaskRun.status.toUpperCase() : 'STANDBY'),
-              ),
-              (currentTaskRun?.tasks || []).length > 0
-                ? h(
-                    'div',
-                    { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '5px' } },
-                    (currentTaskRun.tasks || []).slice(0, 6).map((tk) => {
-                      const st = taskStatusStyle(tk.status)
-                      return h(
-                        'div',
-                        {
-                          key: tk.id,
-                          style: {
-                            minWidth: 0,
-                            overflow: 'hidden',
-                            padding: '5px 7px',
-                            borderRadius: '7px',
-                            background: T.bgElevated,
-                            border: `1px solid ${tk.status === 'running' ? T.accentBlueBorder : T.borderSubtle}`,
-                            fontSize: '10px',
-                          },
-                        },
-                        h(
-                          'div',
-                          { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '4px', fontWeight: 700, minWidth: 0 } },
-                          h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, tk.name),
-                          h('span', { style: { flexShrink: 0, color: st.color, fontFamily: 'Consolas, monospace' } }, `${Math.round(Number(tk.progress || 0))}%`),
-                        ),
-                        h(
-                          'div',
-                          { style: { marginTop: '4px', height: '3px', borderRadius: '99px', background: 'rgba(128,128,128,0.2)', overflow: 'hidden' } },
-                          h('div', { style: { width: `${Math.round(Number(tk.progress || 0))}%`, height: '100%', background: st.color } }),
-                        ),
-                      )
-                    }),
-                  )
+              tab.label,
+              hasLiveTask && (tab.id === 'warroom' || tab.id === 'tasks')
+                ? h('span', { className: 'dsh-vw-rec-dot', style: { width: '7px', height: '7px', borderRadius: '50%', background: T.accentBlue } })
                 : null,
-              h(
-                'div',
-                {
-                  className: 'dsh-vw-scroll',
-                  style: {
-                    flex: 1,
-                    minHeight: '72px',
-                    overflowY: 'auto',
-                    padding: '8px 9px',
-                    borderRadius: '9px',
-                    background: resolvedDark ? 'rgba(4, 7, 13, 0.86)' : '#0B1220',
-                    border: `1px solid ${hasLiveTask ? T.accentBlueBorder : 'rgba(255,255,255,0.12)'}`,
-                    fontFamily: 'Consolas, monospace',
-                    fontSize: '10.5px',
-                    lineHeight: 1.55,
-                    color: '#CBD5E1',
-                  },
-                },
-                (currentTaskRun?.logs || []).length > 0
-                  ? (currentTaskRun.logs || []).slice(-22).map((lg, idx) =>
-                      h(
-                        'div',
-                        {
-                          key: idx,
-                          style: { color: lg.level === 'error' ? '#FB7185' : lg.level === 'warn' ? '#FBBF24' : '#BAE6FD' },
-                        },
-                        `[${lg.ts ? new Date(lg.ts).toLocaleTimeString('zh-CN', { hour12: false }) : '--:--:--'}] [${lg.stage || 'swarm'}] ${lg.message}`,
-                      ),
-                    )
-                  : h('div', { style: { color: '#64748B' } }, '> 5 大 AI Agent 已就位，等待触发协同指令...\n> 点击上方【极速演练】或【⚡ 一键启动】即可观察实时协同星图与终端推演日志。'),
-              ),
-            ),
+            )
+          }),
+        ),
+
+        // Right: Model Config · Skin · Theme Toggle
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 } },
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dsh-vw-btn',
+              onClick: () => setShowLlmModal(true),
+              style: {
+                ...ghostBtnStyle,
+                padding: '7px 13px',
+                borderColor: llmConfig?.configured ? T.accentBlueBorder : T.accentGoldBorder,
+                color: llmConfig?.configured ? T.accentBlue : T.accentGold,
+              },
+            },
+            h(Icon, { name: 'cpu', size: 15 }),
+            llmConfig?.configured ? `AI 模型: ${llmConfig.model || '已配置'}` : '配置 AI 模型',
+          ),
+          h(
+            'button',
+            { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowSkinModal(true), style: { ...ghostBtnStyle, padding: '7px 12px' } },
+            h(Icon, { name: 'palette', size: 15 }),
+            '皮肤',
+          ),
+          h(
+            'button',
+            { type: 'button', className: 'dsh-vw-btn', onClick: cycleThemePref, title: '点击切换：跟随 DSH / 暗色电影 / 亮色工作室', style: { ...ghostBtnStyle, padding: '7px 12px' } },
+            h(Icon, { name: resolvedDark ? 'moon' : 'sun', size: 15, color: T.accentGold }),
+            themePref === 'follow-dsh' ? '自动' : themePref === 'dark' ? '暗色' : '亮色',
           ),
         ),
       )
 
-      // -----------------------------------------------------------------------
-      // STEP 1: UNIFIED ASSET FUNNEL + TELEPROMPTER STUDIO + ONE-CLICK PIPELINE
-      // -----------------------------------------------------------------------
-      const step1View = h(
-        'div',
-        { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', padding: '22px 28px' } },
-        h(
-          'div',
-          { style: { maxWidth: '1100px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '18px' } },
-          // Top Title Row
-          h(
+      // Slide-Out Project Reel Drawer
+      const projectDrawer = showProjectDrawer
+        ? h(
             'div',
-            { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap' } },
+            {
+              onClick: () => setShowProjectDrawer(false),
+              style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.52)', backdropFilter: 'blur(4px)', zIndex: 2800 },
+            },
             h(
-              'div',
-              null,
-              h('h2', { style: { fontSize: '21px', fontWeight: 800, margin: 0, letterSpacing: '0.01em' } }, '01 · 项目创建与统一素材拍摄中心'),
-              h('p', { style: { margin: '5px 0 0', fontSize: '12.5px', color: T.textSecondary } }, '把画面素材、个人 BGM 配乐、数字人底板、声纹干声与真人提词出镜全部收口于此。填完主题即可点击「⚡ 一键全自动出片」。'),
+              'aside',
+              {
+                onClick: (ev) => ev.stopPropagation(),
+                style: {
+                  width: '320px',
+                  maxWidth: '90vw',
+                  height: '100%',
+                  background: T.bgPanelSolid,
+                  borderRight: `1px solid ${T.borderStrong}`,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  boxShadow: T.shadowPopover,
+                },
+              },
+              h(
+                'div',
+                { style: { padding: '18px 18px', borderBottom: `1px solid ${T.borderSubtle}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                h('div', { style: { fontSize: '16px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' } }, h(Icon, { name: 'film', size: 18, color: T.accentGold }), '我的视频工程库'),
+                h(
+                  'div',
+                  { style: { display: 'flex', gap: '6px' } },
+                  h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowNewModal(true), style: { ...goldBtnStyle, padding: '6px 12px', fontSize: '12.5px' } }, h(Icon, { name: 'plus', size: 14 }), '新建'),
+                  h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowProjectDrawer(false), style: { ...ghostBtnStyle, padding: '6px 8px' } }, h(Icon, { name: 'x', size: 15 })),
+                ),
+              ),
+              h(
+                'div',
+                { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' } },
+                projects.map((p) => {
+                  const pDir = p.projectDir || p.dir
+                  const pTitle = p.name || p.title || '未命名工程'
+                  const isAct = pDir === activeProjectDir
+                  return h(
+                    'div',
+                    {
+                      key: pDir,
+                      'data-project-title': pTitle,
+                      onClick: () => handleSelectProject(pDir),
+                      style: {
+                        padding: '12px 14px',
+                        borderRadius: '12px',
+                        cursor: 'pointer',
+                        background: isAct ? T.accentGoldBg : T.bgElevated,
+                        border: `1px solid ${isAct ? T.accentGoldBorder : T.borderSubtle}`,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '10px',
+                      },
+                    },
+                    h(
+                      'div',
+                      { style: { minWidth: 0 } },
+                      h('div', { style: { fontSize: '14px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isAct ? T.accentGold : T.textPrimary } }, pTitle),
+                      h('div', { style: { fontSize: '12px', color: T.textMuted, marginTop: '3px', fontFamily: 'Consolas, monospace' } }, `${p.sceneCount || 0} 幕 · ${p.hasMp4 ? '✓ 有成片' : '制作中'}`),
+                    ),
+                    confirmDeleteDir === pDir
+                      ? h(
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'dsh-vw-btn',
+                            onClick: (ev) => {
+                              ev.stopPropagation()
+                              handleDeleteProject(pDir)
+                            },
+                            style: { padding: '5px 10px', borderRadius: '8px', border: 'none', background: T.accentRed, color: '#fff', fontSize: '12px', fontWeight: 700 },
+                          },
+                          '确认删除',
+                        )
+                      : h(
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'dsh-vw-btn',
+                            title: '删除此工程',
+                            onClick: (ev) => {
+                              ev.stopPropagation()
+                              setConfirmDeleteDir(pDir)
+                            },
+                            style: { background: 'transparent', border: 'none', color: T.textMuted, padding: '6px' },
+                          },
+                          h(Icon, { name: 'trash', size: 15 }),
+                        ),
+                  )
+                }),
+              ),
             ),
-            h(
-              'button',
-              { className: 'dsh-vw-btn', onClick: () => setActiveStep(2), style: ghostBtnStyle },
-              '下一步：精细调节导演/数字人/混音 →',
-            ),
-          ),
+          )
+        : null
 
-          // CARD A: Hero Topic + Quick Settings + ⚡ One-Click Multi-Agent Launchpad
+      // =======================================================================
+      // 9. VIEW 1: KINETIC AI AGENT WAR ROOM (`activeNav === 'warroom'`)
+      // =======================================================================
+      const visualAssetThumbs = projectAssets.filter((a) => a.type === 'image' || a.type === 'video').slice(0, 6)
+      const selectedStyleMeta = UNIFIED_STYLES.find((s) => s.id === directorForm.style) || UNIFIED_STYLES[0]
+      const preflightAssetOk = (assetSummary.image || 0) + (assetSummary.video || 0) > 0 || !directorForm.topic.trim() ? true : true // zero-asset can still pure-code! Wait: highlight asset readiness honestly
+      const hasVisualAssets = (assetSummary.image || 0) + (assetSummary.video || 0) > 0
+      const isAiMode = directorForm.creationMode !== 'local-draft'
+      const aiBrainReady = !isAiMode || Boolean(llmConfig?.configured)
+
+      const warRoomView = h(
+        'div',
+        {
+          className: 'dsh-vw-scroll',
+          style: {
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            padding: '18px 24px 28px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '18px',
+          },
+        },
+        // --- A. TOP KINETIC THEATER STAGE (60%+ VISUAL SHOWPIECE) ---
+        h(
+          'section',
+          {
+            style: {
+              ...panelStyle,
+              position: 'relative',
+              minHeight: '396px',
+              flexShrink: 0,
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+              border: `1px solid ${hasLiveTask ? T.accentBlueBorder : T.borderStrong}`,
+            },
+          },
+          h(WarRoomKineticCanvas, { active: hasLiveTask || Boolean(busyLabel), dark: resolvedDark, agents: currentTaskRun?.agents || [] }),
+
+          // Top HUD Header inside Kinetic Stage
           h(
             'div',
             {
               style: {
-                ...panelStyle,
-                padding: '18px 20px',
-                borderColor: T.accentBlueBorder,
-                background: resolvedDark
-                  ? 'linear-gradient(135deg, rgba(13,17,26,0.88), rgba(16,26,42,0.78))'
-                  : 'linear-gradient(135deg, rgba(255,255,255,0.92), rgba(240,247,255,0.88))',
-                display: 'grid',
-                gridTemplateColumns: 'minmax(0, 1.35fr) minmax(300px, 0.9fr)',
-                gap: '18px',
-                alignItems: 'stretch',
+                position: 'relative',
+                zIndex: 4,
+                padding: '14px 20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '12px',
+                borderBottom: `1px solid ${T.borderSubtle}`,
+                background: resolvedDark ? 'rgba(6, 10, 18, 0.56)' : 'rgba(255, 255, 255, 0.65)',
               },
             },
             h(
               'div',
-              { style: { display: 'flex', flexDirection: 'column', gap: '9px' } },
+              { style: { display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' } },
+              h(
+                'span',
+                {
+                  style: {
+                    padding: '5px 12px',
+                    borderRadius: '999px',
+                    fontSize: '12.5px',
+                    fontWeight: 800,
+                    background: hasLiveTask ? T.accentBlueBg : hasMp4 ? T.accentGreenBg : T.bgElevated,
+                    border: `1px solid ${hasLiveTask ? T.accentBlueBorder : hasMp4 ? 'rgba(52,211,153,0.4)' : T.borderSubtle}`,
+                    color: hasLiveTask ? T.accentBlue : hasMp4 ? T.accentGreen : T.textSecondary,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '7px',
+                  },
+                },
+                h('span', { className: hasLiveTask ? 'dsh-vw-rec-dot' : '', style: { width: '8px', height: '8px', borderRadius: '50%', background: hasLiveTask ? T.accentBlue : hasMp4 ? T.accentGreen : T.textMuted } }),
+                hasLiveTask ? `4-Agent 协同生成中 · ${Math.round(Number(currentTaskRun?.progress || 0))}%` : hasMp4 ? '✓ 最新成品 MP4 已就绪' : '4-Agent 作战剧场已待命',
+              ),
               h(
                 'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-                h('label', { style: { fontSize: '13px', fontWeight: 800, color: T.accentBlue } }, '⚡ 核心视频创意 / 口播主题'),
-                h(
-                  'div',
-                  { style: { display: 'flex', gap: '5px', flexWrap: 'wrap' } },
-                  TOPIC_PRESETS.map((pr) =>
+                { style: { display: 'flex', gap: '14px', fontSize: '13px', color: T.textSecondary, fontFamily: 'Consolas, monospace', fontVariantNumeric: 'tabular-nums' } },
+                h('span', null, `画幅: ${curW}×${curH}`),
+                h('span', null, `分镜: ${scenes.length} 幕`),
+                currentTaskRun ? h('span', null, `耗时: ${Math.round(Number(currentTaskRun.elapsedMs || 0) / 1000)}s`) : null,
+              ),
+            ),
+            h(
+              'div',
+              { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+              h(SegmentedPills, {
+                value: warCenterTab,
+                onChange: setWarCenterTab,
+                T,
+                size: 'sm',
+                options: [
+                  { id: 'theater', label: '⚡ 智能体协同剧场' },
+                  { id: 'mp4', label: hasMp4 ? '🎬 成片播放器 (就绪)' : '🎬 成片预览台' },
+                  { id: 'preview', label: '🌐 互动分镜预览' },
+                ],
+              }),
+              hasLiveTask
+                ? h(
+                    'div',
+                    { style: { display: 'flex', gap: '6px' } },
                     h(
                       'button',
                       {
-                        key: pr.label,
+                        type: 'button',
                         className: 'dsh-vw-btn',
-                        onClick: () => setDirectorForm((prev) => ({ ...prev, topic: pr.topic })),
-                        style: { ...ghostBtnStyle, padding: '3px 9px', fontSize: '11px' },
+                        onClick: () => handleTaskControl(currentTaskRun?.status === 'paused' ? 'resume' : 'pause', currentTaskRun?.id),
+                        style: { ...ghostBtnStyle, padding: '6px 12px', color: T.accentGold, borderColor: T.accentGoldBorder },
                       },
-                      pr.label,
+                      currentTaskRun?.status === 'paused' ? '▶ 恢复' : '⏸ 暂停',
                     ),
-                  ),
-                ),
-              ),
-              h('textarea', {
-                rows: 3,
-                value: directorForm.topic,
-                onChange: (ev) => setDirectorForm((prev) => ({ ...prev, topic: ev.target.value })),
-                placeholder: '输入你想创作的视频主题、产品卖点或口播文案重点；若已导入素材，4 大 AI Agent 会自动配合素材写出代码成片...',
-                style: { ...inputStyle, resize: 'vertical', lineHeight: 1.55, flex: 1 },
-              }),
-              // Quick Specs Row
-              h(
-                'div',
-                { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
-                h(
-                  'select',
-                  {
-                    value: directorForm.aspectRatio,
-                    onChange: (ev) => setDirectorForm((prev) => ({ ...prev, aspectRatio: ev.target.value })),
-                    style: { ...inputStyle, width: 'auto', padding: '6px 10px', fontSize: '12px' },
-                  },
-                  ASPECT_RATIO_OPTIONS.map((ar) => h('option', { key: ar.id, value: ar.id }, `${ar.icon} ${ar.label}`)),
-                ),
-                h(
-                  'select',
-                  {
-                    value: directorForm.quality,
-                    onChange: (ev) => setDirectorForm((prev) => ({ ...prev, quality: ev.target.value })),
-                    style: { ...inputStyle, width: 'auto', padding: '6px 10px', fontSize: '12px' },
-                  },
-                  QUALITY_OPTIONS.map((q) => h('option', { key: q.id, value: q.id }, `${q.label}`)),
-                ),
-                h(
-                  'select',
-                  {
-                    value: avatarCfg.enabled ? avatarCfg.mode : 'off',
-                    onChange: (ev) => {
-                      const val = ev.target.value
-                      if (val === 'off') setAvatarCfg((prev) => ({ ...prev, enabled: false }))
-                      else setAvatarCfg((prev) => ({ ...prev, enabled: true, mode: val }))
-                    },
-                    style: { ...inputStyle, width: 'auto', padding: '6px 10px', fontSize: '12px' },
-                  },
-                  h('option', { value: 'off' }, '数字人: 不启用'),
-                  h('option', { value: 'ai-human' }, '🤖 启用纯 AI 数字人出镜'),
-                  h('option', { value: 'cloned-human' }, '👤 启用克隆真人数字人'),
-                ),
-                h(
-                  'select',
-                  {
-                    value: directorForm.bgmMode,
-                    onChange: (ev) => setDirectorForm((prev) => ({ ...prev, bgmMode: ev.target.value })),
-                    style: { ...inputStyle, width: 'auto', padding: '6px 10px', fontSize: '12px' },
-                  },
-                  h('option', { value: 'llm-coded' }, 'BGM: AI 现写代码配乐'),
-                  h('option', { value: 'uploaded' }, `BGM: 个人上传 (${mountedBgmItem ? mountedBgmItem.name : '待导入'})`),
-                  h('option', { value: 'tts-engine' }, 'BGM: IndexTTS 氛围垫底'),
-                ),
-              ),
-            ),
-            // Right Launchbox
-            h(
-              'div',
-              {
-                style: {
-                  padding: '14px 16px',
-                  borderRadius: '12px',
-                  background: resolvedDark ? 'rgba(7, 9, 14, 0.62)' : 'rgba(255, 255, 255, 0.72)',
-                  border: `1px solid ${T.accentGoldBorder}`,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  gap: '10px',
-                },
-              },
-              h(
-                'div',
-                null,
-                h('div', { style: { fontSize: '12.5px', fontWeight: 800, color: T.accentGold } }, '4 大 AI Agent 全自动协同作战流水线'),
-                h('div', { style: { fontSize: '11px', color: T.textSecondary, marginTop: '4px', lineHeight: 1.5 } }, '依次驱动「策划导演 → 素材剪辑 → 配音混音(含数字人) → 动效自检 MP4」，全过程可随时在顶部 HUD 或任务中心暂停/急停/接管。'),
-              ),
-              h(
-                'button',
-                {
-                  className: 'dsh-vw-btn',
-                  disabled: Boolean(busyLabel),
-                  onClick: () => handleStartOneClickPipeline(),
-                  style: {
-                    ...goldBtnStyle,
-                    width: '100%',
-                    padding: '12px 16px',
-                    fontSize: '14px',
-                    boxShadow: resolvedDark ? '0 8px 24px rgba(229, 169, 60, 0.25)' : '0 8px 20px rgba(15, 23, 42, 0.16)',
-                  },
-                },
-                h(Icon, { name: 'zap', size: 16 }),
-                llmConfig?.configured ? '⚡ 一键全自动出片 (AI 团队协同)' : '配置大模型后 · ⚡ 一键全自动出片',
-              ),
-              h(
-                'div',
-                { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
-                h(
-                  'button',
-                  {
-                    className: 'dsh-vw-btn',
-                    disabled: Boolean(busyLabel),
-                    onClick: () => handleStartOneClickPipeline('schema-plan'),
-                    style: { ...ghostBtnStyle, justifyContent: 'center', fontSize: '11.5px' },
-                  },
-                  '🎞 极速演练出片 (免大模型)',
-                ),
-                h(
-                  'button',
-                  {
-                    className: 'dsh-vw-btn',
-                    onClick: () => setActiveStep(2),
-                    style: { ...ghostBtnStyle, justifyContent: 'center', fontSize: '11.5px', borderColor: T.accentBlueBorder, color: T.accentBlue },
-                  },
-                  '🎛 进入分步精修模式 →',
-                ),
-              ),
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'dsh-vw-btn',
+                        onClick: () => handleTaskControl('stop', currentTaskRun?.id),
+                        style: { ...ghostBtnStyle, padding: '6px 12px', color: T.accentRed, borderColor: 'rgba(251,113,133,0.45)' },
+                      },
+                      '■ 停止',
+                    ),
+                  )
+                : null,
             ),
           ),
 
-          // CARD B: Unified 5-Channel Asset Funnel (Pictures, Videos, BGM Music, Avatar Base, Voice Clone, .motion)
+          // Center Content of Stage: Theater (4 Real Agents) OR Finished MP4 Player OR Live HTML Preview
+          h(
+            'div',
+            { style: { position: 'relative', zIndex: 4, flex: 1, padding: '14px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '12px' } },
+            warCenterTab === 'mp4'
+              ? h(
+                  'div',
+                  { style: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', minHeight: '290px' } },
+                  hasMp4
+                    ? h(
+                        React.Fragment,
+                        null,
+                        h('video', {
+                          key: mp4Url,
+                          src: mp4Url,
+                          preload: 'auto',
+                          controls: true,
+                          style: { width: '100%', maxWidth: '480px', maxHeight: '268px', aspectRatio: `${curW} / ${curH}`, borderRadius: '14px', border: `1px solid ${T.borderStrong}`, background: '#000', boxShadow: '0 22px 54px rgba(0,0,0,0.65)' },
+                        }),
+                        h(
+                          'div',
+                          { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } },
+                          h('a', { href: mp4Url, download: 'final.mp4', style: { ...goldBtnStyle, textDecoration: 'none' } }, h(Icon, { name: 'download', size: 15 }), '下载高清成品 MP4'),
+                          h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => goToStudioStep(3), style: ghostBtnStyle }, '去第 3 步精细微调分镜'),
+                          h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => goToStudioStep(4), style: ghostBtnStyle }, '查看质检单与一键发布包'),
+                        ),
+                      )
+                    : h(
+                        'div',
+                        { style: { textAlign: 'center', color: T.textSecondary, padding: '36px' } },
+                        h('div', { style: { fontSize: '16px', fontWeight: 700, marginBottom: '8px' } }, '尚未导出成片 MP4'),
+                        h('div', { style: { fontSize: '13.5px', color: T.textMuted } }, '在下方写好需求点一下「一键启动出片」，成片出来后这里会自动变成影院级播放器'),
+                      ),
+                )
+              : warCenterTab === 'preview'
+                ? h(
+                    'div',
+                    { style: { flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', minHeight: '310px' } },
+                    previewHtmlUrl
+                      ? h(
+                          React.Fragment,
+                          null,
+                          h(
+                            'div',
+                            { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
+                            h(
+                              'div',
+                              { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+                              h(
+                                'button',
+                                {
+                                  type: 'button',
+                                  className: 'dsh-vw-btn',
+                                  onClick: () => setIsPlaying((p) => !p),
+                                  style: { ...goldBtnStyle, padding: '6px 13px', fontSize: '12.5px' },
+                                },
+                                h(Icon, { name: isPlaying ? 'pause' : 'play', size: 14 }),
+                                isPlaying ? '暂停' : '播放预览',
+                              ),
+                              h(
+                                'button',
+                                {
+                                  type: 'button',
+                                  className: 'dsh-vw-btn',
+                                  disabled: activePlayingSceneIdx <= 0,
+                                  onClick: () => {
+                                    const prevIdx = Math.max(0, activePlayingSceneIdx - 1)
+                                    const sc = scenes[prevIdx]
+                                    if (sc) {
+                                      setSelectedSceneIdx(prevIdx)
+                                      seekToFrame(Number(sc.startFrame || 0), true)
+                                    }
+                                  },
+                                  style: { ...ghostBtnStyle, padding: '6px 10px', fontSize: '12px' },
+                                },
+                                '◀ 上一幕',
+                              ),
+                              h(
+                                'button',
+                                {
+                                  type: 'button',
+                                  className: 'dsh-vw-btn',
+                                  disabled: activePlayingSceneIdx >= Math.max(0, scenes.length - 1),
+                                  onClick: () => {
+                                    const nextIdx = Math.min(Math.max(0, scenes.length - 1), activePlayingSceneIdx + 1)
+                                    const sc = scenes[nextIdx]
+                                    if (sc) {
+                                      setSelectedSceneIdx(nextIdx)
+                                      seekToFrame(Number(sc.startFrame || 0), true)
+                                    }
+                                  },
+                                  style: { ...ghostBtnStyle, padding: '6px 10px', fontSize: '12px' },
+                                },
+                                '下一幕 ▶',
+                              ),
+                            ),
+                            h(
+                              'span',
+                              { style: { fontSize: '12px', color: T.textMuted, fontFamily: 'Consolas, monospace' } },
+                              `第 ${activePlayingSceneIdx + 1}/${Math.max(1, scenes.length)} 幕 · ${scenes[activePlayingSceneIdx]?.title || ''} · ${Math.round(currentFrame)}f / ${Number(script?.totalDurationInFrames) || 0}f`,
+                            ),
+                          ),
+                          h('iframe', {
+                            ref: iframeRef,
+                            src: previewHtmlUrl,
+                            onLoad: () => seekToFrame(currentFrame, false),
+                            style: { width: '100%', height: '270px', borderRadius: '14px', border: `1px solid ${T.borderStrong}`, background: '#000' },
+                          }),
+                          scenes.length > 0
+                            ? h(
+                                'div',
+                                { className: 'dsh-vw-scroll', style: { display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' } },
+                                scenes.map((sc, sIdx) => {
+                                  const isAct = sIdx === activePlayingSceneIdx
+                                  return h(
+                                    'button',
+                                    {
+                                      key: sc.id || sIdx,
+                                      type: 'button',
+                                      className: 'dsh-vw-btn',
+                                      onClick: () => {
+                                        setSelectedSceneIdx(sIdx)
+                                        seekToFrame(Number(sc.startFrame || 0), true)
+                                      },
+                                      style: {
+                                        padding: '5px 10px',
+                                        borderRadius: '8px',
+                                        border: `1px solid ${isAct ? T.accentGoldBorder : T.borderSubtle}`,
+                                        background: isAct ? T.accentGoldBg : T.bgElevated,
+                                        color: isAct ? T.accentGold : T.textSecondary,
+                                        fontSize: '12px',
+                                        fontWeight: isAct ? 800 : 600,
+                                        whiteSpace: 'nowrap',
+                                        flexShrink: 0,
+                                      },
+                                    },
+                                    `${String(sIdx + 1).padStart(2, '0')} · ${(sc.title || '').slice(0, 10)}`,
+                                  )
+                                }),
+                              )
+                            : null,
+                        )
+                      : h('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', color: T.textMuted } }, '暂无生成好的网页动画工程，请在下方一键启动生成'),
+                  )
+                : h(
+                    React.Fragment,
+                    null,
+                    // 4 Real Agent Hologram Station Cards
+                    h(
+                      'div',
+                      { className: 'dsh-vw-grid-agents' },
+                      AGENT_STATION_META.map((meta, idx) => {
+                        const liveAg = (currentTaskRun?.agents || []).find((a) => a.id === meta.id)
+                        const st = taskStatusBadge(liveAg?.status || 'idle')
+                        const isRun = liveAg?.status === 'running'
+                        const pct = Math.round(Number(liveAg?.progress || (liveAg?.status === 'completed' ? 100 : 0)))
+                        const liveMsg = liveAg?.message || (idx === 0 ? '等待发起创作任务，将自动编写文案与分镜' : meta.role)
+                        return h(
+                          'div',
+                          {
+                            key: meta.id,
+                            onClick: () => goToStudioStep(meta.stepTarget),
+                            style: {
+                              padding: '16px 18px',
+                              borderRadius: '15px',
+                              cursor: 'pointer',
+                              background: resolvedDark ? 'rgba(11, 16, 29, 0.82)' : 'rgba(255, 255, 255, 0.88)',
+                              border: `1.5px solid ${isRun ? meta.color : liveAg?.status === 'completed' ? 'rgba(52,211,153,0.45)' : T.borderStrong}`,
+                              boxShadow: isRun ? `0 0 28px ${meta.color}33` : T.shadowCard,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '11px',
+                              transition: 'transform 0.18s ease, border-color 0.2s ease',
+                            },
+                          },
+                          h(
+                            'div',
+                            { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' } },
+                            h(
+                              'div',
+                              { style: { display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 } },
+                              h(
+                                'div',
+                                {
+                                  style: {
+                                    width: '38px',
+                                    height: '38px',
+                                    borderRadius: '11px',
+                                    background: `${meta.color}20`,
+                                    border: `1px solid ${meta.color}55`,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexShrink: 0,
+                                  },
+                                },
+                                h(Icon, { name: meta.icon, size: 18, color: meta.color }),
+                              ),
+                              h(
+                                'div',
+                                { style: { minWidth: 0 } },
+                                h('div', { style: { fontSize: '14.5px', fontWeight: 800, color: T.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, meta.name),
+                                h('div', { style: { fontSize: '12px', color: T.textMuted, marginTop: '2px' } }, `0${idx + 1} · ${meta.role}`),
+                              ),
+                            ),
+                            h(
+                              'span',
+                              { style: { padding: '3px 9px', borderRadius: '999px', fontSize: '12px', fontWeight: 700, background: st.bg, color: st.color, flexShrink: 0 } },
+                              st.label,
+                            ),
+                          ),
+                          h(
+                            'div',
+                            { style: { fontSize: '13px', color: T.textSecondary, lineHeight: 1.5, minHeight: '40px' } },
+                            liveMsg,
+                          ),
+                          h(
+                            'div',
+                            { style: { display: 'flex', alignItems: 'center', gap: '10px', marginTop: 'auto' } },
+                            h(
+                              'div',
+                              { style: { flex: 1, height: '6px', borderRadius: '99px', background: 'rgba(148,163,184,0.2)', overflow: 'hidden' } },
+                              h('div', { style: { width: `${pct}%`, height: '100%', background: liveAg?.status === 'failed' ? T.accentRed : meta.color, transition: 'width 0.3s ease' } }),
+                            ),
+                            h('span', { style: { fontSize: '12.5px', fontWeight: 700, fontFamily: 'Consolas, monospace', color: meta.color } }, `${pct}%`),
+                          ),
+                        )
+                      }),
+                    ),
+
+                    // Live Output Filmstrip + Live DSP Waveform
+                    h(
+                      'div',
+                      {
+                        className: 'dsh-vw-grid-filmstrip',
+                        style: {
+                          padding: '12px 16px',
+                          borderRadius: '13px',
+                          background: resolvedDark ? 'rgba(7, 11, 21, 0.78)' : 'rgba(241, 246, 253, 0.88)',
+                          border: `1px solid ${T.borderSubtle}`,
+                        },
+                      },
+                      // Real Assets & Storyboard Filmstrip
+                      h(
+                        'div',
+                        { style: { minWidth: 0 } },
+                        h('div', { style: { fontSize: '12.5px', fontWeight: 700, color: T.textSecondary, marginBottom: '7px' } }, scenes.length ? `🎬 实时剧本与素材产出条 (${scenes.length} 幕已规划)` : '🎞 素材与实时产出胶片条'),
+                        visualAssetThumbs.length > 0 || scenes.length > 0
+                          ? h(
+                              'div',
+                              { className: 'dsh-vw-scroll', style: { display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '2px' } },
+                              visualAssetThumbs.map((a) =>
+                                h(
+                                  'div',
+                                  {
+                                    key: a.id,
+                                    onClick: () => goToStudioStep(1),
+                                    style: { width: '76px', height: '48px', borderRadius: '8px', overflow: 'hidden', border: `1px solid ${T.borderStrong}`, flexShrink: 0, cursor: 'pointer', background: '#05070C', position: 'relative' },
+                                  },
+                                  a.type === 'image'
+                                    ? h('img', { src: `/api/video-workbench/asset?projectDir=${encodeURIComponent(activeProjectDir)}&rel=${encodeURIComponent(a.path)}&v=${assetVersion}`, style: { width: '100%', height: '100%', objectFit: 'cover' } })
+                                    : h('video', { src: `/api/video-workbench/asset?projectDir=${encodeURIComponent(activeProjectDir)}&rel=${encodeURIComponent(a.path)}&v=${assetVersion}`, muted: true, style: { width: '100%', height: '100%', objectFit: 'cover' } }),
+                                ),
+                              ),
+                              scenes.slice(0, 12).map((sc, idx) =>
+                                h(
+                                  'div',
+                                  {
+                                    key: sc.id || idx,
+                                    onClick: () => {
+                                      setSelectedSceneIdx(idx)
+                                      setWarCenterTab('preview')
+                                      seekToFrame(Number(sc.startFrame || 0), true)
+                                    },
+                                    title: '点击直接在互动分镜预览中定位该幕；点右侧「去精修分镜」改写单幕',
+                                    style: {
+                                      padding: '6px 11px',
+                                      borderRadius: '8px',
+                                      background: T.bgElevated,
+                                      border: `1px solid ${T.borderSubtle}`,
+                                      fontSize: '12.5px',
+                                      cursor: 'pointer',
+                                      flexShrink: 0,
+                                      maxWidth: '170px',
+                                    },
+                                  },
+                                  h('div', { style: { fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: T.accentBlue } }, `${sc.id || `S0${idx + 1}`} · ${sc.title}`),
+                                  h('div', { style: { fontSize: '12px', color: T.textMuted } }, `${Number(sc.durationSec || 3).toFixed(1)}s`),
+                                ),
+                              ),
+                            )
+                          : h('div', { style: { fontSize: '13px', color: T.textMuted } }, '导入素材或点击下方「加载新手演示素材」后，每帧成果都会在这里实时浮现'),
+                      ),
+
+                      // Live Audio Waveform Spectrum
+                      h(
+                        'div',
+                        { style: { minWidth: '180px' } },
+                        h(
+                          'div',
+                          { style: { display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: hasMasterAudio || hasLiveTask ? T.accentGreen : T.textMuted, marginBottom: '4px', fontWeight: 700 } },
+                          h('span', null, hasMasterAudio ? '✓ 48kHz 混音母带就绪' : hasLiveTask ? '● 音轨协同合成中' : '音频频谱待命'),
+                          h('span', { style: { fontFamily: 'Consolas, monospace' } }, mountedBgmItem ? mountedBgmItem.name.slice(0, 14) : directorForm.bgmMode === 'llm-coded' ? 'AI 编写配乐' : 'IndexTTS 音景'),
+                        ),
+                        h(AudioWaveformCanvas, { active: hasLiveTask || Boolean(busyLabel), isPlaying, dark: resolvedDark, height: 34 }),
+                      ),
+
+                      // Quick Actions into Studio / Code
+                      h(
+                        'div',
+                        { style: { display: 'flex', flexDirection: 'column', gap: '6px', flexShrink: 0 } },
+                        h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => goToStudioStep(3), style: { ...ghostBtnStyle, padding: '6px 12px', fontSize: '12.5px' } }, h(Icon, { name: 'sliders', size: 14 }), '去精修分镜'),
+                        h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleOpenCodeDrawer, style: { ...ghostBtnStyle, padding: '6px 12px', fontSize: '12.5px' } }, h(Icon, { name: 'code', size: 14 }), '查看源码'),
+                      ),
+                    ),
+                  ),
+          ),
+        ),
+
+        // --- B. BOTTOM 3-CARD BEGINNER LAUNCH DOCK (SPACIOUS & CLEAR) ---
+        h(
+          'section',
+          { className: 'dsh-vw-grid-dock' },
+
+          // CARD 1: 准备创作素材 (统一上传 + 一键演示包 + 提词自拍)
           h(
             'div',
             {
               onDragOver: (ev) => {
                 ev.preventDefault()
-                setIsDragging(true)
+                setIsDraggingUpload(true)
               },
-              onDragLeave: () => setIsDragging(false),
+              onDragLeave: () => setIsDraggingUpload(false),
               onDrop: (ev) => {
                 ev.preventDefault()
-                setIsDragging(false)
+                setIsDraggingUpload(false)
                 handleUploadFiles(ev.dataTransfer?.files)
               },
               style: {
                 ...panelStyle,
-                padding: '20px 22px',
-                borderStyle: isDragging ? 'dashed' : 'solid',
-                borderWidth: isDragging ? '2px' : '1px',
-                borderColor: isDragging ? T.accentGold : T.borderSubtle,
+                padding: '20px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '14px',
+                border: `1.5px dashed ${isDraggingUpload ? T.accentBlue : T.borderStrong}`,
               },
             },
             h(
               'div',
-              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' } },
-              h(
-                'div',
-                null,
-                h('div', { style: { fontSize: '14.5px', fontWeight: 800 } }, '📦 统一素材导入与用途分类入口'),
-                h('div', { style: { fontSize: '11.5px', color: T.textMuted, marginTop: '2px' } }, '支持直接拖拽文件到此处，或按用途一键导入；所有 BGM 音乐与声音克隆样本统一从此进入工程'),
-              ),
-              h(
-                'div',
-                { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', fontSize: '11px' } },
-                mountedBgmItem
-                  ? h('span', { style: { padding: '3px 9px', borderRadius: '999px', background: T.accentGreenBg, color: T.accentGreen, fontWeight: 700 } }, `🎵 已挂载 BGM: ${mountedBgmItem.name}`)
-                  : h('span', { style: { padding: '3px 9px', borderRadius: '999px', background: T.bgElevated, color: T.textMuted } }, '未挂载个人 BGM'),
-                specialRoleCount > 0
-                  ? h('span', { style: { padding: '3px 9px', borderRadius: '999px', background: T.accentBlueBg, color: T.accentBlue, fontWeight: 700 } }, `👤 出镜/数字人/声纹 ×${specialRoleCount}`)
-                  : null,
-              ),
+              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+              h('div', { style: { fontSize: '16px', fontWeight: 800 } }, '1. 导入素材 / 极速备料'),
+              h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => goToStudioStep(1), style: { background: 'transparent', border: 'none', color: T.accentBlue, fontSize: '13px', fontWeight: 700, cursor: 'pointer' } }, '素材库管理 →'),
             ),
-            // 6 Clear Channel Buttons
-            h(
-              'div',
-              { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' } },
-              h('button', { className: 'dsh-vw-btn', onClick: () => fileInputRef.current?.click(), style: blueBtnStyle }, h(Icon, { name: 'upload', size: 14 }), ' 图片/实拍视频素材'),
-              h('button', { className: 'dsh-vw-btn', onClick: () => folderInputRef.current?.click(), style: ghostBtnStyle }, h(Icon, { name: 'folder', size: 14 }), ' 导入文件夹'),
-              h('button', { className: 'dsh-vw-btn', onClick: () => bgmInputRef.current?.click(), style: { ...ghostBtnStyle, borderColor: T.accentGoldBorder, color: T.accentGold } }, '🎵 导入 BGM 背景音乐'),
-              h('button', { className: 'dsh-vw-btn', onClick: () => avatarBaseInputRef.current?.click(), style: { ...ghostBtnStyle, borderColor: T.accentBlueBorder, color: T.accentBlue } }, h(Icon, { name: 'avatar', size: 14 }), ' 导入数字人/本人底板'),
-              h('button', { className: 'dsh-vw-btn', onClick: () => voiceCloneInputRef.current?.click(), style: ghostBtnStyle }, h(Icon, { name: 'mic', size: 13 }), ' 导入克隆声音样本'),
-              h('button', { className: 'dsh-vw-btn', onClick: () => setShowVendorModal(true), style: ghostBtnStyle }, '✨ 导入 .motion 动效片段'),
-            ),
-            // Path import w/ Role Selector
-            h(
-              'div',
-              { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' } },
-              h(
-                'select',
-                {
-                  value: assetImportRole,
-                  onChange: (ev) => setAssetImportRole(ev.target.value),
-                  style: { ...inputStyle, width: '175px', padding: '8px 10px', fontSize: '12px' },
-                },
-                h('option', { value: '' }, '自动识别文件类型'),
-                h('option', { value: 'visual' }, '标记为: 视觉分镜素材'),
-                h('option', { value: 'music' }, '标记为: BGM 背景音乐'),
-                h('option', { value: 'avatar_base' }, '标记为: 数字人底板'),
-                h('option', { value: 'host_video' }, '标记为: 真人出镜镜头'),
-                h('option', { value: 'voice_clone' }, '标记为: 声音克隆样本'),
-                h('option', { value: 'sfx' }, '标记为: 音效素材'),
-              ),
-              h('input', {
-                value: assetDirInput,
-                onChange: (ev) => setAssetDirInput(ev.target.value),
-                onKeyDown: (ev) => ev.key === 'Enter' && handleImportByPath(),
-                placeholder: '或粘贴本机图片/视频/音乐/人像路径或文件夹绝对路径，回车批量导入...',
-                style: { ...inputStyle, flex: 1, minWidth: '240px' },
-              }),
-              h('button', { className: 'dsh-vw-btn', onClick: handleImportByPath, style: ghostBtnStyle }, '路径导入'),
-            ),
-
-            // Toggle Header for Built-in Teleprompter + Camera Capture Studio
             h(
               'div',
               {
+                onClick: () => fileInputRef.current?.click(),
                 style: {
-                  borderTop: `1px solid ${T.borderSubtle}`,
-                  paddingTop: '14px',
+                  padding: '16px',
+                  borderRadius: '12px',
+                  background: isDraggingUpload ? T.accentBlueBg : T.bgElevated,
+                  border: `1px solid ${isDraggingUpload ? T.accentBlueBorder : T.borderSubtle}`,
+                  textAlign: 'center',
+                  cursor: 'pointer',
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '12px',
+                  alignItems: 'center',
+                  gap: '7px',
                 },
               },
+              h(Icon, { name: 'upload', size: 22, color: T.accentBlue }),
+              h('div', { style: { fontSize: '14px', fontWeight: 700 } }, '拖拽或点击上传图片、视频与 BGM 音乐'),
+              h('div', { style: { fontSize: '12.5px', color: T.textMuted } }, '支持直接传输百兆 MP4，无需转码等待'),
+            ),
+            uploadProgressState
+              ? h(
+                  'div',
+                  { style: { padding: '10px 12px', borderRadius: '10px', background: T.accentBlueBg, border: `1px solid ${T.accentBlueBorder}` } },
+                  h('div', { style: { fontSize: '12.5px', fontWeight: 700, color: T.accentBlue } }, `正在上传 ${uploadProgressState.current}/${uploadProgressState.total} · ${uploadProgressState.fileName}`),
+                )
+              : null,
+            h(
+              'div',
+              { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' } },
               h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' } },
+                'button',
+                { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleLoadStarterPack, style: { ...ghostBtnStyle, borderColor: T.accentGoldBorder, color: T.accentGold, justifyContent: 'center' } },
+                h(Icon, { name: 'gift', size: 15, color: T.accentGold }),
+                '一键加载演示素材',
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-vw-btn',
+                  onClick: () => {
+                    setShowTeleprompter(true)
+                    goToStudioStep(1)
+                  },
+                  style: { ...ghostBtnStyle, borderColor: T.accentBlueBorder, color: T.accentBlue, justifyContent: 'center' },
+                },
+                h(Icon, { name: 'camera', size: 15, color: T.accentBlue }),
+                '打开提词器自拍',
+              ),
+            ),
+            h(
+              'div',
+              { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginTop: 'auto', paddingTop: '6px' } },
+              [
+                { k: '图片', v: assetSummary.image || 0 },
+                { k: '视频', v: assetSummary.video || 0 },
+                { k: '配乐', v: assetSummary.music || 0 },
+                { k: '人像/声', v: specialRoleCount },
+              ].map((it) =>
                 h(
                   'div',
-                  { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
-                  h('span', { style: { fontSize: '13.5px', fontWeight: 800 } }, '📹 现场真人出镜拍摄 · 可调速智能提词板'),
-                  h('span', { style: { fontSize: '11px', color: T.textMuted } }, '没有现成出镜录像？直接调用电脑摄像头录制并保存至 assets/recordings/'),
-                ),
-                h(
-                  'button',
-                  {
-                    className: 'dsh-vw-btn',
-                    onClick: () => setShowTeleprompter((v) => !v),
-                    style: showTeleprompter ? blueBtnStyle : { ...ghostBtnStyle, borderColor: T.accentBlueBorder, color: T.accentBlue },
-                  },
-                  h(Icon, { name: 'camera', size: 14 }),
-                  showTeleprompter ? '收起提词拍摄棚' : '打开摄像头提词录制棚',
+                  { key: it.k, style: { padding: '8px 6px', borderRadius: '10px', background: T.bgElevated, textAlign: 'center', border: `1px solid ${T.borderSubtle}` } },
+                  h('div', { style: { fontSize: '16px', fontWeight: 900, fontFamily: 'Consolas, monospace', color: it.v > 0 ? T.accentBlue : T.textMuted } }, it.v),
+                  h('div', { style: { fontSize: '12px', color: T.textMuted, marginTop: '2px' } }, it.k),
                 ),
               ),
-
-              showTeleprompter
-                ? h(
-                    'div',
-                    {
-                      style: {
-                        display: 'grid',
-                        gridTemplateColumns: 'minmax(0, 1.35fr) minmax(290px, 0.9fr)',
-                        gap: '16px',
-                        padding: '14px',
-                        borderRadius: '12px',
-                        background: resolvedDark ? 'rgba(5, 8, 14, 0.78)' : 'rgba(241, 245, 250, 0.9)',
-                        border: `1px solid ${T.accentBlueBorder}`,
-                      },
-                    },
-                    // Left: Webcam Video + Semi-Transparent Adjustable Teleprompter Overlay
-                    h(
-                      'div',
-                      {
-                        style: {
-                          position: 'relative',
-                          aspectRatio: '16 / 9',
-                          background: '#030508',
-                          borderRadius: '10px',
-                          overflow: 'hidden',
-                          border: `1px solid ${camRecording ? T.accentRed : 'rgba(255,255,255,0.14)'}`,
-                        },
-                      },
-                      camStreaming
-                        ? h('video', {
-                            ref: camVideoRef,
-                            muted: true,
-                            playsInline: true,
-                            autoPlay: true,
-                            style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' },
-                          })
-                        : h(
-                            'div',
-                            {
-                              style: {
-                                position: 'absolute',
-                                inset: 0,
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '10px',
-                                color: '#CBD5E1',
-                                padding: '20px',
-                                textAlign: 'center',
-                              },
-                            },
-                            h(Icon, { name: 'camera', size: 30, color: T.accentBlue }),
-                            h('div', { style: { fontSize: '13px', fontWeight: 700 } }, camError || '摄像头待开启 · 上方可叠加实时滚动口播提词板'),
-                            h(
-                              'button',
-                              { className: 'dsh-vw-btn', onClick: handleStartWebcam, style: blueBtnStyle },
-                              h(Icon, { name: 'camera', size: 14 }),
-                              '开启摄像头与麦克风预览',
-                            ),
-                          ),
-                      // Semi-transparent Teleprompter Overlay on top of Webcam
-                      h(
-                        'div',
-                        {
-                          ref: teleBoxRef,
-                          className: 'dsh-vw-scroll',
-                          style: {
-                            position: 'absolute',
-                            inset: '8% 6% 12% 6%',
-                            background: `rgba(7, 9, 14, ${teleBgOpacity})`,
-                            backdropFilter: 'blur(4px)',
-                            borderRadius: '10px',
-                            border: '1px solid rgba(255,255,255,0.14)',
-                            overflowY: 'auto',
-                            padding: '28% 22px 45% 22px',
-                            pointerEvents: 'auto',
-                          },
-                        },
-                        // Reading Eye-Level Guide Hairline
-                        h('div', {
-                          style: {
-                            position: 'sticky',
-                            top: '28%',
-                            height: '2px',
-                            background: 'linear-gradient(90deg, rgba(229,169,60,0.85), rgba(34,211,238,0.85))',
-                            marginBottom: '12px',
-                            pointerEvents: 'none',
-                          },
-                        }),
-                        h(
-                          'div',
-                          {
-                            style: {
-                              color: '#F8FAFC',
-                              fontSize: `${teleFontSize}px`,
-                              lineHeight: teleLineHeight,
-                              fontWeight: 700,
-                              textShadow: '0 2px 10px rgba(0,0,0,0.9)',
-                              whiteSpace: 'pre-wrap',
-                              textAlign: 'center',
-                              transform: teleMirror ? 'scaleX(-1)' : 'none',
-                            },
-                          },
-                          teleLinesText || '请点击右侧「✨ AI 加载提词稿」或直接粘贴口播词...',
-                        ),
-                      ),
-                      // Top-left Live REC Status Pill
-                      camRecording
-                        ? h(
-                            'div',
-                            {
-                              style: {
-                                position: 'absolute',
-                                top: '10px',
-                                left: '12px',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '7px',
-                                padding: '4px 10px',
-                                borderRadius: '999px',
-                                background: 'rgba(225,29,72,0.88)',
-                                color: '#fff',
-                                fontSize: '12px',
-                                fontWeight: 800,
-                                fontFamily: 'Consolas, monospace',
-                              },
-                            },
-                            h('span', { className: 'dsh-vw-rec-dot', style: { width: '8px', height: '8px', borderRadius: '50%', background: '#fff' } }),
-                            `REC ${fmtTimecode(camSeconds * 30, 30)}`,
-                          )
-                        : null,
-                    ),
-
-                    // Right: Teleprompter Script + Scroll/Font/LineHeight/Mirror + Record Buttons
-                    h(
-                      'div',
-                      { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-                      h(
-                        'div',
-                        { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
-                        h('span', { style: { fontSize: '12px', fontWeight: 700 } }, '口播提词文案（支持实时编辑）'),
-                        h(
-                          'div',
-                          { style: { display: 'flex', gap: '6px' } },
-                          h(
-                            'button',
-                            { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleGenerateTeleprompter, style: { ...ghostBtnStyle, padding: '4px 9px', fontSize: '11px', color: T.accentGold, borderColor: T.accentGoldBorder } },
-                            '✨ AI 加载/生成提词稿',
-                          ),
-                          h(
-                            'button',
-                            {
-                              className: 'dsh-vw-btn',
-                              onClick: () => setTeleAutoScroll((v) => !v),
-                              style: { ...ghostBtnStyle, padding: '4px 9px', fontSize: '11px', color: teleAutoScroll ? T.accentGreen : T.textPrimary },
-                            },
-                            teleAutoScroll ? '⏸ 暂停滚词' : '▶ 测试滚词',
-                          ),
-                          h(
-                            'button',
-                            {
-                              className: 'dsh-vw-btn',
-                              onClick: () => {
-                                if (teleBoxRef.current) teleBoxRef.current.scrollTop = 0
-                              },
-                              style: { ...ghostBtnStyle, padding: '4px 8px', fontSize: '11px' },
-                            },
-                            '⟲ 归零',
-                          ),
-                        ),
-                      ),
-                      h('textarea', {
-                        rows: 3,
-                        value: teleLinesText,
-                        onChange: (ev) => setTeleLinesText(ev.target.value),
-                        style: { ...inputStyle, fontSize: '12px', resize: 'vertical', lineHeight: 1.5 },
-                      }),
-                      // 4 Real-time Sliders + Mirror Toggle
-                      h(
-                        'div',
-                        { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '11px' } },
-                        h(
-                          'label',
-                          null,
-                          `滚词速度: ${Number(teleScrollSpeed).toFixed(1)}x`,
-                          h('input', { type: 'range', min: 0.3, max: 3.5, step: 0.1, value: teleScrollSpeed, onChange: (ev) => setTeleScrollSpeed(Number(ev.target.value)), style: { width: '100%' } }),
-                        ),
-                        h(
-                          'label',
-                          null,
-                          `文字字号: ${teleFontSize}px`,
-                          h('input', { type: 'range', min: 16, max: 48, step: 1, value: teleFontSize, onChange: (ev) => setTeleFontSize(Number(ev.target.value)), style: { width: '100%' } }),
-                        ),
-                        h(
-                          'label',
-                          null,
-                          `行距倍数: ${Number(teleLineHeight).toFixed(2)}`,
-                          h('input', { type: 'range', min: 1.2, max: 2.4, step: 0.05, value: teleLineHeight, onChange: (ev) => setTeleLineHeight(Number(ev.target.value)), style: { width: '100%' } }),
-                        ),
-                        h(
-                          'label',
-                          null,
-                          `面板遮罩: ${Math.round(teleBgOpacity * 100)}%`,
-                          h('input', { type: 'range', min: 0.15, max: 0.9, step: 0.05, value: teleBgOpacity, onChange: (ev) => setTeleBgOpacity(Number(ev.target.value)), style: { width: '100%' } }),
-                        ),
-                      ),
-                      h(
-                        'div',
-                        { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', fontSize: '11.5px' } },
-                        h(
-                          'label',
-                          { style: { display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: 'pointer' } },
-                          h('input', { type: 'checkbox', checked: teleMirror, onChange: (ev) => setTeleMirror(ev.target.checked) }),
-                          '🪞 提词文字镜面翻转',
-                        ),
-                        h(
-                          'label',
-                          { style: { display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: 'pointer' } },
-                          h('input', { type: 'checkbox', checked: camExtractClone, onChange: (ev) => setCamExtractClone(ev.target.checked) }),
-                          '🎤 同步提取声纹克隆',
-                        ),
-                      ),
-                      h(
-                        'div',
-                        { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
-                        h('span', { style: { fontSize: '11px', color: T.textMuted, whiteSpace: 'nowrap' } }, '保存角色:'),
-                        h(
-                          'select',
-                          {
-                            value: camTargetRole,
-                            onChange: (ev) => setCamTargetRole(ev.target.value),
-                            style: { ...inputStyle, padding: '6px 9px', fontSize: '12px' },
-                          },
-                          h('option', { value: 'host_video' }, '真人出镜镜头 (host_video)'),
-                          h('option', { value: 'avatar_base' }, '克隆数字人底板 (avatar_base)'),
-                        ),
-                      ),
-                      h(
-                        'div',
-                        { style: { display: 'flex', gap: '8px', marginTop: '2px' } },
-                        !camStreaming
-                          ? h('button', { className: 'dsh-vw-btn', onClick: handleStartWebcam, style: { ...blueBtnStyle, flex: 1 } }, '开启摄像头预览')
-                          : h('button', { className: 'dsh-vw-btn', onClick: handleStopWebcam, style: ghostBtnStyle }, '关闭摄像头'),
-                        camStreaming
-                          ? !camRecording
-                            ? h('button', { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleStartCamRecord, style: { ...goldBtnStyle, flex: 1 } }, '● 开始录制并滚词')
-                            : h('button', { className: 'dsh-vw-btn', onClick: handleStopCamRecord, style: { ...goldBtnStyle, flex: 1, background: '#E11D48', color: '#fff' } }, `■ 停止保存 (${camSeconds}s)`)
-                          : null,
-                      ),
-                    ),
-                  )
-                : null,
             ),
           ),
 
-          // CARD C: Filter Tabs & Grid w/ Inline Role Switcher
+          // CARD 2: 描述创意主题与画面规格 (15PX PROSE + 灵感胶囊)
           h(
             'div',
-            { style: { ...panelStyle, padding: '18px' } },
+            { style: { ...panelStyle, padding: '20px', display: 'flex', flexDirection: 'column', gap: '13px' } },
             h(
               'div',
-              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' } },
+              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+              h('div', { style: { fontSize: '16px', fontWeight: 800 } }, '2. 告诉 AI 你想做什么视频'),
               h(
                 'div',
-                { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
-                [
-                  { id: 'all', label: `全部 (${projectAssets.length})` },
-                  { id: 'image', label: `图片 (${assetSummary.image || 0})` },
-                  { id: 'video', label: `视频 (${assetSummary.video || 0})` },
-                  { id: 'music', label: `BGM 配乐 (${assetSummary.music || 0})` },
-                  { id: 'special', label: `出镜/数字人/声纹 (${specialRoleCount})` },
-                ].map((tb) => {
-                  const on = assetFilter === tb.id
-                  return h(
-                    'button',
-                    {
-                      key: tb.id,
-                      className: 'dsh-vw-btn',
-                      onClick: () => setAssetFilter(tb.id),
-                      style: {
-                        ...ghostBtnStyle,
-                        padding: '5px 11px',
-                        background: on ? T.accentGoldBg : 'transparent',
-                        borderColor: on ? T.accentGoldBorder : T.borderSubtle,
-                        color: on ? T.accentGold : T.textSecondary,
+                { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-vw-btn',
+                    disabled: Boolean(polishingTopic) || Boolean(busyLabel),
+                    onClick: handlePolishTopic,
+                    title: '只需写一句简单需求，让大模型结合你的素材一键优化成专业导演指令并覆盖替换文本框',
+                    style: { ...blueBtnStyle, padding: '5px 11px', fontSize: '12.5px', borderRadius: '999px' },
+                  },
+                  h(Icon, { name: 'sparkles', size: 13 }),
+                  polishingTopic ? 'AI 润色中...' : '✨ AI 一键润色提示词',
+                ),
+                unpolishedTopicBackup
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'dsh-vw-btn',
+                        onClick: () => {
+                          setDirectorForm((p) => ({ ...p, topic: unpolishedTopicBackup }))
+                          setUnpolishedTopicBackup('')
+                        },
+                        style: { ...ghostBtnStyle, padding: '5px 10px', fontSize: '12px', borderRadius: '999px' },
                       },
-                    },
-                    tb.label,
-                  )
+                      '↩ 恢复原句',
+                    )
+                  : null,
+                h(SegmentedPills, {
+                  value: directorForm.creationMode,
+                  onChange: (val) => setDirectorForm((p) => ({ ...p, creationMode: val })),
+                  T,
+                  size: 'sm',
+                  options: [
+                    { id: 'ai-coded', label: '🧠 大模型编码大片' },
+                    { id: 'local-draft', label: '⚡ 本地极速草稿' },
+                  ],
                 }),
               ),
-              h('span', { style: { fontSize: '11.5px', color: T.textMuted } }, '提示：素材精修后的成片放在 assets/edited/；可在每张卡片下方切换用途角色'),
             ),
-            filteredAssets.length === 0
-              ? h('div', { style: { padding: '24px', textAlign: 'center', color: T.textMuted, fontSize: '13px' } }, '暂未导入此类素材，可直接点击上方「⚡ 一键全自动出片」纯编码生成，或拖拽文件导入。')
-              : h(
-                  'div',
-                  { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(186px, 1fr))', gap: '12px' } },
-                  filteredAssets.map((a) => {
-                    const roleBadgeMap = {
-                      host_video: { label: 'HOST 出镜', color: T.accentBlue },
-                      avatar_base: { label: '数字人底板', color: T.accentGold },
-                      voice_clone: { label: '克隆声纹', color: '#A855F7' },
-                      music: { label: 'BGM 配乐', color: T.accentGreen },
-                    }
-                    const badge = roleBadgeMap[a.role]
-                    return h(
-                      'div',
-                      {
-                        key: a.id,
-                        style: {
-                          borderRadius: '10px',
-                          overflow: 'hidden',
-                          background: T.bgElevated,
-                          border: `1px solid ${badge ? badge.color : T.borderSubtle}`,
-                        },
-                      },
-                      h(
-                        'div',
-                        { style: { height: '104px', background: '#05070C', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
-                        a.type === 'image'
-                          ? h('img', {
-                              src: `/api/video-workbench/asset?projectDir=${encodeURIComponent(activeProjectDir)}&rel=${encodeURIComponent(a.path)}&v=${assetVersion}`,
-                              style: { width: '100%', height: '100%', objectFit: 'cover' },
-                            })
-                          : a.type === 'video'
-                            ? h('video', {
-                                src: `/api/video-workbench/asset?projectDir=${encodeURIComponent(activeProjectDir)}&rel=${encodeURIComponent(a.path)}&v=${assetVersion}`,
-                                muted: true,
-                                style: { width: '100%', height: '100%', objectFit: 'cover' },
-                              })
-                            : h('span', { style: { fontSize: '26px' } }, a.role === 'music' ? '🎵' : a.role === 'voice_clone' ? '🎤' : '🔊'),
-                        badge
-                          ? h(
-                              'span',
-                              {
-                                style: {
-                                  position: 'absolute',
-                                  top: '6px',
-                                  left: '6px',
-                                  padding: '2px 6px',
-                                  borderRadius: '5px',
-                                  background: 'rgba(7,9,14,0.82)',
-                                  color: badge.color,
-                                  fontSize: '10px',
-                                  fontWeight: 800,
-                                },
-                              },
-                              badge.label,
-                            )
-                          : null,
-                        h(
-                          'button',
-                          {
-                            onClick: () => handleDeleteAsset(a.id),
-                            style: {
-                              position: 'absolute',
-                              top: '6px',
-                              right: '6px',
-                              width: '22px',
-                              height: '22px',
-                              borderRadius: '50%',
-                              border: 'none',
-                              background: 'rgba(0,0,0,0.65)',
-                              color: '#fff',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            },
-                          },
-                          h(Icon, { name: 'x', size: 11 }),
-                        ),
-                      ),
-                      h(
-                        'div',
-                        { style: { padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '5px' } },
-                        h('div', { style: { fontSize: '12px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, a.name),
-                        h(
-                          'div',
-                          { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '4px' } },
-                          h(
-                            'span',
-                            { style: { fontSize: '10.5px', color: T.textMuted, fontFamily: 'Consolas, monospace' } },
-                            a.width && a.height ? `${a.width}×${a.height}` : a.durationSec ? `${Number(a.durationSec).toFixed(1)}s` : a.type,
-                          ),
-                          h(
-                            'select',
-                            {
-                              value: a.role || 'visual',
-                              onChange: (ev) => handleChangeAssetRole(a.id, ev.target.value),
-                              style: {
-                                fontSize: '10.5px',
-                                padding: '2px 5px',
-                                borderRadius: '5px',
-                                background: T.bgInput,
-                                color: T.textSecondary,
-                                border: `1px solid ${T.borderSubtle}`,
-                              },
-                            },
-                            h('option', { value: 'visual' }, '视觉镜头'),
-                            h('option', { value: 'music' }, 'BGM配乐'),
-                            h('option', { value: 'sfx' }, '音效'),
-                            h('option', { value: 'host_video' }, '真人出镜'),
-                            h('option', { value: 'avatar_base' }, '数字人底板'),
-                            h('option', { value: 'voice_clone' }, '声纹样本'),
-                          ),
-                        ),
-                      ),
-                    )
-                  }),
+            h(
+              'div',
+              { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
+              LAUNCH_INSPIRATION_TEMPLATES.map((tpl) =>
+                h(
+                  'button',
+                  {
+                    key: tpl.label,
+                    type: 'button',
+                    className: 'dsh-vw-btn',
+                    onClick: () => setDirectorForm((p) => ({ ...p, topic: tpl.topic, style: tpl.style, aspectRatio: tpl.aspect })),
+                    style: { ...ghostBtnStyle, padding: '5px 10px', fontSize: '12.5px', borderRadius: '999px' },
+                  },
+                  tpl.label,
                 ),
+              ),
+            ),
+            h('textarea', {
+              rows: 3,
+              value: directorForm.topic,
+              onChange: (ev) => setDirectorForm((p) => ({ ...p, topic: ev.target.value })),
+              placeholder: '写一句需求即可（写完可点上方「✨ AI 一键润色提示词」自动扩写为专业指令）：\n例如：帮我把这几张产品截图做成一个软件功能介绍短片，语气真诚清晰...',
+              style: { ...inputStyle, fontSize: '15px', lineHeight: 1.65, resize: 'vertical', flex: 1, minHeight: '94px' },
+            }),
+            h(
+              'div',
+              { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } },
+              h(
+                'div',
+                null,
+                h('div', { style: { fontSize: '12.5px', fontWeight: 700, color: T.textMuted, marginBottom: '5px' } }, '画面比例'),
+                h(CinemaSelect, {
+                  compact: true,
+                  value: directorForm.aspectRatio,
+                  onChange: (v) => setDirectorForm((p) => ({ ...p, aspectRatio: v })),
+                  T,
+                  options: ASPECT_RATIO_OPTIONS.map((o) => ({ value: o.id, label: `${o.icon} ${o.label}`, sub: o.sub })),
+                }),
+              ),
+              h(
+                'div',
+                null,
+                h('div', { style: { fontSize: '12.5px', fontWeight: 700, color: T.textMuted, marginBottom: '5px' } }, '视觉基调风格'),
+                h(CinemaSelect, {
+                  compact: true,
+                  value: directorForm.style,
+                  onChange: (v) => setDirectorForm((p) => ({ ...p, style: v })),
+                  T,
+                  options: UNIFIED_STYLES.map((s) => ({ value: s.id, label: s.label, sub: s.desc, badgeColor: s.swatch })),
+                }),
+              ),
+              h(
+                'div',
+                null,
+                h('div', { style: { fontSize: '12.5px', fontWeight: 700, color: T.textMuted, marginBottom: '5px' } }, '节奏适配方案'),
+                h(CinemaSelect, {
+                  compact: true,
+                  value: directorForm.pacingMode || 'auto',
+                  onChange: (v) => setDirectorForm((p) => ({ ...p, pacingMode: v })),
+                  T,
+                  options: [
+                    { value: 'auto', label: '🧠 AI 依题材智能适配', sub: '自动区分教程/故事/快闪' },
+                    { value: 'calm', label: '🍃 舒缓叙事 (4~7s/镜)', sub: '适合品牌故事·温情纪实' },
+                    { value: 'balanced', label: '⚖️ 稳健解说 (3~5s/镜)', sub: '适合产品功能·软件演示' },
+                    { value: 'dynamic', label: '⚡ 高燃踩点 (0.5~3s/镜)', sub: '适合历史史诗·音乐MV' },
+                  ],
+                }),
+              ),
+              h(
+                'div',
+                null,
+                h('div', { style: { fontSize: '12.5px', fontWeight: 700, color: T.textMuted, marginBottom: '5px' } }, 'AI 辅助创作角标'),
+                h(CinemaSelect, {
+                  compact: true,
+                  value: directorForm.aiBadgeEnabled ? (directorForm.aiBadgePosition || 'top-right') : 'off',
+                  onChange: (v) =>
+                    setDirectorForm((p) =>
+                      v === 'off'
+                        ? { ...p, aiBadge: false, aiBadgeEnabled: false }
+                        : { ...p, aiBadge: true, aiBadgeEnabled: true, aiBadgePosition: v },
+                    ),
+                  T,
+                  options: [
+                    { value: 'top-right', label: '↗ 右上角展示（推荐）', sub: '避开左上主标题文字' },
+                    { value: 'top-left', label: '↖ 左上角展示', sub: '传统角标位' },
+                    { value: 'bottom-right', label: '↘ 右下角展示', sub: '安全区贴底展示' },
+                    { value: 'bottom-left', label: '↙ 左下角展示', sub: '左下方安全区' },
+                    { value: 'off', label: '🚫 关闭不添加', sub: '隐藏角落 AI 标识' },
+                  ],
+                }),
+              ),
+            ),
+          ),
+
+          // CARD 3: 发车前体检与一键启动出片
+          h(
+            'div',
+            { style: { ...panelStyle, padding: '20px', display: 'flex', flexDirection: 'column', gap: '13px' } },
+            h(
+              'div',
+              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+              h('div', { style: { fontSize: '16px', fontWeight: 800 } }, '3. 发车检查与一键出片'),
+              h('span', { style: { width: '10px', height: '10px', borderRadius: '50%', background: selectedStyleMeta.swatch } }),
+            ),
+            // Pre-flight 3-row checklist
+            h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px', borderRadius: '12px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}` } },
+              // Check 1: AI Brain
+              h(
+                'div',
+                { onClick: () => setShowLlmModal(true), style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px', cursor: 'pointer' } },
+                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '7px' } }, h('span', { style: { width: '9px', height: '9px', borderRadius: '50%', background: aiBrainReady ? T.accentGreen : T.accentGold } }), 'AI 创作大脑'),
+                h('span', { style: { color: aiBrainReady ? T.accentBlue : T.accentGold, fontWeight: 700 } }, isAiMode ? (llmConfig?.configured ? `${llmConfig.model || '已连接'} ✓` : '点此填密钥 →') : '本地规则模式 ✓'),
+              ),
+              // Check 2: Audio / BGM
+              h(
+                'div',
+                { onClick: () => goToStudioStep(2), style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px', cursor: 'pointer' } },
+                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '7px' } }, h('span', { style: { width: '9px', height: '9px', borderRadius: '50%', background: T.accentGreen } }), '配音与配乐'),
+                h('span', { style: { color: T.textSecondary, fontWeight: 600 } }, mountedBgmItem ? '自传配乐 ✓' : directorForm.bgmMode === 'llm-coded' ? 'AI 现写配乐' : 'TTS 氛围音景'),
+              ),
+              // Check 3: Visual Assets / Optional Avatar
+              h(
+                'div',
+                { onClick: () => goToStudioStep(2), style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px', cursor: 'pointer' } },
+                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '7px' } }, h('span', { style: { width: '9px', height: '9px', borderRadius: '50%', background: hasVisualAssets ? T.accentGreen : T.accentBlue } }), '画面与数字人'),
+                h('span', { style: { color: T.textSecondary, fontWeight: 600 } }, hasVisualAssets ? `已有 ${(assetSummary.image || 0) + (assetSummary.video || 0)} 份素材` : '将纯编码生成视觉'),
+              ),
+            ),
+
+            // Quick Avatar Mode Switch
+            h(
+              'div',
+              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' } },
+              h('span', { style: { fontSize: '13px', fontWeight: 700, color: T.textSecondary } }, '数字人口播'),
+              h(SegmentedPills, {
+                value: !avatarCfg.enabled ? 'off' : avatarCfg.mode,
+                onChange: (val) => setAvatarCfg((p) => (val === 'off' ? { ...p, enabled: false } : { ...p, enabled: true, mode: val })),
+                T,
+                size: 'sm',
+                options: [
+                  { id: 'off', label: '关闭' },
+                  { id: 'ai-human', label: 'AI 主播' },
+                  { id: 'cloned-human', label: '克隆本人' },
+                ],
+              }),
+            ),
+
+            // HERO PLASMA LAUNCH BUTTON
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsh-vw-btn dsh-vw-plasma-cta',
+                disabled: Boolean(busyLabel) || hasLiveTask,
+                onClick: () => handleStartOneClickPipeline(),
+                style: {
+                  marginTop: 'auto',
+                  width: '100%',
+                  padding: '15px 18px',
+                  borderRadius: '13px',
+                  border: 'none',
+                  color: '#FFFFFF',
+                  fontSize: '16px',
+                  fontWeight: 900,
+                  letterSpacing: '0.02em',
+                  boxShadow: resolvedDark ? '0 10px 32px rgba(34,211,238,0.28)' : '0 10px 26px rgba(2,132,199,0.24)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '3px',
+                },
+              },
+              h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px' } }, h(Icon, { name: 'zap', size: 18 }), hasLiveTask ? '4-Agent 正在协同制片中...' : '一键启动 AI 全自动出片'),
+              h('span', { style: { fontSize: '12px', opacity: 0.92, fontWeight: 600 } }, `${directorForm.quality} · ${directorForm.engine.toUpperCase()} 引擎 · 自动修音混音导出 MP4`),
+            ),
           ),
         ),
       )
 
-      // -----------------------------------------------------------------------
-      // STEP 2: DIRECTOR STUDIO (Aspect Ratio + Resolution + Dual Track Creation)
-      // -----------------------------------------------------------------------
-      const selectedVoiceLabel =
-        directorForm.voiceId === 'auto'
-          ? '✨ AI 根据每幕情绪自动匹配 (推荐)'
-          : voiceCatalog.find((v) => v.id === directorForm.voiceId)?.name || directorForm.voiceId
-
-      const step2View = h(
+      // =======================================================================
+      // 10. VIEW 2: PRECISION STUDIO WORKBENCH (STEPS 01-04)
+      // =======================================================================
+      const step1Panel = h(
         'div',
-        { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', padding: '26px 32px' } },
+        { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', padding: '22px 26px', display: 'flex', flexDirection: 'column', gap: '18px' } },
+        // Upload & Starter Pack Card
         h(
           'div',
-          { style: { maxWidth: '1060px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '18px' } },
+          {
+            onDragOver: (ev) => {
+              ev.preventDefault()
+              setIsDraggingUpload(true)
+            },
+            onDragLeave: () => setIsDraggingUpload(false),
+            onDrop: (ev) => {
+              ev.preventDefault()
+              setIsDraggingUpload(false)
+              handleUploadFiles(ev.dataTransfer?.files)
+            },
+            style: { ...panelStyle, padding: '22px', display: 'flex', flexDirection: 'column', gap: '14px', border: `1.5px dashed ${isDraggingUpload ? T.accentBlue : T.borderStrong}` },
+          },
           h(
             'div',
-            null,
-            h('h2', { style: { fontSize: '21px', fontWeight: 800, margin: 0 } }, '02 · 导演构思 · 画幅比例与创作引擎'),
-            h('p', { style: { margin: '5px 0 0', fontSize: '13px', color: T.textSecondary } }, '先设定主题与成片比例（支持 AI 智能判断或自由指定），您可先免费跑「本地演练草稿」确认素材节奏，再交给「大模型 AI 编程」写出电影级高定动画。'),
+            { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' } },
+            h(
+              'div',
+              null,
+              h('h2', { style: { margin: 0, fontSize: '18px', fontWeight: 800 } }, '01 · 统一素材库、BGM 与声纹采样入口'),
+              h('p', { style: { margin: '4px 0 0', fontSize: '13.5px', color: T.textMuted } }, '图片、视频、背景音乐 BGM、真人出镜底板与声音样本统一在此导入管理（百兆视频直传不卡顿）'),
+            ),
+            h(
+              'div',
+              { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+              h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleLoadStarterPack, style: { ...ghostBtnStyle, borderColor: T.accentGoldBorder, color: T.accentGold } }, h(Icon, { name: 'gift', size: 15 }), '一键加载演示素材'),
+              h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowVendorModal(true), style: ghostBtnStyle }, '✨ 导入外部 .motion 模板'),
+              h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setStudioStep(2), style: goldBtnStyle }, '下一步：导演与配音 →'),
+            ),
           ),
           h(
             'div',
-            { style: { display: 'grid', gridTemplateColumns: '1.15fr 1fr', gap: '18px', alignItems: 'start' } },
-            // LEFT COLUMN: Creative Prompt + Style + Engine
+            { style: { display: 'flex', flexWrap: 'wrap', gap: '10px' } },
+            h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => fileInputRef.current?.click(), style: blueBtnStyle }, h(Icon, { name: 'upload', size: 15 }), '选择图片 / 视频 / 音频'),
+            h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => folderInputRef.current?.click(), style: ghostBtnStyle }, h(Icon, { name: 'folder', size: 15 }), '整文件夹批量导入'),
+            h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => bgmInputRef.current?.click(), style: { ...ghostBtnStyle, borderColor: T.accentGoldBorder, color: T.accentGold } }, '🎵 导入个人 BGM 配乐'),
+            h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => avatarBaseInputRef.current?.click(), style: ghostBtnStyle }, '👤 导入克隆数字人底板'),
+            h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => voiceCloneInputRef.current?.click(), style: ghostBtnStyle }, '🎙 导入声音克隆样本'),
+          ),
+          h(
+            'div',
+            { style: { display: 'flex', gap: '8px' } },
+            h('input', {
+              value: assetDirInput,
+              onChange: (ev) => setAssetDirInput(ev.target.value),
+              placeholder: '或输入本机绝对目录/文件路径批量扫描导入...',
+              style: { ...inputStyle, flex: 1 },
+            }),
+            h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => handleImportByPath(), style: ghostBtnStyle }, '本机路径扫描'),
+          ),
+        ),
+
+        // Teleprompter Camera Studio
+        h(
+          'div',
+          { style: { ...panelStyle, padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' } },
+          h(
+            'div',
+            { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' } },
             h(
               'div',
-              { style: { ...panelStyle, padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' } },
-              h(
+              null,
+              h('div', { style: { fontSize: '16px', fontWeight: 800 } }, '📹 内置可调速提词板 · 真人出镜 / 数字人底板拍摄棚'),
+              h('div', { style: { fontSize: '13px', color: T.textMuted, marginTop: '3px' } }, '支持 AI 写口播稿、3-2-1 开拍倒计时、麦克风实时电平表、自拍镜像/提词镜像双控制，拍完即看即删'),
+            ),
+            h(
+              'button',
+              { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowTeleprompter((v) => !v), style: { ...ghostBtnStyle, borderColor: showTeleprompter ? T.accentBlueBorder : T.borderSubtle, color: showTeleprompter ? T.accentBlue : T.textPrimary } },
+              showTeleprompter ? '收起拍摄棚' : '展开摄像头提词拍摄',
+            ),
+          ),
+          showTeleprompter
+            ? h(
                 'div',
-                null,
-                h('label', { style: { display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '7px' } }, '你想创作什么主题的视频？（越具体，大模型写出的动效与字幕越惊艳）'),
-                h('textarea', {
-                  rows: 4,
-                  value: directorForm.topic,
-                  onChange: (ev) => setDirectorForm((prev) => ({ ...prev, topic: ev.target.value })),
-                  placeholder: '例如：制作一个 30 秒高燃科技产品发布短片。开头黑金粒子聚拢，中间分屏展现 3 个核心实测指标从 0 飙升至 99%，最后全屏震撼号召落地。',
-                  style: { ...inputStyle, resize: 'vertical', lineHeight: 1.55 },
-                }),
+                { style: { display: 'grid', gridTemplateColumns: '1.25fr 1fr', gap: '18px', alignItems: 'start' } },
+                // Left Camera Viewfinder + Scrolling Teleprompter Overlay + Countdown + Post-Record Preview
                 h(
                   'div',
-                  { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' } },
-                  TOPIC_PRESETS.map((tp) =>
-                    h(
-                      'button',
-                      {
-                        key: tp.label,
-                        className: 'dsh-vw-btn',
-                        onClick: () => setDirectorForm((prev) => ({ ...prev, topic: tp.topic })),
-                        style: { ...ghostBtnStyle, padding: '4px 10px', fontSize: '11px' },
-                      },
-                      `+ ${tp.label}`,
-                    ),
-                  ),
-                ),
-              ),
-              h(
-                'div',
-                null,
-                h('label', { style: { display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '8px' } }, '视觉基调与配乐气质'),
-                h(
-                  'div',
-                  { style: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' } },
-                  STYLE_OPTIONS.map((st) => {
-                    const on = directorForm.style === st.id
-                    return h(
-                      'button',
-                      {
-                        key: st.id,
-                        className: 'dsh-vw-btn',
-                        onClick: () => setDirectorForm((prev) => ({ ...prev, style: st.id })),
-                        style: {
-                          padding: '10px 6px',
-                          borderRadius: '10px',
-                          textAlign: 'center',
-                          background: on ? T.accentGoldBg : T.bgElevated,
-                          border: `1px solid ${on ? T.accentGoldBorder : T.borderSubtle}`,
-                          color: T.textPrimary,
-                        },
-                      },
-                      h('div', { style: { width: '16px', height: '4px', borderRadius: '99px', background: st.swatch, margin: '0 auto 6px' } }),
-                      h('div', { style: { fontSize: '12px', fontWeight: 700 } }, st.label),
-                    )
-                  }),
-                ),
-              ),
-              h(
-                'div',
-                { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } },
-                h(
-                  'div',
-                  null,
-                  h('label', { style: { display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '6px' } }, '渲染编程引擎'),
-                  h(
-                    'select',
-                    {
-                      value: directorForm.engine,
-                      onChange: (ev) => setDirectorForm((prev) => ({ ...prev, engine: ev.target.value })),
-                      style: inputStyle,
-                    },
-                    h('option', { value: 'remotion' }, 'Remotion TSX (AI 编程首选)'),
-                    h('option', { value: 'html' }, 'HyperFrames HTML5/Canvas'),
-                  ),
-                ),
-                h(
-                  'div',
-                  null,
-                  h('label', { style: { display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '6px' } }, '帧率 FPS & 合规角标'),
+                  { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
                   h(
                     'div',
-                    { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
-                    h(
-                      'select',
-                      {
-                        value: directorForm.fps,
-                        onChange: (ev) => setDirectorForm((prev) => ({ ...prev, fps: Number(ev.target.value) })),
-                        style: { ...inputStyle, width: '96px' },
+                    {
+                      style: {
+                        position: 'relative',
+                        height: '330px',
+                        borderRadius: '14px',
+                        overflow: 'hidden',
+                        background: '#05080F',
+                        border: `1.5px solid ${camRecording ? '#FB7185' : T.borderStrong}`,
                       },
-                      h('option', { value: 30 }, '30 fps'),
-                      h('option', { value: 60 }, '60 fps'),
-                    ),
+                    },
+                    h('video', {
+                      ref: camVideoRef,
+                      muted: true,
+                      playsInline: true,
+                      style: { width: '100%', height: '100%', objectFit: 'cover', transform: camSelfieMirror ? 'scaleX(-1)' : 'none', display: camStreaming ? 'block' : 'none' },
+                    }),
+                    !camStreaming
+                      ? h(
+                          'div',
+                          { style: { height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', color: '#94A3B8', padding: '24px', textAlign: 'center' } },
+                          h(Icon, { name: 'camera', size: 32, color: '#22D3EE' }),
+                          h('div', { style: { fontSize: '14.5px', fontWeight: 700, color: '#E2E8F0' } }, camError || '点击右侧「开启摄像头预演」即可测试麦克风并开始拍摄'),
+                        )
+                      : null,
+                    // 3-2-1 Countdown Overlay
+                    teleCountdown > 0
+                      ? h(
+                          'div',
+                          { style: { position: 'absolute', inset: 0, zIndex: 15, background: 'rgba(4,7,14,0.68)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px' } },
+                          h('div', { style: { fontSize: '78px', fontWeight: 900, color: '#F5B942', fontFamily: 'Consolas, monospace', lineHeight: 1 } }, teleCountdown),
+                          h('div', { style: { fontSize: '15px', color: '#FFFFFF', fontWeight: 700 } }, '准备就绪，马上开始录制与自动滚词...'),
+                        )
+                      : null,
+                    // REC Pill & Mic VU Bar
+                    camRecording
+                      ? h(
+                          'div',
+                          { style: { position: 'absolute', top: '12px', left: '12px', zIndex: 12, padding: '5px 12px', borderRadius: '999px', background: 'rgba(225,29,72,0.9)', color: '#fff', fontSize: '13px', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '6px' } },
+                          h('span', { className: 'dsh-vw-rec-dot', style: { width: '8px', height: '8px', borderRadius: '50%', background: '#fff' } }),
+                          `REC ${fmtSeconds(camSeconds)}`,
+                        )
+                      : null,
+                    // Translucent Teleprompter Overlay
                     h(
-                      'label',
-                      { style: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: T.textSecondary, cursor: 'pointer' } },
-                      h('input', {
-                        type: 'checkbox',
-                        checked: directorForm.aiBadge,
-                        onChange: (ev) => setDirectorForm((prev) => ({ ...prev, aiBadge: ev.target.checked })),
-                      }),
-                      '显示 AI 生成角标',
+                      'div',
+                      {
+                        ref: teleBoxRef,
+                        className: 'dsh-vw-scroll',
+                        style: {
+                          position: 'absolute',
+                          left: '14px',
+                          right: '14px',
+                          top: '14px',
+                          maxHeight: '56%',
+                          overflowY: 'auto',
+                          padding: '12px 16px',
+                          borderRadius: '11px',
+                          background: `rgba(5, 8, 16, ${teleBgOpacity})`,
+                          backdropFilter: 'blur(6px)',
+                          color: '#FFFFFF',
+                          fontSize: `${teleFontSize}px`,
+                          lineHeight: teleLineHeight,
+                          fontWeight: 700,
+                          textShadow: '0 2px 8px rgba(0,0,0,0.85)',
+                          transform: teleMirror ? 'scaleX(-1)' : 'none',
+                          whiteSpace: 'pre-wrap',
+                          zIndex: 8,
+                        },
+                      },
+                      teleLinesText,
                     ),
                   ),
-                ),
-              ),
-              // Creation Mode Selector (AI Coded vs Schema Plan w/ Tier 1-4 Degradation)
-              h(
-                'div',
-                null,
-                h('label', { style: { display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '7px' } }, '创作生成架构模式'),
-                h(
-                  'div',
-                  { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
-                  CREATION_MODE_OPTIONS.map((cm) => {
-                    const on = directorForm.creationMode === cm.id
-                    return h(
-                      'button',
-                      {
-                        key: cm.id,
-                        className: 'dsh-vw-btn',
-                        onClick: () => setDirectorForm((prev) => ({ ...prev, creationMode: cm.id })),
-                        style: {
-                          padding: '9px 10px',
-                          borderRadius: '10px',
-                          textAlign: 'left',
-                          background: on ? T.accentBlueBg : T.bgElevated,
-                          border: `1px solid ${on ? T.accentBlueBorder : T.borderSubtle}`,
-                          color: T.textPrimary,
-                        },
-                      },
-                      h('div', { style: { fontSize: '12px', fontWeight: 700, color: on ? T.accentBlue : T.textPrimary } }, cm.title),
-                      h('div', { style: { fontSize: '10.5px', color: T.textMuted, marginTop: '2px', lineHeight: 1.35 } }, cm.desc),
-                    )
-                  }),
-                ),
-              ),
-              // 3-Mode Audio / BGM Engine Card
-              h(
-                'div',
-                { style: { padding: '12px', borderRadius: '11px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '9px' } },
-                h('label', { style: { fontSize: '12px', fontWeight: 800 } }, '🎵 背景音乐与声场生成方式 (三模式自由切换)'),
-                h(
-                  'div',
-                  { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '7px' } },
-                  BGM_MODE_OPTIONS.map((bm) => {
-                    const on = directorForm.bgmMode === bm.id
-                    return h(
-                      'button',
-                      {
-                        key: bm.id,
-                        className: 'dsh-vw-btn',
-                        onClick: () => setDirectorForm((prev) => ({ ...prev, bgmMode: bm.id })),
-                        style: {
-                          padding: '8px 7px',
-                          borderRadius: '9px',
-                          textAlign: 'left',
-                          background: on ? T.accentGoldBg : T.bgPanel,
-                          border: `1px solid ${on ? T.accentGoldBorder : T.borderSubtle}`,
-                          color: T.textPrimary,
-                        },
-                      },
-                      h('div', { style: { fontSize: '11.5px', fontWeight: 700, color: on ? T.accentGold : T.textPrimary } }, `${bm.icon} ${bm.title}`),
-                      h('div', { style: { fontSize: '10px', color: T.textMuted, marginTop: '2px', lineHeight: 1.35 } }, bm.desc),
-                    )
-                  }),
-                ),
-                directorForm.bgmMode === 'llm-coded'
-                  ? h(
-                      'div',
-                      { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
-                      h('span', { style: { fontSize: '11px', color: T.textSecondary } }, '成片时大模型会自动编写 audio/ai_bgm_synth.js 生成原创音乐；也可先点击试写试听'),
-                      h(
-                        'button',
-                        { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleLlmComposeBgm, style: { ...ghostBtnStyle, fontSize: '11px', padding: '5px 10px' } },
-                        '🎹 AI 现写代码试生成 BGM',
-                      ),
-                    )
-                  : directorForm.bgmMode === 'uploaded'
-                  ? h(
-                      'div',
-                      { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-                      h(
-                        'div',
-                        { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
-                        h(
-                          'span',
-                          { style: { fontSize: '11px', color: T.textSecondary } },
-                          script?.bgm?.uploadedPath || script?.bgm?.path
-                            ? `当前挂载 BGM: ${script.bgm.uploadedPath || script.bgm.path}`
-                            : `已在第 1 步导入 ${assetSummary.music || 0} 首个人配乐（混音自动闪避人声）`,
-                        ),
-                        h(
-                          'button',
-                          { className: 'dsh-vw-btn', onClick: () => setActiveStep(1), style: { ...ghostBtnStyle, fontSize: '11px', padding: '4px 10px', borderColor: T.accentGoldBorder, color: T.accentGold } },
-                          '← 前往第 1 步导入/更换 BGM',
-                        ),
-                      ),
-                      projectAssets.filter((a) => a.type === 'audio' && a.role === 'music').length > 0
-                        ? h(
-                            'select',
-                            {
-                              value: script?.bgm?.uploadedPath || projectAssets.find((a) => a.role === 'music')?.path || '',
-                              onChange: (ev) => {
-                                const rel = ev.target.value
-                                if (!rel || !script) return
-                                setScript((prev) => ({
-                                  ...prev,
-                                  bgmMode: 'uploaded',
-                                  bgm: { ...(prev?.bgm || {}), mode: 'uploaded', uploadedPath: rel, path: rel },
-                                }))
-                                setScriptDirty(true)
-                              },
-                              style: { ...inputStyle, padding: '6px 9px', fontSize: '11.5px' },
-                            },
-                            projectAssets
-                              .filter((a) => a.type === 'audio' && a.role === 'music')
-                              .map((m) => h('option', { key: m.id, value: m.path }, `🎵 ${m.name} (${m.path})`)),
-                          )
-                        : null,
-                    )
-                  : h(
-                      'div',
-                      { style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
-                      h(
-                        'div',
-                        { style: { display: 'flex', gap: '6px' } },
-                        h('input', {
-                          value: directorForm.bgmTtsPrompt,
-                          onChange: (ev) => setDirectorForm((prev) => ({ ...prev, bgmTtsPrompt: ev.target.value })),
-                          placeholder: '输入配音引擎要哼唱/氛围铺底的乐感提示词...',
-                          style: { ...inputStyle, fontSize: '11.5px', padding: '6px 10px' },
-                        }),
-                        h(
-                          'button',
-                          { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleTtsComposeBgm, style: { ...blueBtnStyle, fontSize: '11px', padding: '6px 11px' } },
-                          '🎙 IndexTTS 合成 BGM',
-                        ),
-                      ),
-                    ),
-                bgmComposePreviewUrl
-                  ? h('audio', { src: bgmComposePreviewUrl, controls: true, style: { width: '100%', height: '32px' } })
-                  : null,
-              ),
-            ),
-            // RIGHT COLUMN: Aspect Ratio + Resolution + Voice + Dual-Track Action Buttons
-            h(
-              'div',
-              { style: { ...panelStyle, padding: '20px', display: 'flex', flexDirection: 'column', gap: '15px' } },
-              h(
-                'div',
-                null,
-                h('label', { style: { display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '8px' } }, '画幅比例（AI 智能判定 或 自由指定）'),
-                h(
-                  'div',
-                  { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '7px' } },
-                  ASPECT_RATIO_OPTIONS.map((ar) => {
-                    const on = directorForm.aspectRatio === ar.id
-                    return h(
-                      'button',
-                      {
-                        key: ar.id,
-                        className: 'dsh-vw-btn',
-                        onClick: () => setDirectorForm((prev) => ({ ...prev, aspectRatio: ar.id })),
-                        style: {
-                          padding: '8px 8px',
-                          borderRadius: '9px',
-                          textAlign: 'left',
-                          background: on ? T.accentBlueBg : T.bgElevated,
-                          border: `1px solid ${on ? T.accentBlueBorder : T.borderSubtle}`,
-                          color: T.textPrimary,
-                        },
-                      },
-                      h('div', { style: { fontSize: '12px', fontWeight: 700, color: on ? T.accentBlue : T.textPrimary } }, `${ar.icon} ${ar.label}`),
-                      h('div', { style: { fontSize: '10px', color: T.textMuted, marginTop: '2px' } }, ar.sub),
-                    )
-                  }),
-                ),
-              ),
-              h(
-                'div',
-                null,
-                h('label', { style: { display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '7px' } }, '输出分辨率规格'),
-                h(
-                  'div',
-                  { style: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px' } },
-                  QUALITY_OPTIONS.map((q) => {
-                    const on = directorForm.quality === q.id
-                    return h(
-                      'button',
-                      {
-                        key: q.id,
-                        className: 'dsh-vw-btn',
-                        onClick: () => setDirectorForm((prev) => ({ ...prev, quality: q.id })),
-                        style: {
-                          padding: '7px 4px',
-                          borderRadius: '8px',
-                          textAlign: 'center',
-                          background: on ? T.accentGoldBg : T.bgElevated,
-                          border: `1px solid ${on ? T.accentGoldBorder : T.borderSubtle}`,
-                          color: on ? T.accentGold : T.textPrimary,
-                        },
-                      },
-                      h('div', { style: { fontSize: '12px', fontWeight: 700 } }, q.label),
-                      h('div', { style: { fontSize: '10px', color: T.textMuted } }, q.desc),
-                    )
-                  }),
-                ),
-                directorForm.quality === 'custom' || directorForm.aspectRatio === 'custom'
-                  ? h(
-                      'div',
-                      { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' } },
-                      h('input', {
-                        type: 'number',
-                        value: directorForm.customWidth,
-                        onChange: (ev) => setDirectorForm((prev) => ({ ...prev, customWidth: ev.target.value })),
-                        placeholder: '宽度 px',
-                        style: inputStyle,
-                      }),
-                      h('span', null, '×'),
-                      h('input', {
-                        type: 'number',
-                        value: directorForm.customHeight,
-                        onChange: (ev) => setDirectorForm((prev) => ({ ...prev, customHeight: ev.target.value })),
-                        placeholder: '高度 px',
-                        style: inputStyle,
-                      }),
-                    )
-                  : null,
-              ),
-              // Platform Safe-Zone Selector
-              h(
-                'div',
-                null,
-                h(
-                  'div',
-                  { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '7px' } },
-                  h('label', { style: { fontSize: '13px', fontWeight: 700 } }, '目标发布平台（安全区自动避让）'),
-                  safeZonePreflight
+
+                  // Mic VU Meter Bar
+                  camStreaming
                     ? h(
-                        'span',
-                        { style: { fontSize: '10.5px', color: safeZonePreflight.passed ? T.accentGreen : T.accentGold } },
-                        safeZonePreflight.passed ? '✓ 安全区校验通过' : `⚠ 字幕/贴片有 ${safeZonePreflight.collisions?.length || 1} 处靠边告警`,
+                        'div',
+                        { style: { display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 13px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}` } },
+                        h(Icon, { name: 'mic', size: 15, color: camMicLevel > 8 ? T.accentGreen : T.textMuted }),
+                        h('span', { style: { fontSize: '12.5px', fontWeight: 700, whiteSpace: 'nowrap' } }, '麦克风收音电平'),
+                        h('div', { style: { flex: 1, height: '8px', borderRadius: '99px', background: 'rgba(148,163,184,0.2)', overflow: 'hidden' } }, h('div', { style: { width: `${camMicLevel}%`, height: '100%', background: camMicLevel > 78 ? T.accentGold : T.accentGreen, transition: 'width 0.08s linear' } })),
+                        h('span', { style: { fontSize: '12.5px', fontFamily: 'Consolas, monospace', width: '38px', textAlign: 'right' } }, `${camMicLevel}%`),
+                      )
+                    : null,
+
+                  // Immediate Post-Record Review Card
+                  pendingRecPreview
+                    ? h(
+                        'div',
+                        { style: { padding: '14px', borderRadius: '12px', background: T.accentGoldBg, border: `1px solid ${T.accentGoldBorder}`, display: 'flex', flexDirection: 'column', gap: '10px' } },
+                        h('div', { style: { fontSize: '14px', fontWeight: 800, color: T.accentGold } }, '🎬 刚才拍好了一段出镜视频，请回看确认是否入库：'),
+                        h('video', { src: pendingRecPreview.url, controls: true, style: { width: '100%', maxHeight: '190px', borderRadius: '9px', background: '#000' } }),
+                        h(
+                          'div',
+                          { style: { display: 'flex', gap: '10px' } },
+                          h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleConfirmSaveRecording, style: { ...goldBtnStyle, flex: 1 } }, h(Icon, { name: 'check', size: 15 }), '✓ 满意，写入素材库'),
+                          h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleDiscardRecording, style: { ...ghostBtnStyle, color: T.accentRed } }, h(Icon, { name: 'trash', size: 15 }), '作废并重拍'),
+                        ),
                       )
                     : null,
                 ),
+
+                // Right Controls Column
                 h(
                   'div',
-                  { style: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px' } },
-                  PLATFORM_OPTIONS.map((pl) => {
-                    const on = directorForm.targetPlatform === pl.id
-                    return h(
-                      'button',
-                      {
-                        key: pl.id,
-                        title: pl.desc,
-                        className: 'dsh-vw-btn',
-                        onClick: () => setDirectorForm((prev) => ({ ...prev, targetPlatform: pl.id })),
-                        style: {
-                          padding: '7px 4px',
-                          borderRadius: '8px',
-                          textAlign: 'center',
-                          background: on ? T.accentBlueBg : T.bgElevated,
-                          border: `1px solid ${on ? T.accentBlueBorder : T.borderSubtle}`,
-                          color: on ? T.accentBlue : T.textPrimary,
-                          fontSize: '11.5px',
-                          fontWeight: 700,
-                        },
-                      },
-                      pl.label,
-                    )
+                  { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
+                  h(
+                    'div',
+                    { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+                    h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleGenerateTeleprompter, style: { ...goldBtnStyle, flex: 1 } }, '✨ AI 写口播提词稿'),
+                    h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setTeleAutoScroll((v) => !v), style: ghostBtnStyle }, teleAutoScroll ? '⏸ 暂停滚词' : '▶ 测试滚词'),
+                  ),
+                  h('textarea', {
+                    rows: 5,
+                    value: teleLinesText,
+                    onChange: (ev) => setTeleLinesText(ev.target.value),
+                    placeholder: '这里粘贴或直接让 AI 撰写你的口播提词台词...',
+                    style: { ...inputStyle, fontSize: '14px', lineHeight: 1.6 },
                   }),
-                ),
-              ),
-              // Voice Selection & Speed / Host Vocal / Curate Strip
-              h(
-                'div',
-                { style: { display: 'flex', flexDirection: 'column', gap: '8px', padding: '11px 12px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}` } },
-                h(
-                  'div',
-                  { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' } },
+                  h(
+                    'div',
+                    { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '13px' } },
+                    h('label', null, `滚词速度 (${teleScrollSpeed.toFixed(1)}x)`, h('input', { type: 'range', min: 0.3, max: 3.0, step: 0.1, value: teleScrollSpeed, onChange: (ev) => setTeleScrollSpeed(Number(ev.target.value)), style: { width: '100%' } })),
+                    h('label', null, `字体大小 (${teleFontSize}px)`, h('input', { type: 'range', min: 18, max: 42, step: 1, value: teleFontSize, onChange: (ev) => setTeleFontSize(Number(ev.target.value)), style: { width: '100%' } })),
+                    h('label', null, `行距 (${teleLineHeight.toFixed(2)})`, h('input', { type: 'range', min: 1.2, max: 2.2, step: 0.05, value: teleLineHeight, onChange: (ev) => setTeleLineHeight(Number(ev.target.value)), style: { width: '100%' } })),
+                    h('label', null, `词板深浅 (${Math.round(teleBgOpacity * 100)}%)`, h('input', { type: 'range', min: 0.15, max: 0.9, step: 0.05, value: teleBgOpacity, onChange: (ev) => setTeleBgOpacity(Number(ev.target.value)), style: { width: '100%' } })),
+                  ),
+                  h(
+                    'div',
+                    { style: { display: 'flex', flexWrap: 'wrap', gap: '14px', fontSize: '13.5px' } },
+                    h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' } }, h('input', { type: 'checkbox', checked: camSelfieMirror, onChange: (ev) => setCamSelfieMirror(ev.target.checked) }), '自拍画面左右镜像'),
+                    h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' } }, h('input', { type: 'checkbox', checked: teleMirror, onChange: (ev) => setTeleMirror(ev.target.checked) }), '提词文字镜像 (分光镜专用)'),
+                    h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' } }, h('input', { type: 'checkbox', checked: camExtractClone, onChange: (ev) => setCamExtractClone(ev.target.checked) }), '同步克隆我的声纹'),
+                  ),
                   h(
                     'div',
                     null,
-                    h('div', { style: { fontSize: '11px', color: T.textMuted } }, '本地配音与声纹克隆库 (IndexTTS-2.5 · 自动修音/去静音/响度标准化)'),
-                    h('div', { style: { fontSize: '12px', fontWeight: 700, marginTop: '2px' } }, selectedVoiceLabel),
-                  ),
-                  h(
-                    'button',
-                    {
-                      className: 'dsh-vw-btn',
-                      onClick: () => {
-                        setVoiceModalTarget('global')
-                        setShowVoiceModal(true)
-                      },
-                      style: ghostBtnStyle,
-                    },
-                    h(Icon, { name: 'mic', size: 12 }),
-                    '挑选 / 克隆音色',
-                  ),
-                ),
-                h(
-                  'div',
-                  { style: { display: 'grid', gridTemplateColumns: '1fr auto', gap: '10px', alignItems: 'center', paddingTop: '6px', borderTop: `1px solid ${T.borderSubtle}` } },
-                  h(
-                    'label',
-                    { style: { fontSize: '11px', color: T.textSecondary } },
-                    `语速倍率 (${Number(speechTempo).toFixed(2)}x): `,
-                    h('input', {
-                      type: 'range',
-                      min: 0.75,
-                      max: 1.5,
-                      step: 0.05,
-                      value: speechTempo,
-                      onChange: (ev) => setSpeechTempo(Number(ev.target.value)),
-                      style: { width: '110px', verticalAlign: 'middle', marginLeft: '4px' },
+                    h('div', { style: { fontSize: '13px', fontWeight: 700, color: T.textMuted, marginBottom: '5px' } }, '录像入库角色'),
+                    h(CinemaSelect, {
+                      value: camTargetRole,
+                      onChange: setCamTargetRole,
+                      T,
+                      options: [
+                        { value: 'host_video', label: '真人出镜主镜头 (host_video)', sub: '直接用作视频口播与原声片源' },
+                        { value: 'avatar_base', label: '克隆数字人底板 (avatar_base)', sub: '用它来合成「克隆版你自己」的数字人' },
+                      ],
                     }),
                   ),
                   h(
-                    'label',
-                    { style: { fontSize: '11px', color: T.textSecondary, display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: 'pointer' } },
-                    h('input', {
-                      type: 'checkbox',
-                      checked: useHostVocal,
-                      onChange: (ev) => setUseHostVocal(ev.target.checked),
-                    }),
-                    '使用真人出镜原声',
+                    'div',
+                    { style: { display: 'flex', gap: '10px' } },
+                    !camStreaming
+                      ? h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleStartWebcam, style: { ...blueBtnStyle, flex: 1 } }, '开启摄像头与麦克风')
+                      : h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleStopWebcam, style: ghostBtnStyle }, '关闭摄像头'),
+                    camStreaming
+                      ? !camRecording && teleCountdown === 0
+                        ? h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleStartCamRecordWithCountdown, style: { ...goldBtnStyle, flex: 1 } }, '● 3 秒倒数开拍并滚词')
+                        : h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleStopCamRecord, style: { ...goldBtnStyle, flex: 1, background: '#E11D48', color: '#fff' } }, teleCountdown > 0 ? '取消倒计时' : `■ 停止录制 (${camSeconds}s)`)
+                      : null,
                   ),
                 ),
-                h(
-                  'div',
-                  { style: { display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', paddingTop: '4px' } },
+              )
+            : null,
+        ),
+
+        // Asset Grid with CinemaSelect role switches
+        h(
+          'div',
+          { style: { ...panelStyle, padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' } },
+          h(
+            'div',
+            { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' } },
+            h(SegmentedPills, {
+              value: assetFilter,
+              onChange: setAssetFilter,
+              T,
+              accent: 'gold',
+              size: 'sm',
+              options: [
+                { id: 'all', label: `全部 (${projectAssets.length})` },
+                { id: 'image', label: `图片 (${assetSummary.image || 0})` },
+                { id: 'video', label: `视频 (${assetSummary.video || 0})` },
+                { id: 'music', label: `BGM 配乐 (${assetSummary.music || 0})` },
+                { id: 'special', label: `出镜/数字人/声纹 (${specialRoleCount})` },
+              ],
+            }),
+            h('span', { style: { fontSize: '12.5px', color: T.textMuted } }, '每张素材卡右下角可自由指定「通用画面 / BGM / 数字人底板 / 声纹克隆样本」'),
+          ),
+          filteredAssets.length === 0
+            ? h('div', { style: { padding: '28px', textAlign: 'center', color: T.textMuted, fontSize: '14px' } }, '此类素材暂为空，可通过上方拖拽上传或点击「一键加载演示素材」体验。')
+            : h(
+                'div',
+                { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '14px' } },
+                filteredAssets.map((a) =>
                   h(
-                    'button',
-                    {
-                      className: 'dsh-vw-btn',
-                      disabled: Boolean(busyLabel),
-                      onClick: handleRunMediaCurate,
-                      style: { ...ghostBtnStyle, fontSize: '11px', padding: '5px 10px' },
-                    },
-                    '✂️ 运行 FFmpeg 智能裁切构图与调色 (assets/edited/)',
-                  ),
-                  h(
-                    'label',
-                    { style: { fontSize: '11px', color: T.textSecondary, display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: 'pointer' } },
-                    h('input', { type: 'checkbox', checked: aiAuthorCode, onChange: (ev) => setAiAuthorCode(ev.target.checked) }),
-                    'AI 编写动效/音效源码',
+                    'div',
+                    { key: a.id, style: { borderRadius: '12px', overflow: 'visible', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column' } },
+                    h(
+                      'div',
+                      { style: { height: '116px', background: '#05080F', position: 'relative', borderRadius: '11px 11px 0 0', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+                      a.type === 'image'
+                        ? h('img', { src: `/api/video-workbench/asset?projectDir=${encodeURIComponent(activeProjectDir)}&rel=${encodeURIComponent(a.path)}&v=${assetVersion}`, style: { width: '100%', height: '100%', objectFit: 'cover' } })
+                        : a.type === 'video'
+                          ? h('video', { src: `/api/video-workbench/asset?projectDir=${encodeURIComponent(activeProjectDir)}&rel=${encodeURIComponent(a.path)}&v=${assetVersion}`, muted: true, style: { width: '100%', height: '100%', objectFit: 'cover' } })
+                          : h('span', { style: { fontSize: '30px' } }, a.role === 'music' ? '🎵' : a.role === 'voice_clone' ? '🎤' : '🔊'),
+                      h(
+                        'button',
+                        { type: 'button', onClick: () => handleDeleteAsset(a.id), title: '移除素材', style: { position: 'absolute', top: '7px', right: '7px', width: '26px', height: '26px', borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.7)', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+                        h(Icon, { name: 'x', size: 13 }),
+                      ),
+                    ),
+                    h(
+                      'div',
+                      { style: { padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '7px' } },
+                      h('div', { style: { fontSize: '13.5px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, a.name),
+                      h('div', { style: { fontSize: '12px', color: T.textMuted, fontFamily: 'Consolas, monospace' } }, a.width && a.height ? `${a.width}×${a.height}` : a.durationSec ? `${Number(a.durationSec).toFixed(1)}s` : a.type),
+                      h(CinemaSelect, {
+                        compact: true,
+                        value: !a.role || ['general', 'hero', 'broll', 'image', 'video'].includes(a.role) ? 'visual' : a.role,
+                        onChange: (r) => handleChangeAssetRole(a.id, r),
+                        T,
+                        options: [
+                          { value: 'visual', label: '画面素材' },
+                          { value: 'music', label: 'BGM 配乐' },
+                          { value: 'host_video', label: '真人出镜视频' },
+                          { value: 'avatar_base', label: '数字人底板' },
+                          { value: 'voice_clone', label: '声音克隆样本' },
+                          { value: 'sfx', label: '转场音效' },
+                        ],
+                      }),
+                    ),
                   ),
                 ),
               ),
+        ),
+      )
 
-              // AI Digital Human & Cloned Avatar Studio (dsh-tool-avatar)
+      const step2Panel = h(
+        'div',
+        { className: 'dsh-vw-scroll dsh-vw-grid-studio-2col', style: { flex: 1, overflowY: 'auto', padding: '22px 26px' } },
+        // Left Column: Topic + Style + 3-Mode BGM + Collapsible Professional Params
+        h(
+          'div',
+          { style: { ...panelStyle, padding: '22px', display: 'flex', flexDirection: 'column', gap: '16px' } },
+          h('h2', { style: { margin: 0, fontSize: '18px', fontWeight: 800 } }, '02 · 导演构思、视觉风格与三重配乐'),
+          h(
+            'div',
+            null,
+            h('label', { style: { display: 'block', fontSize: '13.5px', fontWeight: 700, marginBottom: '6px' } }, '创作主题与核心文案指令'),
+            h('textarea', {
+              rows: 4,
+              value: directorForm.topic,
+              onChange: (ev) => setDirectorForm((p) => ({ ...p, topic: ev.target.value })),
+              placeholder: '写清楚目标受众、想讲的核心卖点、节奏情绪...',
+              style: { ...inputStyle, fontSize: '14.5px', lineHeight: 1.6, resize: 'vertical' },
+            }),
+          ),
+          h(
+            'div',
+            null,
+            h('label', { style: { display: 'block', fontSize: '13.5px', fontWeight: 700, marginBottom: '7px' } }, '电影视觉风格（统一色彩与转场基调）'),
+            h(
+              'div',
+              { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(145px, 1fr))', gap: '8px' } },
+              UNIFIED_STYLES.map((st) => {
+                const on = directorForm.style === st.id
+                return h(
+                  'button',
+                  {
+                    key: st.id,
+                    type: 'button',
+                    className: 'dsh-vw-btn',
+                    onClick: () => setDirectorForm((p) => ({ ...p, style: st.id })),
+                    style: {
+                      padding: '10px 12px',
+                      borderRadius: '11px',
+                      textAlign: 'left',
+                      background: on ? T.accentGoldBg : T.bgElevated,
+                      border: `1.5px solid ${on ? T.accentGoldBorder : T.borderSubtle}`,
+                      color: T.textPrimary,
+                    },
+                  },
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13.5px', fontWeight: 800, color: on ? T.accentGold : T.textPrimary } }, h('span', { style: { width: '10px', height: '10px', borderRadius: '50%', background: st.swatch } }), st.label),
+                  h('div', { style: { fontSize: '12px', color: T.textMuted, marginTop: '3px' } }, st.desc),
+                )
+              }),
+            ),
+          ),
+
+          // 3-Mode BGM Panel
+          h(
+            'div',
+            { style: { padding: '14px', borderRadius: '12px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '10px' } },
+            h('div', { style: { fontSize: '14px', fontWeight: 800 } }, '🎵 背景音乐 BGM（混音时人声出现自动压低配乐）'),
+            h(SegmentedPills, {
+              value: directorForm.bgmMode,
+              onChange: (m) => setDirectorForm((p) => ({ ...p, bgmMode: m })),
+              T,
+              fullWidth: true,
+              size: 'sm',
+              options: [
+                { id: 'llm-coded', label: '🧠 AI 写代码作曲' },
+                { id: 'uploaded', label: '📁 选用自传音乐' },
+                { id: 'tts-engine', label: '🎙 TTS 氛围音景' },
+              ],
+            }),
+            directorForm.bgmMode === 'llm-coded'
+              ? h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleLlmComposeBgm, style: { ...blueBtnStyle, width: '100%' } }, '✨ 让大模型编写配乐算法并立即试听')
+              : directorForm.bgmMode === 'uploaded'
+                ? h(
+                    'div',
+                    { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+                    projectAssets.filter((a) => a.type === 'audio' && a.role === 'music').length > 0
+                      ? h(CinemaSelect, {
+                          value: script?.bgm?.uploadedPath || projectAssets.find((a) => a.role === 'music')?.path || '',
+                          onChange: (rel) => {
+                            if (!script) return
+                            setScript((p) => ({ ...p, bgmMode: 'uploaded', bgm: { ...(p?.bgm || {}), mode: 'uploaded', uploadedPath: rel, path: rel } }))
+                            setScriptDirty(true)
+                          },
+                          T,
+                          options: projectAssets.filter((a) => a.type === 'audio' && a.role === 'music').map((m) => ({ value: m.path, label: `🎵 ${m.name}`, sub: m.path })),
+                        })
+                      : h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setStudioStep(1), style: { ...ghostBtnStyle, color: T.accentGold, borderColor: T.accentGoldBorder } }, '← 前往 01 素材库导入个人 BGM'),
+                  )
+                : h(
+                    'div',
+                    { style: { display: 'flex', gap: '8px' } },
+                    h('input', { value: directorForm.bgmTtsPrompt, onChange: (ev) => setDirectorForm((p) => ({ ...p, bgmTtsPrompt: ev.target.value })), placeholder: '填写氛围音景乐感描述...', style: { ...inputStyle, flex: 1 } }),
+                    h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleTtsComposeBgm, style: blueBtnStyle }, '生成音景'),
+                  ),
+            bgmComposePreviewUrl ? h('audio', { src: bgmComposePreviewUrl, controls: true, style: { width: '100%', height: '36px' } }) : null,
+            script?.bgm?.analyzed
+              ? h(
+                  'div',
+                  { style: { fontSize: '12px', color: T.accentCyan, fontWeight: 700, padding: '6px 10px', borderRadius: '8px', background: T.accentCyanSoft, border: `1px solid ${T.accentCyanBorder}` } },
+                  `🥁 已测定真实节拍：${script.bgm.bpm} BPM · 首拍 ${script.bgm.phaseSec}s · ${script.bgm.downbeats?.length || 0} 个重拍 · ${script.bgm.drops?.length || 0} 个高潮突降点`,
+                )
+              : null,
+            h('div', { style: { fontSize: '13px', fontWeight: 800, marginTop: '4px' } }, '🥁 配音与卡点节奏模式'),
+            h(SegmentedPills, {
+              value: directorForm.narrationMode || 'tts',
+              onChange: (nm) => setDirectorForm((p) => ({ ...p, narrationMode: nm })),
+              T,
+              fullWidth: true,
+              size: 'sm',
+              options: [
+                { id: 'tts', label: '🗣️ 标准配音' },
+                { id: 'tts-beat-sync', label: '⚡ 配音+踩拍切镜' },
+                { id: 'subtitle-mv', label: '🔥 纯音乐卡点 MV' },
+              ],
+            }),
+          ),
+
+          // Collapsible Advanced Engineering Drawer (Decluttered for Beginners!)
+          h(
+            'div',
+            { style: { borderTop: `1px solid ${T.borderSubtle}`, paddingTop: '10px' } },
+            h(
+              'button',
+              { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowAdvancedDirector((v) => !v), style: { ...ghostBtnStyle, width: '100%', justifyContent: 'space-between' } },
+              h('span', null, '⚙ 更多专业参数（渲染引擎 · 语速 · 素材裁剪与变速 · 源码作者开关）'),
+              h(Icon, { name: 'chevron-down', size: 15 }),
+            ),
+            showAdvancedDirector
+              ? h(
+                  'div',
+                  { style: { marginTop: '12px', padding: '14px', borderRadius: '12px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '12px' } },
+                  h(
+                    'div',
+                    { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' } },
+                    h('span', { style: { fontSize: '13.5px', fontWeight: 700 } }, '渲染底层引擎'),
+                    h(SegmentedPills, {
+                      value: directorForm.engine,
+                      onChange: (e) => setDirectorForm((p) => ({ ...p, engine: e })),
+                      T,
+                      size: 'sm',
+                      options: [
+                        { id: 'remotion', label: 'Remotion React' },
+                        { id: 'html5', label: 'HyperFrames HTML' },
+                      ],
+                    }),
+                  ),
+                  h(
+                    'div',
+                    { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '13px' } },
+                    h('label', null, `口播语速 (${Number(speechTempo).toFixed(2)}x)`, h('input', { type: 'range', min: 0.75, max: 1.5, step: 0.05, value: speechTempo, onChange: (ev) => setSpeechTempo(Number(ev.target.value)), style: { width: '100%' } })),
+                    h('label', null, `片源播放倍速 (${Number(clipSpeedMult).toFixed(2)}x)`, h('input', { type: 'range', min: 0.5, max: 2.0, step: 0.1, value: clipSpeedMult, onChange: (ev) => setClipSpeedMult(Number(ev.target.value)), style: { width: '100%' } })),
+                  ),
+                  h(
+                    'div',
+                    { style: { display: 'flex', flexWrap: 'wrap', gap: '14px', fontSize: '13.5px' } },
+                    h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' } }, h('input', { type: 'checkbox', checked: useHostVocal, onChange: (ev) => setUseHostVocal(ev.target.checked) }), '优先沿用真人出镜原声'),
+                    h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' } }, h('input', { type: 'checkbox', checked: aiAuthorCode, onChange: (ev) => setAiAuthorCode(ev.target.checked) }), '允许大模型手写动效源码'),
+                  ),
+                  h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleRunMediaCurate, style: { ...ghostBtnStyle, width: '100%' } }, '✂️ 立刻执行 FFmpeg 素材智能构图与调色'),
+                )
+              : null,
+          ),
+        ),
+
+        // Right Column: Aspect/Quality/Platform + Voice & Clone + AI Digital Avatar + Execute Buttons
+        h(
+          'div',
+          { style: { ...panelStyle, padding: '22px', display: 'flex', flexDirection: 'column', gap: '16px' } },
+          h(
+            'div',
+            { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' } },
+            h(
+              'div',
+              null,
+              h('label', { style: { display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '5px' } }, '画面比例'),
+              h(CinemaSelect, {
+                value: directorForm.aspectRatio,
+                onChange: (v) => setDirectorForm((p) => ({ ...p, aspectRatio: v })),
+                T,
+                options: ASPECT_RATIO_OPTIONS.map((o) => ({ value: o.id, label: `${o.icon} ${o.label}`, sub: o.sub })),
+              }),
+            ),
+            h(
+              'div',
+              null,
+              h('label', { style: { display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '5px' } }, '清晰度规格'),
+              h(CinemaSelect, {
+                value: directorForm.quality,
+                onChange: (v) => setDirectorForm((p) => ({ ...p, quality: v })),
+                T,
+                options: QUALITY_OPTIONS.map((q) => ({ value: q.id, label: q.label, sub: q.desc })),
+              }),
+            ),
+          ),
+          directorForm.aspectRatio === 'custom' || directorForm.quality === 'custom'
+            ? h(
+                'div',
+                { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } },
+                h('input', { type: 'number', value: directorForm.customWidth, onChange: (ev) => setDirectorForm((p) => ({ ...p, customWidth: Number(ev.target.value) })), placeholder: '自定义宽度 px', style: inputStyle }),
+                h('input', { type: 'number', value: directorForm.customHeight, onChange: (ev) => setDirectorForm((p) => ({ ...p, customHeight: Number(ev.target.value) })), placeholder: '自定义高度 px', style: inputStyle }),
+              )
+            : null,
+          h(
+            'div',
+            null,
+            h('label', { style: { display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '5px' } }, '首发目标平台 (自动启用平台防遮挡安全区)'),
+            h(CinemaSelect, {
+              value: directorForm.targetPlatform,
+              onChange: (v) => setDirectorForm((p) => ({ ...p, targetPlatform: v })),
+              T,
+              options: PLATFORM_OPTIONS.map((p) => ({ value: p.id, label: p.label, sub: p.hint })),
+            }),
+          ),
+
+          // Voice Selection Card
+          h(
+            'div',
+            { style: { padding: '14px', borderRadius: '12px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' } },
+            h(
+              'div',
+              null,
+              h('div', { style: { fontSize: '12.5px', color: T.textMuted } }, `IndexTTS-2.5 配音引擎 · ${ttsStatus.ready ? '✓ 已就绪' : '待连接'}`),
+              h('div', { style: { fontSize: '14.5px', fontWeight: 800, marginTop: '3px' } }, voiceCatalog.find((v) => v.id === directorForm.voiceId)?.name || (directorForm.voiceId === 'auto' ? 'AI 自动智能匹配音色' : directorForm.voiceId)),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsh-vw-btn',
+                onClick: () => {
+                  setVoiceModalTarget('global')
+                  setShowVoiceModal(true)
+                },
+                style: ghostBtnStyle,
+              },
+              h(Icon, { name: 'mic', size: 15 }),
+              '选音色 / 克隆我的声音',
+            ),
+          ),
+
+          // AI Digital Avatar Card (with Honest VisualNotice)
+          h(
+            'div',
+            { style: { padding: '14px', borderRadius: '12px', background: avatarCfg.enabled ? T.accentBlueBg : T.bgElevated, border: `1px solid ${avatarCfg.enabled ? T.accentBlueBorder : T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '10px' } },
+            h(
+              'div',
+              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+              h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '14px', fontWeight: 800, cursor: 'pointer' } }, h('input', { type: 'checkbox', checked: avatarCfg.enabled, onChange: (ev) => setAvatarCfg((p) => ({ ...p, enabled: ev.target.checked })) }), '🤖 开启数字人 / 克隆分身口播叠层'),
               h(
                 'div',
-                {
-                  style: {
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '9px',
-                    padding: '12px',
-                    borderRadius: '10px',
-                    background: avatarCfg.enabled ? T.accentBlueBg : T.bgElevated,
-                    border: `1px solid ${avatarCfg.enabled ? T.accentBlueBorder : T.borderSubtle}`,
-                  },
-                },
-                h(
+                { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+                h('span', { style: { fontSize: '12px', color: avatarProvider?.neuralReady ? T.accentGreen : T.textMuted, fontFamily: 'Consolas, monospace' } }, avatarProvider?.neuralReady ? `外接神经对口型 (${avatarProvider.provider})` : '内置声波口型 / 本地人像合成'),
+                h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowAvatarEndpointCfg((v) => !v), style: { ...ghostBtnStyle, padding: '3px 9px', fontSize: '11.5px' } }, '⚙ 引擎配置'),
+              ),
+            ),
+            showAvatarEndpointCfg
+              ? h(
                   'div',
-                  { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+                  { style: { padding: '10px', borderRadius: '10px', background: T.bgPanelSolid, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12.5px' } },
+                  h('div', { style: { color: T.textSecondary, lineHeight: 1.55 } }, '• 免外部算力模式：AI 主播按音轨声波实时驱动 SVG 眨眼/嘴型生成透明 WebM；克隆真人底板则对本人视频/写真叠加 IndexTTS-2.5 克隆声音。\n• 如需对真人人脸照片/视频做真实唇形对口型，请填写下方外接 MuseTalk / LatentSync 接口。'),
                   h(
-                    'label',
-                    { style: { display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '12.5px', fontWeight: 800, cursor: 'pointer', color: avatarCfg.enabled ? T.accentBlue : T.textPrimary } },
-                    h('input', {
-                      type: 'checkbox',
-                      checked: avatarCfg.enabled,
-                      onChange: (ev) => setAvatarCfg((prev) => ({ ...prev, enabled: ev.target.checked })),
-                    }),
-                    '🤖 AI 数字人 & 克隆真人数字人口播叠加 (Alpha WebM)',
+                    'div',
+                    { style: { display: 'grid', gridTemplateColumns: '120px 1fr', gap: '6px' } },
+                    h('select', { value: avatarEndpointForm.provider, onChange: (ev) => setAvatarEndpointForm((p) => ({ ...p, provider: ev.target.value })), style: inputStyle }, h('option', { value: 'auto' }, 'auto'), h('option', { value: 'musetalk' }, 'MuseTalk'), h('option', { value: 'latentsync' }, 'LatentSync'), h('option', { value: 'local-composite' }, '仅本地合成')),
+                    h('input', { value: avatarEndpointForm.endpoint, onChange: (ev) => setAvatarEndpointForm((p) => ({ ...p, endpoint: ev.target.value })), placeholder: '可选：外接接口地址如 http://127.0.0.1:7865', style: inputStyle }),
                   ),
                   h(
-                    'span',
-                    { style: { fontSize: '10.5px', fontFamily: 'Consolas, monospace', color: T.textMuted } },
-                    `引擎: ${avatarProvider?.provider || 'auto'}`,
+                    'div',
+                    { style: { display: 'flex', gap: '6px' } },
+                    h('input', { type: 'password', value: avatarEndpointForm.apiKey, onChange: (ev) => setAvatarEndpointForm((p) => ({ ...p, apiKey: ev.target.value })), placeholder: '可选：Bearer API Key（留空表示本地无鉴权）', style: { ...inputStyle, flex: 1 } }),
+                    h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleSaveAvatarEndpointConfig, style: { ...blueBtnStyle, padding: '6px 12px', fontSize: '12px' } }, '保存接口'),
                   ),
-                ),
-                avatarCfg.enabled
-                  ? h(
-                      'div',
-                      { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-                      h(
+                )
+              : null,
+            avatarCfg.enabled
+              ? h(
+                  React.Fragment,
+                  null,
+                  h(SegmentedPills, {
+                    value: avatarCfg.mode,
+                    onChange: (m) => setAvatarCfg((p) => ({ ...p, mode: m })),
+                    T,
+                    fullWidth: true,
+                    size: 'sm',
+                    options: [
+                      { id: 'ai-human', label: '✨ 纯 AI 主播形象' },
+                      { id: 'cloned-human', label: '👤 克隆真人底板' },
+                    ],
+                  }),
+                  avatarCfg.mode === 'ai-human'
+                    ? h(CinemaSelect, {
+                        value: avatarCfg.presetId,
+                        onChange: (id) => setAvatarCfg((p) => ({ ...p, presetId: id })),
+                        T,
+                        options: (avatarTemplates.length ? avatarTemplates : [{ id: 'cyber-anchor', name: '赛博科技主理人' }, { id: 'warm-mentor', name: '温暖故事讲述者' }, { id: 'tech-founder', name: '极客创始人口播' }]).map((t) => ({ value: t.id, label: t.name })),
+                      })
+                    : h(
                         'div',
-                        { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' } },
-                        [
-                          { id: 'ai-human', label: '✨ 纯 AI 虚拟数字人' },
-                          { id: 'cloned-human', label: '👤 克隆真人数字人' },
-                        ].map((m) => {
-                          const on = avatarCfg.mode === m.id
-                          return h(
-                            'button',
-                            {
-                              key: m.id,
-                              className: 'dsh-vw-btn',
-                              onClick: () => setAvatarCfg((prev) => ({ ...prev, mode: m.id })),
-                              style: {
-                                padding: '6px 8px',
-                                borderRadius: '8px',
-                                fontSize: '11.5px',
-                                fontWeight: 700,
-                                background: on ? T.bgPanel : 'transparent',
-                                border: `1px solid ${on ? T.accentBlueBorder : T.borderSubtle}`,
-                                color: on ? T.accentBlue : T.textSecondary,
-                              },
-                            },
-                            m.label,
-                          )
+                        { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
+                        h(CinemaSelect, {
+                          compact: true,
+                          value: avatarCfg.sourcePath,
+                          onChange: (v) => setAvatarCfg((p) => ({ ...p, sourcePath: v })),
+                          placeholder: '选本人出镜底板视频/人像',
+                          T,
+                          options: projectAssets.filter((a) => a.type === 'video' || a.type === 'image').map((a) => ({ value: a.path, label: a.name, sub: a.role === 'avatar_base' ? '★ 底板' : a.type })),
+                        }),
+                        h(CinemaSelect, {
+                          compact: true,
+                          value: avatarCfg.voiceSamplePath,
+                          onChange: (v) => setAvatarCfg((p) => ({ ...p, voiceSamplePath: v })),
+                          placeholder: '选声音克隆样本',
+                          T,
+                          options: projectAssets.filter((a) => a.role === 'voice_clone' || a.type === 'audio' || a.role === 'host_video').map((a) => ({ value: a.path, label: a.name, sub: a.role })),
                         }),
                       ),
-                      avatarCfg.mode === 'ai-human'
-                        ? h(
-                            'select',
-                            {
-                              value: avatarCfg.presetId,
-                              onChange: (ev) => setAvatarCfg((prev) => ({ ...prev, presetId: ev.target.value })),
-                              style: { ...inputStyle, padding: '6px 9px', fontSize: '12px' },
-                            },
-                            (avatarTemplates.length
-                              ? avatarTemplates
-                              : [
-                                  { id: 'cyber-anchor', name: '赛博科技主理人' },
-                                  { id: 'warm-mentor', name: '温暖故事讲述者' },
-                                  { id: 'tech-founder', name: '极客创始人口播' },
-                                ]
-                            ).map((t) => h('option', { key: t.id, value: t.id }, `AI 形象模板: ${t.name}`)),
-                          )
-                        : h(
-                            'div',
-                            { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' } },
-                            h(
-                              'select',
-                              {
-                                value: avatarCfg.sourcePath,
-                                onChange: (ev) => setAvatarCfg((prev) => ({ ...prev, sourcePath: ev.target.value })),
-                                style: { ...inputStyle, padding: '6px 8px', fontSize: '11.5px' },
-                              },
-                              h('option', { value: '' }, '选择本人底板视频/人像 (可在第1步上传)'),
-                              projectAssets
-                                .filter((a) => a.type === 'video' || a.type === 'image')
-                                .map((a) => h('option', { key: a.id, value: a.path }, `${a.role === 'avatar_base' || a.role === 'host_video' ? '★ ' : ''}${a.name}`)),
-                            ),
-                            h(
-                              'select',
-                              {
-                                value: avatarCfg.voiceSamplePath,
-                                onChange: (ev) => setAvatarCfg((prev) => ({ ...prev, voiceSamplePath: ev.target.value })),
-                                style: { ...inputStyle, padding: '6px 8px', fontSize: '11.5px' },
-                              },
-                              h('option', { value: '' }, '克隆声纹样本 (IndexTTS-2.5)'),
-                              projectAssets
-                                .filter((a) => a.role === 'voice_clone' || a.type === 'audio' || a.role === 'host_video')
-                                .map((a) => h('option', { key: a.id, value: a.path }, `${a.role === 'voice_clone' ? '🎤 ' : ''}${a.name}`)),
-                            ),
-                          ),
-                      h(
+                  h(
+                    'div',
+                    { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' } },
+                    h(SegmentedPills, {
+                      value: avatarCfg.layout,
+                      onChange: (l) => setAvatarCfg((p) => ({ ...p, layout: l })),
+                      T,
+                      accent: 'gold',
+                      size: 'sm',
+                      options: [
+                        { id: 'pip-br', label: '右下小窗' },
+                        { id: 'pip-bl', label: '左下小窗' },
+                        { id: 'fullscreen', label: '全屏口播' },
+                      ],
+                    }),
+                    h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleGenerateAvatarClip, style: { ...blueBtnStyle, padding: '8px 14px' } }, '立即合成透明数字人'),
+                  ),
+                  avatarVisualNotice
+                    ? h('div', { style: { fontSize: '12.5px', padding: '8px 10px', borderRadius: '8px', background: T.accentGoldBg, color: T.accentGold, border: `1px solid ${T.accentGoldBorder}` } }, `ℹ ${avatarVisualNotice}`)
+                    : null,
+                  script?.avatarClip?.path
+                    ? h(
                         'div',
-                        { style: { display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' } },
+                        { style: { display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderRadius: '10px', background: T.bgPanelSolid, border: `1px solid ${T.borderSubtle}` } },
+                        h('video', {
+                          src: `/api/video-workbench/asset?projectDir=${encodeURIComponent(activeProjectDir)}&rel=${encodeURIComponent(script.avatarClip.path)}&v=${assetVersion}`,
+                          autoPlay: true,
+                          loop: true,
+                          muted: true,
+                          controls: true,
+                          style: { width: '92px', height: '104px', borderRadius: '10px', background: '#050810', objectFit: 'cover', flexShrink: 0 },
+                        }),
                         h(
                           'div',
-                          { style: { display: 'flex', gap: '5px' } },
-                          [
-                            { id: 'pip-br', label: '右下画中画' },
-                            { id: 'pip-bl', label: '左下画中画' },
-                            { id: 'fullscreen', label: '全屏口播' },
-                          ].map((ly) => {
-                            const on = avatarCfg.layout === ly.id
-                            return h(
-                              'button',
-                              {
-                                key: ly.id,
-                                className: 'dsh-vw-btn',
-                                onClick: () => setAvatarCfg((prev) => ({ ...prev, layout: ly.id })),
-                                style: {
-                                  ...ghostBtnStyle,
-                                  padding: '4px 8px',
-                                  fontSize: '11px',
-                                  borderColor: on ? T.accentGoldBorder : T.borderSubtle,
-                                  color: on ? T.accentGold : T.textSecondary,
-                                },
-                              },
-                              ly.label,
-                            )
-                          }),
+                          { style: { fontSize: '12px', color: T.textSecondary, lineHeight: 1.5 } },
+                          h('div', { style: { fontWeight: 700, color: T.accentGreen } }, '✓ 透明通道数字人贴片已生成'),
+                          h('div', { style: { color: T.textMuted } }, `${script.avatarClip.providerUsed || 'local'} · ${script.avatarClip.pixFmt || 'yuva420p'} · ${Number(script.avatarClip.durationSec || 0).toFixed(1)}s`),
                         ),
-                        h(
-                          'button',
-                          {
-                            className: 'dsh-vw-btn',
-                            disabled: Boolean(busyLabel),
-                            onClick: handleGenerateAvatarClip,
-                            style: { ...blueBtnStyle, padding: '5px 10px', fontSize: '11px' },
-                          },
-                          '🎬 生成透明通道数字人',
-                        ),
-                      ),
-                    )
-                  : h('div', { style: { fontSize: '11px', color: T.textMuted } }, '开启后自动输出 yuva420p 透明通道 WebM 并在 Remotion / HTML 中叠层合成。'),
-              ),
+                      )
+                    : null,
+                )
+              : h('div', { style: { fontSize: '12.5px', color: T.textMuted } }, '开启后输出透明通道 WebM，与你的产品画面同框出镜口播（支持画中画与绿幕抠像）'),
+          ),
 
-              // DUAL-TRACK EXECUTION CARDS
-              h(
-                'div',
-                { style: { display: 'flex', flexDirection: 'column', gap: '9px', paddingTop: '4px', borderTop: `1px solid ${T.borderSubtle}` } },
-                h(
-                  'button',
-                  {
-                    className: 'dsh-vw-btn',
-                    disabled: Boolean(busyLabel),
-                    onClick: () => handleStartOneClickPipeline(),
-                    style: { ...blueBtnStyle, width: '100%', padding: '10px 14px', fontSize: '13px' },
-                  },
-                  h(Icon, { name: 'zap', size: 14 }),
-                  '⚡ 按当前导演+数字人配置 · 启动 4-Agent 全自动出片流水线',
-                ),
-                h(
-                  'div',
-                  { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
-                  h(
-                    'button',
-                    {
-                      className: 'dsh-vw-btn',
-                      disabled: Boolean(busyLabel),
-                      onClick: () => handlePlanLocalDraft(false),
-                      style: { ...ghostBtnStyle, padding: '10px', justifyContent: 'center' },
-                    },
-                    '📋 仅规划草稿 (秒出)',
-                  ),
-                  h(
-                    'button',
-                    {
-                      className: 'dsh-vw-btn',
-                      disabled: Boolean(busyLabel),
-                      onClick: () => handlePlanLocalDraft(true),
-                      style: { ...ghostBtnStyle, padding: '10px', justifyContent: 'center' },
-                    },
-                    '🎞 生成本地演练成片',
-                  ),
-                ),
-                h(
-                  'label',
-                  { style: { display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12px', color: T.textSecondary, cursor: 'pointer' } },
-                  h('input', {
-                    type: 'checkbox',
-                    checked: directorForm.useDraftReference,
-                    onChange: (ev) => setDirectorForm((prev) => ({ ...prev, useDraftReference: ev.target.checked })),
-                  }),
-                  '以当前本地草稿与已生成音轨为参考基准，交给大模型升级重写代码与配乐',
-                ),
-                h(
-                  'button',
-                  {
-                    className: 'dsh-vw-btn',
-                    disabled: Boolean(busyLabel),
-                    onClick: () => handleAiCodingProduce(directorForm.useDraftReference),
-                    style: { ...goldBtnStyle, width: '100%', padding: '12px 18px', fontSize: '14px' },
-                  },
-                  h(Icon, { name: 'sparkles', size: 15 }),
-                  llmConfig?.configured
-                    ? `大模型 AI 编程出片 (${llmConfig.model})`
-                    : '点击配置大模型 → 启动 AI 编程极致出片',
-                ),
-              ),
+          // Execute Actions
+          h(
+            'div',
+            { style: { display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '6px' } },
+            h(
+              'button',
+              { type: 'button', className: 'dsh-vw-btn dsh-vw-plasma-cta', disabled: Boolean(busyLabel), onClick: () => handleStartOneClickPipeline(), style: { padding: '13px 18px', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '15px', fontWeight: 900 } },
+              '⚡ 按当前设定一键启动 4-Agent 全自动出片',
+            ),
+            h(
+              'div',
+              { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } },
+              h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handlePlanLocalDraft(false), style: ghostBtnStyle }, '📋 仅生成文字剧本草稿'),
+              h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handlePlanLocalDraft(true), style: ghostBtnStyle }, '🎞 先出本地演练草稿片'),
+            ),
+            h(
+              'button',
+              { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleAiCodingProduce(directorForm.useDraftReference), style: { ...goldBtnStyle, width: '100%', padding: '12px' } },
+              h(Icon, { name: 'sparkles', size: 16 }),
+              llmConfig?.configured ? `大模型 AI 编写全套动效出片 (${llmConfig.model})` : '先配置大模型 → 启动 AI 编程创作',
             ),
           ),
         ),
       )
 
-      // -----------------------------------------------------------------------
-      // STEP 3: CINEMA MONITOR + TIMELINE + INSPECTOR & NATURAL LANGUAGE REFINE
-      // -----------------------------------------------------------------------
-      const totalFrames = Math.max(1, Number(script?.totalDurationInFrames) || 300)
-      const fps = Number(script?.fps) || 30
-
-      const step3View = h(
+      const step3Panel = h(
         'div',
         { style: { flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' } },
-        // Center: Reference Monitor + Timeline
+        // Center: Cinema Monitor + Interactive Timeline
         h(
           'div',
-          { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: T.bgApp } },
-          // Monitor Toolbar
+          { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' } },
+          // Toolbar
           h(
             'div',
-            {
-              style: {
-                padding: '9px 18px',
-                borderBottom: `1px solid ${T.borderSubtle}`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '10px',
-                flexWrap: 'wrap',
-              },
-            },
+            { style: { padding: '10px 18px', borderBottom: `1px solid ${T.borderSubtle}`, background: T.bgPanel, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' } },
             h(
               'div',
               { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-              h('span', { style: { fontSize: '12px', fontWeight: 700, color: T.textSecondary } }, `参考监视器`),
-              h(
-                'select',
-                {
-                  value: script?.aspectRatio || '16:9',
-                  onChange: (ev) => handleUpdateFormatQuick(ev.target.value, script?.quality || '1080p'),
-                  style: { ...inputStyle, width: 'auto', padding: '4px 10px', fontSize: '12px' },
-                },
-                ASPECT_RATIO_OPTIONS.filter((o) => o.id !== 'auto').map((o) => h('option', { key: o.id, value: o.id }, o.label)),
-              ),
-              h(
-                'select',
-                {
-                  value: directorForm.targetPlatform || script?.targetPlatform || 'universal',
-                  onChange: (ev) => {
-                    handleUpdateFormatQuick(script?.aspectRatio || '16:9', script?.quality || '1080p', ev.target.value)
-                    setShowSafeGuides(true)
-                  },
-                  style: { ...inputStyle, width: 'auto', padding: '4px 10px', fontSize: '12px' },
-                },
-                PLATFORM_OPTIONS.map((pl) => h('option', { key: pl.id, value: pl.id }, `平台: ${pl.label}`)),
-              ),
-              h(
-                'button',
-                {
-                  className: 'dsh-vw-btn',
-                  onClick: () => setShowSafeGuides((v) => !v),
-                  style: { ...ghostBtnStyle, padding: '4px 10px', color: showSafeGuides ? T.accentGold : safeZonePreflight?.passed === false ? T.accentRed : T.textSecondary },
-                },
-                safeZonePreflight?.passed === false ? '安全框遮罩 ⚠' : '平台安全框遮罩',
-              ),
-              h(
-                'button',
-                { className: 'dsh-vw-btn', onClick: () => setShowVendorModal(true), style: { ...ghostBtnStyle, padding: '4px 10px' } },
-                '✨ 导入 .motion',
-              ),
-              h(
-                'button',
-                { className: 'dsh-vw-btn', onClick: handleOpenCodeDrawer, style: { ...ghostBtnStyle, padding: '4px 10px' } },
-                h(Icon, { name: 'code', size: 12 }),
-                '源码 / 修复日志',
-              ),
+              h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setIsPlaying((v) => !v), style: blueBtnStyle }, h(Icon, { name: isPlaying ? 'pause' : 'play', size: 15 }), isPlaying ? '暂停' : '播放预览'),
+              h('span', { style: { fontFamily: 'Consolas, monospace', fontSize: '13.5px', fontWeight: 700, padding: '6px 10px', borderRadius: '8px', background: T.bgInput } }, `${fmtTimecode(currentFrame, script?.fps)} / ${fmtTimecode(script?.totalDurationInFrames || 0, script?.fps)}`),
+              h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowSafeGuides((v) => !v), style: { ...ghostBtnStyle, color: showSafeGuides ? T.accentGold : T.textSecondary, borderColor: showSafeGuides ? T.accentGoldBorder : T.borderSubtle } }, h(Icon, { name: 'eye', size: 14 }), showSafeGuides ? '隐藏平台防遮挡线' : '显示防遮挡安全线'),
             ),
             h(
               'div',
               { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-              script?.authoringMode !== 'ai-coded'
-                ? h(
-                    'button',
-                    {
-                      className: 'dsh-vw-btn',
-                      disabled: Boolean(busyLabel),
-                      onClick: () => handleAiCodingProduce(true),
-                      style: { ...goldBtnStyle, padding: '6px 12px', fontSize: '12px' },
-                    },
-                    h(Icon, { name: 'sparkles', size: 12 }),
-                    '草稿已确认 → 交由大模型升级成片',
-                  )
-                : null,
-              h(
-                'button',
-                {
-                  className: 'dsh-vw-btn',
-                  onClick: () => setActiveStep(4),
-                  style: { ...blueBtnStyle, padding: '6px 13px', fontSize: '12px' },
-                },
-                '去导出 / 质检 →',
-              ),
+              h('div', { style: { width: '165px' } }, h(CinemaSelect, { compact: true, value: script?.aspectRatio || directorForm.aspectRatio, onChange: (r) => handleUpdateFormatQuick(r, script?.quality || directorForm.quality), T, options: ASPECT_RATIO_OPTIONS.filter((o) => o.id !== 'auto' && o.id !== 'custom').map((o) => ({ value: o.id, label: o.label })) })),
+              h('div', { style: { width: '165px' } }, h(CinemaSelect, { compact: true, value: directorForm.targetPlatform, onChange: (p) => handleUpdateFormatQuick(script?.aspectRatio || '16:9', script?.quality || '1080p', p), T, options: PLATFORM_OPTIONS.map((p) => ({ value: p.id, label: p.label })) })),
+              h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleOpenCodeDrawer, style: ghostBtnStyle }, h(Icon, { name: 'code', size: 14 }), '查看源码'),
             ),
           ),
-          // Calibrated Black Monitor Stage (Auto-fits Portrait 9:16, Square 1:1, or Landscape 16:9!)
+          // Monitor
           h(
             'div',
-            {
-              style: {
-                flex: 1,
-                minHeight: 0,
-                background: T.monitorShell,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '16px',
-                position: 'relative',
-              },
-            },
+            { style: { flex: 1, minHeight: 0, background: T.monitorShell, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', position: 'relative' } },
             h(
               'div',
               {
@@ -6152,43 +5084,15 @@ window.__ModuleLoader__.load({
                   maxHeight: '100%',
                   aspectRatio: `${curW} / ${curH}`,
                   background: '#000',
-                  borderRadius: '10px',
+                  borderRadius: '12px',
                   overflow: 'hidden',
-                  border: '1px solid rgba(255,255,255,0.14)',
+                  border: '1px solid rgba(255,255,255,0.16)',
                   boxShadow: '0 24px 60px rgba(0,0,0,0.65)',
                 },
               },
               previewHtmlUrl
-                ? h('iframe', {
-                    ref: iframeRef,
-                    src: previewHtmlUrl,
-                    style: { width: '100%', height: '100%', border: 'none', display: 'block', background: '#000' },
-                    onLoad: () => seekToFrame(currentFrame, false),
-                  })
-                : h('div', { style: { color: '#9CA3B5', fontSize: '13px', padding: '40px', textAlign: 'center' } }, '请先在第 2 步生成本地草稿或大模型成片'),
-              script?.avatarClip?.path
-                ? h(
-                    'div',
-                    {
-                      style: {
-                        position: 'absolute',
-                        top: '10px',
-                        left: '10px',
-                        zIndex: 14,
-                        padding: '3px 9px',
-                        borderRadius: '999px',
-                        background: 'rgba(7,9,14,0.82)',
-                        border: '1px solid rgba(34,211,238,0.55)',
-                        color: '#22D3EE',
-                        fontSize: '10.5px',
-                        fontWeight: 700,
-                        pointerEvents: 'none',
-                      },
-                    },
-                    `🤖 Alpha 透明数字人已叠层 (${script.avatarLayout || script.avatarClip.layout || 'pip-br'})`,
-                  )
-                : null,
-              // Platform-Accurate Safe-Zone Exclusion Overlay + Inner Safe Boundary
+                ? h('iframe', { ref: iframeRef, src: previewHtmlUrl, style: { width: '100%', height: '100%', border: 'none', display: 'block', background: '#000' }, onLoad: () => seekToFrame(currentFrame, false) })
+                : h('div', { style: { color: '#94A3B8', fontSize: '14.5px', padding: '48px', textAlign: 'center' } }, '还没有生成好的动态预览，请回作战大屏点击「一键出片」或在 02 步生成草稿'),
               showSafeGuides
                 ? h(
                     'div',
@@ -6204,132 +5108,34 @@ window.__ModuleLoader__.load({
                             top: `${obs.y * 100}%`,
                             width: `${obs.w * 100}%`,
                             height: `${obs.h * 100}%`,
-                            background: obs.tone === 'danger' ? 'rgba(244, 63, 94, 0.24)' : 'rgba(229, 169, 60, 0.16)',
-                            border: `1px dashed ${obs.tone === 'danger' ? 'rgba(244, 63, 94, 0.65)' : 'rgba(229, 169, 60, 0.6)'}`,
+                            background: obs.tone === 'danger' ? 'rgba(244,63,94,0.22)' : 'rgba(245,185,66,0.16)',
+                            border: `1.5px dashed ${obs.tone === 'danger' ? '#FB7185' : '#F5B942'}`,
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                           },
                         },
-                        h(
-                          'span',
-                          {
-                            style: {
-                              padding: '2px 7px',
-                              borderRadius: '4px',
-                              background: 'rgba(0,0,0,0.68)',
-                              color: '#FFF',
-                              fontSize: '10px',
-                              fontWeight: 700,
-                            },
-                          },
-                          `遮挡区 · ${obs.label}`,
-                        ),
+                        h('span', { style: { padding: '3px 8px', borderRadius: '5px', background: 'rgba(0,0,0,0.75)', color: '#fff', fontSize: '12px', fontWeight: 700 } }, `避让区 · ${obs.label}`),
                       ),
-                    ),
-                    h(
-                      'div',
-                      {
-                        style: {
-                          position: 'absolute',
-                          top: `${(safeZonePreflight?.safeInsets?.top ?? 0.08) * 100}%`,
-                          bottom: `${(safeZonePreflight?.safeInsets?.bottom ?? 0.08) * 100}%`,
-                          left: `${(safeZonePreflight?.safeInsets?.left ?? 0.08) * 100}%`,
-                          right: `${(safeZonePreflight?.safeInsets?.right ?? 0.08) * 100}%`,
-                          border: '1.5px dashed rgba(34, 197, 94, 0.72)',
-                        },
-                      },
-                      h('div', { style: { position: 'absolute', left: '33.33%', top: 0, bottom: 0, borderLeft: '1px solid rgba(255,255,255,0.12)' } }),
-                      h('div', { style: { position: 'absolute', left: '66.66%', top: 0, bottom: 0, borderLeft: '1px solid rgba(255,255,255,0.12)' } }),
-                      h('div', { style: { position: 'absolute', top: '33.33%', left: 0, right: 0, borderTop: '1px solid rgba(255,255,255,0.12)' } }),
-                      h('div', { style: { position: 'absolute', top: '66.66%', left: 0, right: 0, borderTop: '1px solid rgba(255,255,255,0.12)' } }),
                     ),
                   )
                 : null,
             ),
           ),
-          // Transport Scrubber Bar
+          // Multi-Track Timeline Strip
           h(
             'div',
-            {
-              style: {
-                padding: '8px 18px',
-                background: T.bgSidebar,
-                borderTop: `1px solid ${T.borderSubtle}`,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-              },
-            },
-            h(
-              'button',
-              {
-                className: 'dsh-vw-btn',
-                onClick: () => setIsPlaying((p) => !p),
-                style: { ...goldBtnStyle, padding: '5px 12px', fontSize: '12px' },
-              },
-              h(Icon, { name: isPlaying ? 'pause' : 'play', size: 12 }),
-              isPlaying ? '暂停' : '播放',
-            ),
-            h(
-              'button',
-              { className: 'dsh-vw-btn', onClick: () => seekToFrame(currentFrame - 1), style: { ...ghostBtnStyle, padding: '4px 8px' } },
-              '-1f',
-            ),
-            h(
-              'button',
-              { className: 'dsh-vw-btn', onClick: () => seekToFrame(currentFrame + 1), style: { ...ghostBtnStyle, padding: '4px 8px' } },
-              '+1f',
-            ),
-            h('input', {
-              type: 'range',
-              min: 0,
-              max: Math.max(1, totalFrames - 1),
-              value: currentFrame,
-              onChange: (ev) => {
-                setIsPlaying(false)
-                seekToFrame(Number(ev.target.value))
-              },
-              style: { flex: 1, accentColor: T.accentGold, cursor: 'pointer' },
-            }),
-            h(
-              'span',
-              { style: { fontFamily: 'Consolas, monospace', fontSize: '12px', color: T.textSecondary, whiteSpace: 'nowrap' } },
-              `${fmtTimecode(currentFrame, fps)} · F${currentFrame}/${totalFrames}`,
-            ),
-          ),
-          // Three-Track Cinema Timeline (V1 视觉分镜轨 · S1 字幕与数字人轨 · A1 配音与闪避配乐轨)
-          h(
-            'div',
-            {
-              className: 'dsh-vw-scroll',
-              style: {
-                padding: '10px 16px',
-                background: T.bgPanel,
-                backdropFilter: 'blur(18px)',
-                borderTop: `1px solid ${T.borderSubtle}`,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '6px',
-                overflowX: 'auto',
-                flexShrink: 0,
-              },
-            },
-            // Track 1: V1 视觉分镜轨
+            { className: 'dsh-vw-scroll', style: { height: '165px', flexShrink: 0, borderTop: `1px solid ${T.borderSubtle}`, background: T.bgSidebar, padding: '12px 18px', overflowX: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' } },
             h(
               'div',
-              { style: { display: 'flex', alignItems: 'center', gap: '8px', minWidth: '640px' } },
+              { style: { display: 'flex', alignItems: 'center', gap: '10px', minWidth: '620px' } },
+              h('span', { style: { width: '92px', fontSize: '12px', fontWeight: 800, color: T.accentGold } }, 'V1 · 分镜轨道'),
               h(
                 'div',
-                { style: { width: '98px', flexShrink: 0, fontSize: '10.5px', fontWeight: 800, color: T.accentGold, fontFamily: 'Consolas, monospace' } },
-                'V1 · 视觉分镜',
-              ),
-              h(
-                'div',
-                { style: { flex: 1, display: 'flex', gap: '6px' } },
+                { style: { flex: 1, display: 'flex', gap: '7px' } },
                 scenes.map((sc, idx) => {
-                  const isSel = idx === selectedSceneIdx
-                  const isPlayNow = idx === activePlayingSceneIdx
+                  const sel = idx === selectedSceneIdx
+                  const playingNow = isPlaying && idx === activePlayingSceneIdx
                   return h(
                     'div',
                     {
@@ -6340,660 +5146,389 @@ window.__ModuleLoader__.load({
                         seekToFrame(sc.startFrame || 0)
                       },
                       style: {
-                        minWidth: '120px',
                         flex: `${Math.max(1, Number(sc.durationSec) || 3)} 1 0`,
-                        padding: '6px 9px',
-                        borderRadius: '8px',
+                        minWidth: '128px',
+                        padding: '7px 11px',
+                        borderRadius: '9px',
                         cursor: 'pointer',
-                        background: isSel ? T.accentGoldBg : T.bgElevated,
-                        border: `1.5px solid ${isSel ? T.accentGoldBorder : isPlayNow ? T.accentBlueBorder : T.borderSubtle}`,
+                        background: sel ? T.accentGoldBg : playingNow ? T.accentBlueBg : T.bgElevated,
+                        border: `1.5px solid ${sel ? T.accentGold : playingNow ? T.accentBlue : T.borderSubtle}`,
                       },
                     },
-                    h(
-                      'div',
-                      { style: { display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: isSel ? T.accentGold : T.textMuted, fontFamily: 'Consolas, monospace' } },
-                      h('span', null, `S${String(idx + 1).padStart(2, '0')}`),
-                      h('span', null, `${Number(sc.durationSec || 0).toFixed(1)}s`),
-                    ),
-                    h(
-                      'div',
-                      { style: { fontSize: '11.5px', fontWeight: 700, marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
-                      sc.title || `第 ${idx + 1} 幕`,
-                    ),
+                    h('div', { style: { fontSize: '12px', fontWeight: 800, color: sel ? T.accentGold : T.accentBlue } }, `${sc.id || `S0${idx + 1}`} · ${Number(sc.durationSec || 3).toFixed(1)}s`),
+                    h('div', { style: { fontSize: '13px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' } }, sc.title || `第 ${idx + 1} 幕`),
                   )
                 }),
               ),
             ),
-            // Track 2: S1 字幕与透明数字人轨
             h(
               'div',
-              { style: { display: 'flex', alignItems: 'center', gap: '8px', minWidth: '640px' } },
+              { style: { display: 'flex', alignItems: 'center', gap: '10px', minWidth: '620px' } },
+              h('span', { style: { width: '92px', fontSize: '12px', fontWeight: 800, color: T.accentGreen } }, 'A1 · 混音配乐'),
               h(
                 'div',
-                { style: { width: '98px', flexShrink: 0, fontSize: '10.5px', fontWeight: 800, color: T.accentBlue, fontFamily: 'Consolas, monospace' } },
-                'S1 · 字幕/数字人',
-              ),
-              h(
-                'div',
-                { style: { flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' } },
-                h(
-                  'div',
-                  { style: { display: 'flex', gap: '6px' } },
-                  scenes.map((sc, idx) =>
-                    h(
-                      'div',
-                      {
-                        key: `cap-${sc.id || idx}`,
-                        onClick: () => {
-                          setSelectedSceneIdx(idx)
-                          setIsPlaying(false)
-                          seekToFrame(sc.startFrame || 0)
-                        },
-                        style: {
-                          minWidth: '120px',
-                          flex: `${Math.max(1, Number(sc.durationSec) || 3)} 1 0`,
-                          padding: '3px 7px',
-                          borderRadius: '6px',
-                          background: T.accentBlueBg,
-                          border: `1px solid ${idx === selectedSceneIdx ? T.accentBlueBorder : T.borderSubtle}`,
-                          fontSize: '10px',
-                          color: T.textSecondary,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          cursor: 'pointer',
-                        },
-                      },
-                      `💬 ${sc.caption || sc.narration || '动态字幕条'}`,
-                    ),
-                  ),
-                ),
-                script?.avatarClip?.path
-                  ? h(
-                      'div',
-                      {
-                        onClick: () => setActiveStep(2),
-                        title: '点击返回第 2 步调整数字人模式与画中画布局',
-                        style: {
-                          padding: '3px 9px',
-                          borderRadius: '6px',
-                          background: 'rgba(34, 211, 238, 0.16)',
-                          border: '1px dashed rgba(34, 211, 238, 0.5)',
-                          fontSize: '10px',
-                          fontWeight: 700,
-                          color: T.accentBlue,
-                          cursor: 'pointer',
-                        },
-                      },
-                      `🤖 Alpha 透明数字人叠层 (${script.avatarClip.mode || 'ai-human'} · ${script.avatarLayout || script.avatarClip.layout || 'pip-br'}) · ${script.avatarClip.path}`,
-                    )
-                  : null,
-              ),
-            ),
-            // Track 3: A1 配音与闪避配乐轨
-            h(
-              'div',
-              { style: { display: 'flex', alignItems: 'center', gap: '8px', minWidth: '640px' } },
-              h(
-                'div',
-                { style: { width: '98px', flexShrink: 0, fontSize: '10.5px', fontWeight: 800, color: T.accentGreen, fontFamily: 'Consolas, monospace' } },
-                'A1 · 配音与闪避',
-              ),
-              h(
-                'div',
-                { style: { flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' } },
-                h(
-                  'div',
-                  { style: { display: 'flex', gap: '6px' } },
-                  scenes.map((sc, idx) => {
-                    const hasAudio = Boolean(sc.narration && sc.narration.trim())
-                    return h(
-                      'div',
-                      {
-                        key: `aud-${sc.id || idx}`,
-                        style: {
-                          minWidth: '120px',
-                          flex: `${Math.max(1, Number(sc.durationSec) || 3)} 1 0`,
-                          padding: '3px 7px',
-                          borderRadius: '6px',
-                          background: hasAudio ? T.accentGreenBg : T.bgInput,
-                          border: `1px solid ${hasAudio ? 'rgba(34,197,94,0.4)' : T.borderSubtle}`,
-                          fontSize: '10px',
-                          color: hasAudio ? T.accentGreen : T.textMuted,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        },
-                      },
-                      hasAudio ? `🔊 口播 (${sc.emotion || '平静'} · BGM自动闪避)` : '— 无口播 —',
-                    )
-                  }),
-                ),
-                h(
-                  'div',
-                  {
-                    style: {
-                      padding: '3px 9px',
-                      borderRadius: '6px',
-                      background: resolvedDark ? 'rgba(229, 169, 60, 0.12)' : 'rgba(183, 121, 31, 0.1)',
-                      border: `1px solid ${T.accentGoldBorder}`,
-                      fontSize: '10px',
-                      color: T.accentGold,
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                    },
-                  },
-                  h('span', null, `🎵 BGM 闪避母带轨 · 模式: ${script?.bgmMode || script?.audioSpec?.bgmMode || directorForm.bgmMode || 'llm-coded'}`),
-                  h('span', { style: { fontFamily: 'Consolas, monospace' } }, hasMasterAudio ? '✓ master-audio.wav 已混音 (-14 LUFS)' : '待合成音轨'),
-                ),
+                { style: { flex: 1, padding: '8px 12px', borderRadius: '8px', background: T.accentGreenBg, border: `1px solid rgba(52,211,153,0.35)`, fontSize: '12.5px', color: T.accentGreen, display: 'flex', justifyContent: 'space-between' } },
+                h('span', null, `🎵 配乐模式: ${script?.bgmMode || directorForm.bgmMode} (人声进入自动闪避)`),
+                h('span', { style: { fontFamily: 'Consolas, monospace', fontWeight: 700 } }, hasMasterAudio ? '✓ master-audio.wav 已对齐' : '待合成混音'),
               ),
             ),
           ),
         ),
-        // Right Inspector: Scene Copy/Voice + Natural Language AI Refine Box
+
+        // Right Inspector: AI Dialogue Refine + Scene Editor
         h(
           'aside',
-          {
-            className: 'dsh-vw-scroll',
-            style: {
-              width: '340px',
-              flexShrink: 0,
-              background: T.bgSidebar,
-              borderLeft: `1px solid ${T.borderSubtle}`,
-              padding: '16px',
-              overflowY: 'auto',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '14px',
-            },
-          },
-          // AI Natural Language Co-Pilot Card
+          { className: 'dsh-vw-scroll', style: { width: '360px', flexShrink: 0, background: T.bgSidebar, borderLeft: `1px solid ${T.borderSubtle}`, padding: '18px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' } },
+          // Co-Pilot Quick Refine
           h(
             'div',
-            {
-              style: {
-                padding: '13px',
-                borderRadius: '12px',
-                background: resolvedDark ? 'rgba(56, 189, 248, 0.08)' : 'rgba(37, 99, 235, 0.05)',
-                border: `1px solid ${T.accentBlueBorder}`,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '9px',
-              },
-            },
+            { style: { padding: '14px', borderRadius: '13px', background: T.accentBlueBg, border: `1px solid ${T.accentBlueBorder}`, display: 'flex', flexDirection: 'column', gap: '10px' } },
             h(
               'div',
               { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-              h('span', { style: { fontSize: '12px', fontWeight: 800, color: T.accentBlue } }, '💬 对 AI 说（小白快捷一键纠错 / 自然语言精修）'),
-              historyCount > 0
-                ? h(
-                    'button',
-                    { className: 'dsh-vw-btn', onClick: handleRollbackVersion, style: { ...ghostBtnStyle, padding: '3px 8px', fontSize: '11px' } },
-                    h(Icon, { name: 'undo', size: 11 }),
-                    `撤回 (${historyCount})`,
-                  )
-                : null,
+              h('span', { style: { fontSize: '13.5px', fontWeight: 800, color: T.accentBlue } }, '💬 对 AI 说（小白一键改片）'),
+              historyCount > 0 ? h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleRollbackVersion, style: { ...ghostBtnStyle, padding: '4px 10px', fontSize: '12px' } }, h(Icon, { name: 'undo', size: 13 }), `撤回 (${historyCount})`) : null,
             ),
             h(
               'div',
-              { style: { display: 'flex', flexWrap: 'wrap', gap: '5px' } },
+              { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
               QUICK_FIX_PILLS.map((pill) =>
-                h(
-                  'button',
-                  {
-                    key: pill.label,
-                    className: 'dsh-vw-btn',
-                    disabled: Boolean(busyLabel),
-                    onClick: () => handleAiRefine(pill.prompt),
-                    style: {
-                      ...ghostBtnStyle,
-                      padding: '3px 8px',
-                      fontSize: '10.5px',
-                      borderRadius: '99px',
-                    },
-                  },
-                  pill.label,
-                ),
+                h('button', { key: pill.label, type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleAiRefine(pill.prompt), style: { ...ghostBtnStyle, padding: '5px 10px', fontSize: '12px', borderRadius: '999px' } }, pill.label),
               ),
             ),
             h('textarea', {
               rows: 3,
               value: refinePrompt,
               onChange: (ev) => setRefinePrompt(ev.target.value),
-              placeholder: '点上方快捷胶囊一键修片，或直接说：把这一幕改成震撼的数字滚动特效，配乐更紧凑...',
-              style: { ...inputStyle, fontSize: '12px', resize: 'vertical' },
+              placeholder: '例如：这一幕换成更震撼的数据增长动画，加大标题字号...',
+              style: { ...inputStyle, fontSize: '13.5px', resize: 'vertical' },
             }),
             h(
               'div',
-              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' } },
-              h(
-                'select',
-                {
-                  value: refineScope,
-                  onChange: (ev) => setRefineScope(ev.target.value),
-                  style: { ...inputStyle, width: 'auto', padding: '5px 8px', fontSize: '11px' },
-                },
-                h('option', { value: 'scene' }, `仅改当前幕 (${selectedScene?.id || 'S01'})`),
-                h('option', { value: 'global' }, '整体风格与全片代码'),
-              ),
-              h(
-                'button',
-                { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleAiRefine, style: { ...blueBtnStyle, padding: '6px 12px', fontSize: '12px' } },
-                h(Icon, { name: 'sparkles', size: 12 }),
-                '立即精修',
-              ),
+              { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
+              h('div', { style: { flex: 1 } }, h(CinemaSelect, { compact: true, value: refineScope, onChange: setRefineScope, T, options: [{ value: 'scene', label: `仅改当前 (${selectedScene?.id || 'S01'})` }, { value: 'global', label: '重构全片整体风格' }] })),
+              h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleAiRefine(), style: blueBtnStyle }, h(Icon, { name: 'sparkles', size: 14 }), 'AI 立即改好'),
             ),
           ),
-          // Scene Properties Form
+
+          // Scene Properties
           selectedScene
             ? h(
                 'div',
-                { style: { display: 'flex', flexDirection: 'column', gap: '11px' } },
-                h('div', { style: { fontSize: '13px', fontWeight: 800 } }, `分镜微调 · ${selectedScene.id}`),
+                { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
+                h('div', { style: { fontSize: '15px', fontWeight: 800 } }, `分镜手调 · ${selectedScene.id}`),
+                h('input', { value: selectedScene.title || '', onChange: (ev) => updateSelectedScene({ title: ev.target.value }), placeholder: '画面主标题', style: inputStyle }),
+                h('textarea', { rows: 4, value: selectedScene.narration || '', onChange: (ev) => updateSelectedScene({ narration: ev.target.value }), placeholder: '口播旁白与高亮字幕内容', style: { ...inputStyle, resize: 'vertical', lineHeight: 1.55 } }),
                 h(
                   'div',
-                  null,
-                  h('label', { style: { fontSize: '11px', color: T.textMuted, display: 'block', marginBottom: '4px' } }, '画面主标题'),
-                  h('input', {
-                    value: selectedScene.title || '',
-                    onChange: (ev) => updateSelectedScene({ title: ev.target.value }),
-                    style: inputStyle,
-                  }),
-                ),
-                h(
-                  'div',
-                  null,
-                  h('label', { style: { fontSize: '11px', color: T.textMuted, display: 'block', marginBottom: '4px' } }, '口播旁白与字幕'),
-                  h('textarea', {
-                    rows: 4,
-                    value: selectedScene.narration || '',
-                    onChange: (ev) => updateSelectedScene({ narration: ev.target.value }),
-                    style: { ...inputStyle, resize: 'vertical', lineHeight: 1.5 },
-                  }),
+                  { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' } },
+                  h(CinemaSelect, { compact: true, value: selectedScene.emotion || '平静', onChange: (em) => updateSelectedScene({ emotion: em }), T, options: availableEmotions.map((em) => ({ value: em, label: em })) }),
+                  h(CinemaSelect, { compact: true, value: selectedScene.kenBurns || 'zoom-in', onChange: (kb) => updateSelectedScene({ kenBurns: kb }), T, options: MOTION_OPTIONS.map((m) => ({ value: m.value, label: m.label })) }),
                 ),
                 h(
                   'div',
                   { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
-                  h(
-                    'div',
-                    null,
-                    h('label', { style: { fontSize: '11px', color: T.textMuted, display: 'block', marginBottom: '4px' } }, '情绪语气'),
-                    h(
-                      'select',
-                      {
-                        value: selectedScene.emotion || '平静',
-                        onChange: (ev) => updateSelectedScene({ emotion: ev.target.value }),
-                        style: inputStyle,
-                      },
-                      availableEmotions.map((em) => h('option', { key: em, value: em }, em)),
-                    ),
-                  ),
-                  h(
-                    'div',
-                    null,
-                    h('label', { style: { fontSize: '11px', color: T.textMuted, display: 'block', marginBottom: '4px' } }, '运镜动效'),
-                    h(
-                      'select',
-                      {
-                        value: selectedScene.kenBurns || 'zoom-in',
-                        onChange: (ev) => updateSelectedScene({ kenBurns: ev.target.value }),
-                        style: inputStyle,
-                      },
-                      MOTION_OPTIONS.map((m) => h('option', { key: m.value, value: m.value }, m.label)),
-                    ),
-                  ),
+                  h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleSynthesizeSceneTts(selectedScene), style: ghostBtnStyle }, '🎙 重配此幕配音'),
+                  h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleAiMasterVoice(selectedScene.id), style: ghostBtnStyle }, '🎛 AI 声学修音'),
                 ),
-                h(
-                  'div',
-                  { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: '8px', background: T.bgPanel, border: `1px solid ${T.borderSubtle}` } },
-                  h('span', { style: { fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, `音色: ${selectedScene.voiceId || 'auto'}`),
-                  h(
-                    'button',
-                    {
-                      className: 'dsh-vw-btn',
-                      onClick: () => {
-                        setVoiceModalTarget('scene')
-                        setShowVoiceModal(true)
-                      },
-                      style: { ...ghostBtnStyle, padding: '4px 9px', fontSize: '11px' },
-                    },
-                    '换音色',
-                  ),
-                ),
-                h(
-                  'div',
-                  { style: { display: 'flex', gap: '8px', marginTop: '4px' } },
-                  h(
-                    'button',
-                    {
-                      className: 'dsh-vw-btn',
-                      disabled: Boolean(busyLabel),
-                      onClick: handleSaveScriptEdits,
-                      style: { ...ghostBtnStyle, flex: 1, justifyContent: 'center', borderColor: scriptDirty ? T.accentGoldBorder : T.borderSubtle, color: scriptDirty ? T.accentGold : T.textPrimary },
-                    },
-                    scriptDirty ? '保存并更新*' : '保存',
-                  ),
-                  h(
-                    'button',
-                    {
-                      className: 'dsh-vw-btn',
-                      disabled: Boolean(busyLabel),
-                      onClick: () => handleSynthesizeSceneTts(selectedScene),
-                      style: { ...goldBtnStyle, flex: 1.4 },
-                    },
-                    h(Icon, { name: 'mic', size: 12 }),
-                    '重配本幕人声',
-                  ),
-                ),
-                // Post-TTS AI Voice Mastering Card
-                h(
-                  'div',
-                  {
-                    style: {
-                      marginTop: '6px',
-                      padding: '11px',
-                      borderRadius: '10px',
-                      background: resolvedDark ? 'rgba(229, 169, 60, 0.08)' : 'rgba(180, 83, 9, 0.05)',
-                      border: `1px solid ${T.accentGoldBorder}`,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '8px',
-                    },
-                  },
-                  h(
-                    'div',
-                    { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                    h('span', { style: { fontSize: '11.5px', fontWeight: 800, color: T.accentGold } }, '🎚 配音后 AI 大模型声学修音'),
-                    selectedScene.voiceMastering?.applied
-                      ? h(
-                          'span',
-                          { style: { fontSize: '10px', fontFamily: 'Consolas, monospace', color: T.accentGreen } },
-                          `${Number(selectedScene.voiceMastering.beforeLufs || -20).toFixed(1)}→${Number(selectedScene.voiceMastering.afterLufs || -15.5).toFixed(1)} LUFS`,
-                        )
-                      : h('span', { style: { fontSize: '10px', color: T.textMuted } }, '干声待精修'),
-                  ),
-                  selectedScene.voiceMastering?.applied
-                    ? h(
-                        'div',
-                        { style: { fontSize: '10.5px', color: T.textSecondary, lineHeight: 1.45 } },
-                        selectedScene.voiceMastering.eqSummary,
-                        selectedScene.voiceMastering.rationale
-                          ? h('div', { style: { color: T.textMuted, marginTop: '3px' } }, selectedScene.voiceMastering.rationale)
-                          : null,
-                      )
-                    : h(
-                        'div',
-                        { style: { fontSize: '10.5px', color: T.textSecondary, lineHeight: 1.45 } },
-                        'IndexTTS-2.5 合成后由 AI 大模型分析响度/齿音/动态，通过 48kHz 均衡与压限母带提亮人声。',
-                      ),
-                  h(
-                    'div',
-                    { style: { display: 'flex', gap: '6px' } },
-                    h(
-                      'button',
-                      {
-                        className: 'dsh-vw-btn',
-                        disabled: Boolean(busyLabel),
-                        onClick: () => handleAiMasterVoice(selectedScene.id),
-                        style: { ...ghostBtnStyle, flex: 1, justifyContent: 'center', fontSize: '11px', padding: '5px 8px' },
-                      },
-                      '✨ AI 修音本幕',
-                    ),
-                    h(
-                      'button',
-                      {
-                        className: 'dsh-vw-btn',
-                        disabled: Boolean(busyLabel),
-                        onClick: () => handleAiMasterVoice(''),
-                        style: { ...blueBtnStyle, flex: 1.2, justifyContent: 'center', fontSize: '11px', padding: '5px 8px' },
-                      },
-                      '🎛 全片 AI 修音混音',
-                    ),
-                  ),
-                ),
+                scriptDirty ? h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleSaveScriptEdits, style: { ...goldBtnStyle, width: '100%' } }, '💾 保存并刷新预演画面') : null,
+                h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleRenderMp4(false), style: { ...goldBtnStyle, width: '100%', marginTop: '6px' } }, '🎬 满意了！渲染 1080P 成品 MP4 →'),
               )
             : null,
         ),
       )
 
-      // -----------------------------------------------------------------------
-      // STEP 4: CINEMA EXPORT & AUTOMATED QA AUDIT
-      // -----------------------------------------------------------------------
-      const step4View = h(
+      const step4Panel = h(
         'div',
-        { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', padding: '26px 32px' } },
+        { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', padding: '22px 26px', display: 'flex', flexDirection: 'column', gap: '18px' } },
         h(
           'div',
-          { style: { maxWidth: '1040px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' } },
+          { className: 'dsh-vw-grid-studio-2col' },
+          // Final Cinema MP4 Player
           h(
             'div',
-            { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' } },
+            { style: { ...panelStyle, padding: '22px', display: 'flex', flexDirection: 'column', gap: '14px' } },
             h(
               'div',
-              null,
-              h('h2', { style: { fontSize: '21px', fontWeight: 800, margin: 0 } }, '04 · 成片交付与 FFmpeg 自动质检'),
-              h('p', { style: { margin: '5px 0 0', fontSize: '13px', color: T.textSecondary } }, `当前输出规格：${script?.width || 1920}×${script?.height || 1080} (${script?.aspectRatio || '16:9'}) · ${script?.fps || 30}fps · 总长 ${script?.totalDurationSec || 0}s`),
+              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' } },
+              h('h2', { style: { margin: 0, fontSize: '18px', fontWeight: 800 } }, '04 · 成片电影级播放、导出与发布包'),
+              h('span', { style: { fontSize: '13px', fontFamily: 'Consolas, monospace', color: T.accentGold } }, `${curW}×${curH} · ${script?.fps || 30}fps`),
             ),
+            hasMp4
+              ? h('video', { key: mp4Url, src: mp4Url, preload: 'auto', controls: true, style: { width: '100%', maxHeight: '420px', aspectRatio: `${curW} / ${curH}`, borderRadius: '14px', background: '#000', border: `1px solid ${T.borderStrong}` } })
+              : h('div', { style: { height: '300px', borderRadius: '14px', background: '#05080F', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', fontSize: '15px' } }, '点击下方「渲染全高清成品 MP4」后在此即时观看与下载'),
             h(
               'div',
-              { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-              h('button', { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleRenderMp4(true), style: ghostBtnStyle }, '⚡ 720P 极速试渲染'),
-              h('button', { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleRenderMp4(false), style: goldBtnStyle }, h(Icon, { name: 'film', size: 14 }), ' 渲染最终高清 MP4'),
-              hasMp4
-                ? h(
-                    'button',
-                    {
-                      className: 'dsh-vw-btn',
-                      disabled: Boolean(busyLabel),
-                      onClick: () => handleExportPublishPack(directorForm.targetPlatform),
-                      style: { ...ghostBtnStyle, borderColor: T.accentGoldBorder, color: T.accentGold },
-                    },
-                    '📦 一键导出平台发布包',
-                  )
-                : null,
-              mp4Url
-                ? h(
-                    'a',
-                    {
-                      href: mp4Url,
-                      download: `${script?.title || 'dsh-video'}.mp4`,
-                      className: 'dsh-vw-btn',
-                      style: { ...blueBtnStyle, textDecoration: 'none' },
-                    },
-                    h(Icon, { name: 'download', size: 14 }),
-                    '下载 MP4',
-                  )
-                : null,
+              { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } },
+              h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleRenderMp4(true), style: ghostBtnStyle }, '⚡ 720P 快速审片导出'),
+              h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleRenderMp4(false), style: goldBtnStyle }, '🎬 渲染高清成品 MP4'),
+              hasMp4 ? h('a', { href: mp4Url, download: 'final.mp4', style: { ...blueBtnStyle, textDecoration: 'none' } }, h(Icon, { name: 'download', size: 15 }), '下载 final.mp4') : null,
+              hasMp4 ? h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleExportPublishPack(), style: { ...ghostBtnStyle, borderColor: T.accentGoldBorder, color: T.accentGold } }, '📦 一键生成发布资料包') : null,
             ),
           ),
+
+          // Plain-Chinese QA Scorecard & Frame Matrix
           h(
             'div',
-            { style: { display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: '18px', alignItems: 'start' } },
-            // MP4 Theater Box
+            { style: { ...panelStyle, padding: '22px', display: 'flex', flexDirection: 'column', gap: '14px' } },
             h(
               'div',
-              {
-                style: {
-                  background: T.monitorShell,
-                  borderRadius: '14px',
-                  border: `1px solid ${T.borderStrong}`,
-                  overflow: 'hidden',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  minHeight: '360px',
-                  maxHeight: '520px',
-                  padding: '12px',
-                },
-              },
-              mp4Url
-                ? h('video', {
-                    key: mp4Url,
-                    src: mp4Url,
-                    controls: true,
-                    playsInline: true,
-                    preload: 'auto',
-                    style: {
-                      maxWidth: '100%',
-                      maxHeight: '490px',
-                      borderRadius: '8px',
-                      aspectRatio: `${curW} / ${curH}`,
-                    },
-                  })
-                : h('div', { style: { color: '#9CA3B5', fontSize: '13px', textAlign: 'center', padding: '40px' } }, '尚未导出 MP4，点击右上角「渲染最终高清 MP4」即可完成音画压制。'),
+              { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+              h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 800 } }, '✅ 成品音画自动化体检单'),
+              h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleRunQaOnly, style: ghostBtnStyle }, '重新检测'),
             ),
-            // Automated FFmpeg QA & Telemetry Card
-            h(
-              'div',
-              { style: { ...panelStyle, padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' } },
-              h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h(
-                  'div',
-                  { style: { display: 'flex', alignItems: 'center', gap: '7px', fontWeight: 800, fontSize: '14px' } },
-                  h(Icon, { name: 'shield', size: 16, color: qaReport?.passed ? T.accentGreen : T.accentGold }),
-                  '成片 QA 自动化质检报告',
-                ),
-                h(
-                  'button',
-                  { className: 'dsh-vw-btn', disabled: !hasMp4 || Boolean(busyLabel), onClick: handleRunQaOnly, style: { ...ghostBtnStyle, padding: '4px 10px', fontSize: '11px' } },
-                  '重新质检',
-                ),
-              ),
-              qaReport?.checks?.length
-                ? qaReport.checks.map((ck, i) =>
-                    h(
-                      'div',
-                      {
-                        key: i,
-                        style: {
-                          padding: '9px 11px',
-                          borderRadius: '9px',
-                          background: ck.passed ? T.accentGreenBg : T.accentRedBg,
-                          border: `1px solid ${ck.passed ? 'rgba(34,197,94,0.28)' : 'rgba(244,63,94,0.32)'}`,
-                        },
-                      },
-                      h(
-                        'div',
-                        { style: { display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 700, color: ck.passed ? T.accentGreen : T.accentRed } },
-                        h('span', null, `${ck.passed ? '✓' : '✕'} ${ck.name}`),
-                      ),
-                      h('div', { style: { fontSize: '11px', color: T.textSecondary, marginTop: '3px', fontFamily: 'Consolas, monospace' } }, ck.value),
-                    ),
-                  )
-                : h('div', { style: { fontSize: '12px', color: T.textMuted, padding: '16px 0' } }, '渲染成片后将自动检验：黑屏异常、EBU R128 响度峰值、音画时长同步与 BT.709 色彩规格。'),
-              buildLog
-                ? h(
-                    'div',
-                    { style: { padding: '10px', borderRadius: '9px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, fontSize: '11px', color: T.textSecondary } },
-                    h('div', { style: { fontWeight: 700, color: T.textPrimary, marginBottom: '4px' } }, `🤖 AI 编程编译记录 (${buildLog.model || ''})`),
-                    h('div', null, `自动修复轮次: ${buildLog.repairRoundsUsed ?? 0} 轮 · 生成文件数: ${buildLog.generatedFiles?.length || 0}`),
-                    h('div', { style: { marginTop: '4px' } }, `尺寸依据: ${buildLog.dimensionReason || script?.dimensionReason || ''}`),
-                  )
-                : null,
-              hasSnapshot
-                ? h(
-                    'div',
-                    null,
-                    h(
-                      'button',
-                      { className: 'dsh-vw-btn', onClick: () => setShowMatrixPreview((v) => !v), style: { ...ghostBtnStyle, width: '100%' } },
-                      showMatrixPreview ? '收起关键帧校验图' : '展开渲染关键帧抽检图',
-                    ),
-                    showMatrixPreview
-                      ? h('img', { src: snapshotUrl, style: { width: '100%', borderRadius: '8px', marginTop: '8px', border: `1px solid ${T.borderSubtle}` } })
-                      : null,
-                  )
-                : null,
-            ),
-          ),
-          publishPackResult
-            ? h(
-                'div',
-                { style: { ...panelStyle, padding: '18px', borderColor: T.accentGoldBorder, display: 'flex', flexDirection: 'column', gap: '12px' } },
-                h(
-                  'div',
-                  { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' } },
-                  h('div', { style: { fontSize: '15px', fontWeight: 800, color: T.accentGold } }, `📦 平台发布包已生成 (${publishPackResult.platformLabel || publishPackResult.platform})`),
-                  h('span', { style: { fontSize: '11px', fontFamily: 'Consolas, monospace', color: T.textMuted } }, publishPackResult.packDir),
-                ),
-                h(
-                  'div',
-                  { style: { display: 'grid', gridTemplateColumns: '220px 1fr', gap: '16px', alignItems: 'start' } },
-                  publishPackResult.coverUrl
-                    ? h('img', { src: publishPackResult.coverUrl, style: { width: '100%', borderRadius: '9px', border: `1px solid ${T.borderStrong}` } })
-                    : h('div', { style: { padding: '24px', borderRadius: '9px', background: T.bgElevated, textAlign: 'center', fontSize: '12px', color: T.textMuted } }, '封面图 cover.png 已写入目录'),
+            qaReport?.checks?.length
+              ? qaReport.checks.map((ck, i) =>
                   h(
                     'div',
-                    { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-                    h('div', { style: { fontSize: '12px', fontWeight: 700 } }, '推荐发布标题 (点击可复制 / 参考 meta.md)：'),
-                    (publishPackResult.suggestedTitles || []).map((t, idx) =>
-                      h(
-                        'div',
-                        { key: idx, style: { fontSize: '12px', padding: '6px 10px', borderRadius: '7px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}` } },
-                        t,
-                      ),
+                    { key: i, style: { padding: '11px 14px', borderRadius: '11px', background: ck.passed ? T.accentGreenBg : T.accentRedBg, border: `1px solid ${ck.passed ? 'rgba(52,211,153,0.3)' : 'rgba(251,113,133,0.35)'}` } },
+                    h('div', { style: { fontSize: '14px', fontWeight: 800, color: ck.passed ? T.accentGreen : T.accentRed } }, `${ck.passed ? '✓' : '✕'} ${ck.name}`),
+                    h('div', { style: { fontSize: '12.5px', color: T.textSecondary, marginTop: '3px', fontFamily: 'Consolas, monospace' } }, ck.value),
+                  ),
+                )
+              : h('div', { style: { fontSize: '13.5px', color: T.textMuted, lineHeight: 1.6 } }, '渲染成片后将自动检查：全片无黑屏、人声响度达标 (-14 LUFS)、音画完全对齐及广播色彩规格。'),
+            buildLog
+              ? h(
+                  'div',
+                  { style: { padding: '12px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, fontSize: '13px', color: T.textSecondary } },
+                  h('div', { style: { fontWeight: 800, color: T.textPrimary, marginBottom: '4px' } }, `🤖 编译日志 (${buildLog.model || '本地引擎'})`),
+                  h('div', null, `自动修复轮数: ${buildLog.repairRoundsUsed ?? 0} · 生成源码数: ${buildLog.generatedFiles?.length || 0}`),
+                )
+              : null,
+            hasSnapshot
+              ? h(
+                  'div',
+                  null,
+                  h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowMatrixPreview((v) => !v), style: { ...ghostBtnStyle, width: '100%' } }, showMatrixPreview ? '收起九宫格关键帧检查图' : '展开九宫格关键帧检查图'),
+                  showMatrixPreview ? h('img', { src: snapshotUrl, style: { width: '100%', borderRadius: '10px', marginTop: '10px', border: `1px solid ${T.borderSubtle}` } }) : null,
+                )
+              : null,
+          ),
+        ),
+
+        publishPackResult
+          ? h(
+              'div',
+              { style: { ...panelStyle, padding: '20px', borderColor: T.accentGoldBorder, display: 'flex', flexDirection: 'column', gap: '12px' } },
+              h('div', { style: { fontSize: '16px', fontWeight: 800, color: T.accentGold } }, `📦 已导出发布资料包 (${publishPackResult.platformLabel || publishPackResult.platform})`),
+              h(
+                'div',
+                { style: { display: 'grid', gridTemplateColumns: '220px 1fr', gap: '16px', alignItems: 'start' } },
+                publishPackResult.coverUrl ? h('img', { src: publishPackResult.coverUrl, style: { width: '100%', borderRadius: '10px', border: `1px solid ${T.borderStrong}` } }) : null,
+                h(
+                  'div',
+                  { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+                  (publishPackResult.suggestedTitles || []).map((t, idx) => h('div', { key: idx, style: { fontSize: '13.5px', padding: '8px 12px', borderRadius: '8px', background: T.bgElevated } }, t)),
+                  h('div', { style: { fontSize: '13.5px', color: T.accentBlue, fontWeight: 700 } }, (publishPackResult.hashtags || []).join(' ')),
+                ),
+              ),
+            )
+          : null,
+      )
+
+      const studioWorkbenchView = h(
+        'div',
+        { style: { flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' } },
+        // Collapsible Clean Vertical Step Rail (Only visible in Studio mode!)
+        h(
+          'aside',
+          {
+            style: {
+              width: '216px',
+              flexShrink: 0,
+              background: T.bgSidebar,
+              borderRight: `1px solid ${T.borderSubtle}`,
+              padding: '18px 14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+            },
+          },
+          h('div', { style: { fontSize: '12.5px', fontWeight: 800, color: T.textMuted, padding: '0 8px 6px' } }, '分步精修流程'),
+          [
+            { id: 1, title: '01 素材与提词拍', sub: `${projectAssets.length} 份素材` },
+            { id: 2, title: '02 导演声画配乐', sub: UNIFIED_STYLES.find((s) => s.id === directorForm.style)?.label || '风格与配音' },
+            { id: 3, title: '03 监看台与改片', sub: `${scenes.length} 幕分镜` },
+            { id: 4, title: '04 质检导出发布', sub: hasMp4 ? '✓ MP4 就绪' : '待导出' },
+          ].map((s) => {
+            const on = studioStep === s.id
+            return h(
+              'button',
+              {
+                key: s.id,
+                type: 'button',
+                className: 'dsh-vw-btn',
+                onClick: () => {
+                  setIsPlaying(false)
+                  setStudioStep(s.id)
+                },
+                style: {
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '12px 13px',
+                  borderRadius: '12px',
+                  border: `1px solid ${on ? T.accentGoldBorder : 'transparent'}`,
+                  background: on ? T.accentGoldBg : 'transparent',
+                  color: on ? T.accentGold : T.textPrimary,
+                },
+              },
+              h('div', { style: { fontSize: '14px', fontWeight: on ? 800 : 700 } }, s.title),
+              h('div', { style: { fontSize: '12px', color: on ? T.accentGold : T.textMuted, marginTop: '3px' } }, s.sub),
+            )
+          }),
+          h(
+            'button',
+            { type: 'button', className: 'dsh-vw-btn', onClick: () => setActiveNav('warroom'), style: { ...ghostBtnStyle, marginTop: 'auto', width: '100%', justifyContent: 'center' } },
+            '← 返回 AI 作战大屏',
+          ),
+        ),
+        studioStep === 1 ? step1Panel : studioStep === 2 ? step2Panel : studioStep === 3 ? step3Panel : step4Panel,
+      )
+
+      // =======================================================================
+      // 11. VIEW 3: TASK MONITOR CENTER (`activeNav === 'tasks'`)
+      // =======================================================================
+      const filteredTaskRuns = taskRuns.filter((r) => (taskFilter === 'all' ? true : taskFilter === 'running' ? r.status === 'running' || r.status === 'paused' : r.status === taskFilter))
+      const taskCenterView = h(
+        'div',
+        { className: 'dsh-vw-scroll', style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '22px 26px', display: 'flex', flexDirection: 'column', gap: '18px' } },
+        h(
+          'div',
+          { style: { ...panelStyle, padding: '18px 22px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' } },
+          h(
+            'div',
+            null,
+            h('h2', { style: { margin: 0, fontSize: '18px', fontWeight: 800 } }, '📋 4-Agent 任务监控与子进程调度中心'),
+            h('div', { style: { fontSize: '13px', color: T.textMuted, marginTop: '3px' } }, '支持任意时刻暂停、恢复、强停子进程及断点单步重试'),
+          ),
+          h(
+            'div',
+            { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
+            h(SegmentedPills, {
+              value: taskFilter,
+              onChange: setTaskFilter,
+              T,
+              size: 'sm',
+              options: [
+                { id: 'all', label: `全部 (${taskRuns.length})` },
+                { id: 'running', label: '进行中' },
+                { id: 'completed', label: '已完成' },
+                { id: 'failed', label: '异常' },
+              ],
+            }),
+            h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => handleTaskControl('pause-all'), style: ghostBtnStyle }, '⏸ 全部暂停'),
+            h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => handleTaskControl('stop-all'), style: { ...ghostBtnStyle, color: T.accentRed } }, '■ 紧急全部停止'),
+            h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleStartOneClickPipeline(), style: goldBtnStyle }, '⚡ 新建一键任务'),
+          ),
+        ),
+
+        h(
+          'div',
+          { className: 'dsh-vw-grid-tasks' },
+          h(
+            'div',
+            { style: { ...panelStyle, padding: '14px', display: 'flex', flexDirection: 'column', gap: '9px' } },
+            filteredTaskRuns.length === 0
+              ? h('div', { style: { padding: '24px', textAlign: 'center', color: T.textMuted, fontSize: '13.5px' } }, '暂无符合条件的历史记录')
+              : filteredTaskRuns.map((run) => {
+                  const st = taskStatusBadge(run.status)
+                  const sel = currentTaskRun?.id === run.id
+                  return h(
+                    'div',
+                    {
+                      key: run.id,
+                      onClick: () => setSelectedRunId(run.id),
+                      style: { padding: '12px 14px', borderRadius: '11px', cursor: 'pointer', background: sel ? T.accentBlueBg : T.bgElevated, border: `1px solid ${sel ? T.accentBlueBorder : T.borderSubtle}` },
+                    },
+                    h(
+                      'div',
+                      { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' } },
+                      h('span', { style: { fontSize: '13.5px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, run.title || run.id),
+                      h('span', { style: { fontSize: '12px', padding: '2px 8px', borderRadius: '999px', background: st.bg, color: st.color, fontWeight: 700, flexShrink: 0 } }, st.label),
                     ),
-                    h('div', { style: { fontSize: '12px', color: T.accentBlue, fontWeight: 600 } }, (publishPackResult.hashtags || []).join(' ')),
-                    h('div', { style: { fontSize: '11px', color: T.textSecondary, lineHeight: 1.45 } }, `合规与授权声明：${publishPackResult.complianceNotice || ''} · 商用字体 SIL OFL 1.1`),
+                    h('div', { style: { marginTop: '8px', height: '5px', borderRadius: '99px', background: 'rgba(148,163,184,0.2)', overflow: 'hidden' } }, h('div', { style: { width: `${Math.round(Number(run.progress || 0))}%`, height: '100%', background: st.color } })),
+                    h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: T.textMuted, marginTop: '6px', fontFamily: 'Consolas, monospace' } }, h('span', null, `${Math.round(Number(run.progress || 0))}% · ${Math.round(Number(run.elapsedMs || 0) / 1000)}s`), h('span', null, run.createdAt ? new Date(run.createdAt).toLocaleTimeString('zh-CN', { hour12: false }) : '')),
+                  )
+                }),
+          ),
+
+          currentTaskRun
+            ? h(
+                'div',
+                { style: { ...panelStyle, padding: '22px', display: 'flex', flexDirection: 'column', gap: '16px' } },
+                h(
+                  'div',
+                  { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', paddingBottom: '14px', borderBottom: `1px solid ${T.borderSubtle}` } },
+                  h(
+                    'div',
+                    null,
+                    h('div', { style: { fontSize: '17px', fontWeight: 800 } }, currentTaskRun.title || currentTaskRun.id),
+                    h('div', { style: { fontSize: '12.5px', color: T.textMuted, marginTop: '3px', fontFamily: 'Consolas, monospace' } }, `进度 ${Math.round(Number(currentTaskRun.progress || 0))}% · 耗时 ${Math.round(Number(currentTaskRun.elapsedMs || 0) / 1000)}s`),
+                  ),
+                  h(
+                    'div',
+                    { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+                    currentTaskRun.status === 'paused' || currentTaskRun.status === 'queued' ? h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => handleTaskControl('resume', currentTaskRun.id), style: blueBtnStyle }, '▶ 恢复执行') : null,
+                    currentTaskRun.status === 'running' ? h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => handleTaskControl('pause', currentTaskRun.id), style: ghostBtnStyle }, '⏸ 暂停') : null,
+                    currentTaskRun.status === 'running' || currentTaskRun.status === 'paused' ? h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => handleTaskControl('stop', currentTaskRun.id), style: { ...ghostBtnStyle, color: T.accentRed } }, '■ 停止') : null,
+                    ['stopped', 'failed', 'completed'].includes(currentTaskRun.status) ? h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => handleTaskControl('retry', currentTaskRun.id), style: goldBtnStyle }, '↻ 重新执行') : null,
+                    currentTaskRun.status === 'completed' ? h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => goToStudioStep(4), style: ghostBtnStyle }, '查看成片 →') : null,
+                  ),
+                ),
+                currentTaskRun.error
+                  ? h('div', { style: { padding: '11px 14px', borderRadius: '10px', background: T.accentRedBg, color: T.accentRed, fontSize: '13.5px' } }, `⚠ ${translateBeginnerError(currentTaskRun.error).title}`)
+                  : null,
+                h(
+                  'div',
+                  { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+                  h('div', { style: { fontSize: '14px', fontWeight: 800 } }, '分步子任务进度'),
+                  (currentTaskRun.tasks || []).map((t) => {
+                    const st = taskStatusBadge(t.status)
+                    return h(
+                      'div',
+                      { key: t.id, style: { padding: '11px 14px', borderRadius: '11px', background: T.bgElevated, border: `1px solid ${t.status === 'running' ? T.accentBlueBorder : T.borderSubtle}`, display: 'grid', gridTemplateColumns: '1.2fr 140px minmax(0, 1.5fr) auto', gap: '12px', alignItems: 'center' } },
+                      h('div', null, h('div', { style: { fontSize: '13.5px', fontWeight: 700 } }, t.name), h('div', { style: { fontSize: '12px', color: T.textMuted } }, t.stage)),
+                      h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, h('div', { style: { flex: 1, height: '6px', borderRadius: '99px', background: 'rgba(148,163,184,0.2)', overflow: 'hidden' } }, h('div', { style: { width: `${Math.round(Number(t.progress || 0))}%`, height: '100%', background: st.color } })), h('span', { style: { fontSize: '12px', fontFamily: 'Consolas, monospace' } }, `${Math.round(Number(t.progress || 0))}%`)),
+                      h('div', { style: { fontSize: '12.5px', color: T.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t.error || t.message),
+                      h('button', { type: 'button', className: 'dsh-vw-btn', disabled: currentTaskRun.status === 'running', onClick: () => handleTaskControl('retry', currentTaskRun.id, t.id), style: { ...ghostBtnStyle, padding: '5px 11px', fontSize: '12px' } }, '从此重试'),
+                    )
+                  }),
+                ),
+                h(
+                  'div',
+                  null,
+                  h('div', { style: { fontSize: '14px', fontWeight: 800, marginBottom: '8px' } }, '实时执行日志流'),
+                  h(
+                    'div',
+                    { className: 'dsh-vw-scroll', style: { maxHeight: '210px', overflowY: 'auto', padding: '12px 14px', borderRadius: '11px', background: '#050810', border: '1px solid rgba(255,255,255,0.12)', fontFamily: 'Consolas, monospace', fontSize: '12.5px', lineHeight: 1.65, color: '#CBD5E1' } },
+                    (currentTaskRun.logs || []).slice(-50).map((lg, idx) =>
+                      h('div', { key: idx, style: { color: lg.level === 'error' ? '#FB7185' : lg.level === 'warn' ? '#FBBF24' : '#CBD5E1' } }, `[${lg.ts ? new Date(lg.ts).toLocaleTimeString('zh-CN', { hour12: false }) : '--:--:--'}] [${lg.stage || 'sys'}] ${lg.message}`),
+                    ),
                   ),
                 ),
               )
-            : null,
+            : h('div', { style: { ...panelStyle, padding: '44px', textAlign: 'center', color: T.textMuted, fontSize: '14.5px' } }, '点击「⚡ AI 作战大屏」下方的启动按钮后，全部任务详情会在此实时追踪。'),
         ),
       )
 
-      // -----------------------------------------------------------------------
-      // MODALS: New Project, Model-Agnostic LLM Settings, Code Drawer, Voice Picker
-      // -----------------------------------------------------------------------
+      // =======================================================================
+      // 12. MODALS: 4-PROTOCOL LLM MODAL, 3-STEP VOICE CLONE LAB, SKIN, VENDOR
+      // =======================================================================
       const modalBackdropStyle = {
         position: 'fixed',
         inset: 0,
-        background: 'rgba(5, 7, 12, 0.72)',
-        backdropFilter: 'blur(6px)',
-        zIndex: 3000,
+        background: 'rgba(5, 8, 15, 0.72)',
+        backdropFilter: 'blur(8px)',
+        zIndex: 3100,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         padding: '20px',
       }
 
-      const newProjectModal = showNewModal
-        ? h(
-            'div',
-            { style: modalBackdropStyle, onClick: () => setShowNewModal(false) },
-            h(
-              'div',
-              { style: { ...panelStyle, width: '430px', maxWidth: '100%', padding: '22px' }, onClick: (ev) => ev.stopPropagation() },
-              h('h3', { style: { margin: '0 0 12px', fontSize: '16px', fontWeight: 800 } }, '新建视频工程'),
-              h('input', {
-                autoFocus: true,
-                value: newProjectTitle,
-                onChange: (ev) => setNewProjectTitle(ev.target.value),
-                onKeyDown: (ev) => ev.key === 'Enter' && handleCreateProject(),
-                placeholder: '输入作品标题，例如：新品发布会视觉大片',
-                style: { ...inputStyle, marginBottom: '16px' },
-              }),
-              h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } },
-                h('button', { className: 'dsh-vw-btn', onClick: () => setShowNewModal(false), style: ghostBtnStyle }, '取消'),
-                h('button', { className: 'dsh-vw-btn', onClick: handleCreateProject, style: goldBtnStyle }, '立即创建'),
-              ),
-            ),
-          )
-        : null
-
-      const activeTemplate = llmConfig?.templates?.find((t) => t.id === llmForm.provider)
       const dshClient = llmConfig?.dshClient || { available: false, providers: [] }
       const dshActiveProv = dshClient.providers?.find((p) => p.id === (llmForm.dshProviderId === 'active' ? dshClient.defaultProviderId : llmForm.dshProviderId)) || null
-      const protocolOptions = llmConfig?.protocols || [
-        { id: 'openai-completions', label: 'OpenAI 兼容 Chat · /v1/chat/completions' },
-        { id: 'anthropic-messages', label: 'Anthropic Messages · /v1/messages' },
-        { id: 'openai-responses', label: 'OpenAI Responses · /v1/responses' },
-        { id: 'gemini-native', label: 'Gemini 原生 · /v1beta/models' },
-      ]
+      const activeTemplate = llmConfig?.templates?.find((t) => t.id === llmForm.provider)
 
       const llmModal = showLlmModal
         ? h(
@@ -7001,282 +5536,105 @@ window.__ModuleLoader__.load({
             { style: modalBackdropStyle, onClick: () => setShowLlmModal(false) },
             h(
               'div',
-              {
-                className: 'dsh-vw-scroll',
-                style: { ...panelStyle, width: '680px', maxWidth: '100%', maxHeight: '88vh', overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px' },
-                onClick: (ev) => ev.stopPropagation(),
-              },
+              { className: 'dsh-vw-scroll', onClick: (ev) => ev.stopPropagation(), style: { ...panelStyle, width: '720px', maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' } },
               h(
                 'div',
                 { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('h3', { style: { margin: 0, fontSize: '17px', fontWeight: 800 } }, '🤖 多模型与四协议设置（默认跟随 DSH 客户端）'),
-                h('button', { onClick: () => setShowLlmModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 17 })),
+                h('h3', { style: { margin: 0, fontSize: '18px', fontWeight: 800 } }, '🧠 AI 大模型接入中心 (支持 4 种原生接口协议)'),
+                h('button', { type: 'button', onClick: () => setShowLlmModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 18 })),
               ),
-              h(
-                'p',
-                { style: { margin: 0, fontSize: '12px', color: T.textSecondary, lineHeight: 1.55 } },
-                '默认自动同步 DSH 客户端当前使用的模型与网关凭据；您也可随时在插件内独立切换其它模型或中转，完整支持 OpenAI Chat、Anthropic Messages、OpenAI Responses、Gemini 原生 四种协议。配音则始终由本地 IndexTTS-2.5 合成并支持大模型修音。',
-              ),
-              // 2-Way Source Selector: Follow DSH Client vs Custom Override
+              h(SegmentedPills, {
+                value: llmForm.mode,
+                onChange: (m) => setLlmForm((p) => ({ ...p, mode: m })),
+                T,
+                fullWidth: true,
+                options: [
+                  { id: 'follow-dsh', label: '🔗 自动同步 DSH 客户端配置' },
+                  { id: 'custom', label: '🔑 插件独立自定义接入' },
+                ],
+              }),
+              // 4-Protocol Visual Glass Cards
               h(
                 'div',
-                { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
+                null,
+                h('div', { style: { fontSize: '13px', fontWeight: 700, color: T.textMuted, marginBottom: '8px' } }, '选择接口传输协议 (点击卡片立即切换)'),
                 h(
-                  'button',
-                  {
-                    className: 'dsh-vw-btn',
-                    onClick: () => {
-                      setLlmForm((p) => ({ ...p, mode: 'follow-dsh' }))
-                      setLlmTestResult(null)
-                    },
-                    style: {
-                      ...ghostBtnStyle,
-                      justifyContent: 'center',
-                      padding: '10px',
-                      background: llmForm.mode !== 'custom' ? T.accentBlueBg : T.bgElevated,
-                      borderColor: llmForm.mode !== 'custom' ? T.accentBlueBorder : T.borderSubtle,
-                      color: llmForm.mode !== 'custom' ? T.accentBlue : T.textSecondary,
-                      fontWeight: llmForm.mode !== 'custom' ? 800 : 500,
-                    },
-                  },
-                  '🔄 跟随 DSH 客户端配置（默认）',
-                ),
-                h(
-                  'button',
-                  {
-                    className: 'dsh-vw-btn',
-                    onClick: () => {
-                      setLlmForm((p) => ({ ...p, mode: 'custom' }))
-                      setLlmTestResult(null)
-                    },
-                    style: {
-                      ...ghostBtnStyle,
-                      justifyContent: 'center',
-                      padding: '10px',
-                      background: llmForm.mode === 'custom' ? T.accentGoldBg : T.bgElevated,
-                      borderColor: llmForm.mode === 'custom' ? T.accentGoldBorder : T.borderSubtle,
-                      color: llmForm.mode === 'custom' ? T.accentGold : T.textSecondary,
-                      fontWeight: llmForm.mode === 'custom' ? 800 : 500,
-                    },
-                  },
-                  '🛠 插件独立自定义配置',
+                  'div',
+                  { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' } },
+                  WIRE_PROTOCOL_CARDS.map((card) => {
+                    const on = llmForm.format === card.id
+                    return h(
+                      'button',
+                      {
+                        key: card.id,
+                        type: 'button',
+                        className: 'dsh-vw-btn',
+                        onClick: () => setLlmForm((p) => ({ ...p, format: card.id })),
+                        style: {
+                          padding: '11px 13px',
+                          borderRadius: '11px',
+                          textAlign: 'left',
+                          background: on ? `${card.color}1C` : T.bgElevated,
+                          border: `1.5px solid ${on ? card.color : T.borderSubtle}`,
+                          color: T.textPrimary,
+                        },
+                      },
+                      h(
+                        'div',
+                        { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' } },
+                        h('span', { style: { fontSize: '13.5px', fontWeight: 800, color: on ? card.color : T.textPrimary } }, card.title),
+                        h('span', { style: { fontSize: '12px', color: T.textMuted, fontFamily: 'Consolas, monospace' } }, card.path),
+                      ),
+                      h('div', { style: { fontSize: '12px', color: T.textMuted, marginTop: '4px' } }, card.desc),
+                    )
+                  }),
                 ),
               ),
-              llmForm.mode !== 'custom'
+              llmForm.mode === 'follow-dsh'
                 ? h(
                     'div',
-                    { style: { display: 'flex', flexDirection: 'column', gap: '12px', padding: '14px', borderRadius: '12px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}` } },
+                    { style: { padding: '14px', borderRadius: '12px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '10px' } },
                     dshClient.available
                       ? h(
                           React.Fragment,
                           null,
+                          h('div', { style: { fontSize: '13px', fontWeight: 700 } }, `已读取本机 DSH 客户端配置 (默认: ${dshClient.defaultProviderId || '未设置'})`),
                           h(
                             'div',
-                            { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' } },
-                            h('span', { style: { fontWeight: 700, color: T.textPrimary } }, `已读取 DSH Profile (${dshClient.profile}) 客户端渠道`),
-                            h('span', { style: { fontSize: '11px', fontFamily: 'Consolas, monospace', color: T.accentBlue } }, `默认: ${dshClient.defaultProviderId || '-'} / ${dshClient.defaultModelId || '-'}`),
-                          ),
-                          h(
-                            'div',
-                            { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
-                            h(
-                              'button',
-                              {
-                                className: 'dsh-vw-btn',
-                                onClick: () => handleSelectDshProvider('active'),
-                                style: {
-                                  ...ghostBtnStyle,
-                                  padding: '5px 10px',
-                                  fontSize: '11px',
-                                  background: llmForm.dshProviderId === 'active' ? T.accentBlueBg : T.bgPanel,
-                                  borderColor: llmForm.dshProviderId === 'active' ? T.accentBlueBorder : T.borderSubtle,
-                                  color: llmForm.dshProviderId === 'active' ? T.accentBlue : T.textPrimary,
-                                },
-                              },
-                              '✨ 实时跟随 DSH 当前默认',
-                            ),
+                            { style: { display: 'flex', flexWrap: 'wrap', gap: '7px' } },
                             (dshClient.providers || []).map((prov) => {
-                              const on = llmForm.dshProviderId === prov.id
-                              return h(
-                                'button',
-                                {
-                                  key: prov.id,
-                                  className: 'dsh-vw-btn',
-                                  onClick: () => handleSelectDshProvider(prov.id),
-                                  style: {
-                                    ...ghostBtnStyle,
-                                    padding: '5px 10px',
-                                    fontSize: '11px',
-                                    background: on ? T.accentBlueBg : T.bgPanel,
-                                    borderColor: on ? T.accentBlueBorder : T.borderSubtle,
-                                    color: on ? T.accentBlue : T.textSecondary,
-                                  },
-                                },
-                                `${prov.displayName || prov.id} · ${prov.hasApiKey ? '密钥已存' : '无密钥'}`,
-                              )
+                              const on = (llmForm.dshProviderId === 'active' ? dshClient.defaultProviderId : llmForm.dshProviderId) === prov.id
+                              return h('button', { key: prov.id, type: 'button', className: 'dsh-vw-btn', onClick: () => handleSelectDshProvider(prov.id), style: { ...ghostBtnStyle, borderColor: on ? T.accentBlueBorder : T.borderSubtle, color: on ? T.accentBlue : T.textSecondary, background: on ? T.accentBlueBg : T.bgPanel } }, `${prov.displayName || prov.id}`)
                             }),
                           ),
-                          dshActiveProv
-                            ? h(
-                                'div',
-                                { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '2px' } },
-                                h(
-                                  'div',
-                                  null,
-                                  h('label', { style: { fontSize: '11px', color: T.textMuted, display: 'block', marginBottom: '4px' } }, '接口协议（可单独覆盖 4 种协议）'),
-                                  h(
-                                    'select',
-                                    {
-                                      value: llmForm.format,
-                                      onChange: (ev) => setLlmForm((p) => ({ ...p, format: ev.target.value })),
-                                      style: inputStyle,
-                                    },
-                                    h('option', { value: 'auto' }, `跟随 DSH 配置 (${dshActiveProv.api})`),
-                                    protocolOptions.map((po) => h('option', { key: po.id, value: po.id }, po.label)),
-                                  ),
-                                ),
-                                h(
-                                  'div',
-                                  null,
-                                  h('label', { style: { fontSize: '11px', color: T.textMuted, display: 'block', marginBottom: '4px' } }, '选用模型 ID（留空则跟随 DSH 默认）'),
-                                  h('input', {
-                                    value: llmForm.model,
-                                    onChange: (ev) => setLlmForm((p) => ({ ...p, model: ev.target.value })),
-                                    placeholder: dshClient.defaultModelId || dshActiveProv.models?.[0]?.id || '跟随 DSH 默认模型',
-                                    style: inputStyle,
-                                  }),
-                                ),
-                              )
-                            : null,
-                          dshActiveProv?.models?.length
-                            ? h(
-                                'div',
-                                { style: { display: 'flex', flexWrap: 'wrap', gap: '5px' } },
-                                dshActiveProv.models.slice(0, 14).map((m) => {
-                                  const on = (llmForm.model || dshClient.defaultModelId) === m.id
-                                  return h(
-                                    'button',
-                                    {
-                                      key: m.id,
-                                      className: 'dsh-vw-btn',
-                                      onClick: () => setLlmForm((p) => ({ ...p, model: m.id })),
-                                      style: {
-                                        ...ghostBtnStyle,
-                                        padding: '3px 8px',
-                                        fontSize: '11px',
-                                        fontFamily: 'Consolas, monospace',
-                                        background: on ? T.accentGoldBg : 'transparent',
-                                        borderColor: on ? T.accentGoldBorder : T.borderSubtle,
-                                        color: on ? T.accentGold : T.textSecondary,
-                                      },
-                                    },
-                                    m.id,
-                                  )
-                                }),
-                              )
-                            : null,
+                          h('input', { value: llmForm.model, onChange: (ev) => setLlmForm((p) => ({ ...p, model: ev.target.value })), placeholder: dshClient.defaultModelId || '留空即自动沿用 DSH 当前模型', style: inputStyle }),
                         )
-                      : h('div', { style: { fontSize: '12px', color: T.textSecondary } }, '未检测到本机 DSH 客户端配置目录 (~/.dsh)，请切换到右侧「插件独立自定义配置」。'),
+                      : h('div', { style: { fontSize: '13.5px', color: T.textSecondary } }, '未检测到本机 DSH 客户端配置文件，请点击上方「🔑 插件独立自定义接入」直接填入 API 地址与密钥。'),
                   )
                 : h(
-                    React.Fragment,
-                    null,
+                    'div',
+                    { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
                     h(
                       'div',
-                      { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
+                      { style: { display: 'flex', flexWrap: 'wrap', gap: '7px' } },
                       (llmConfig?.templates || []).map((tpl) => {
                         const on = llmForm.provider === tpl.id
-                        return h(
-                          'button',
-                          {
-                            key: tpl.id,
-                            className: 'dsh-vw-btn',
-                            onClick: () => handleProviderTemplateChange(tpl.id),
-                            style: {
-                              ...ghostBtnStyle,
-                              padding: '5px 10px',
-                              fontSize: '11px',
-                              background: on ? T.accentBlueBg : T.bgElevated,
-                              borderColor: on ? T.accentBlueBorder : T.borderSubtle,
-                              color: on ? T.accentBlue : T.textSecondary,
-                            },
-                          },
-                          tpl.id === 'custom' ? '自由填写中转/定制' : tpl.label.split(' ')[0],
-                        )
+                        return h('button', { key: tpl.id, type: 'button', className: 'dsh-vw-btn', onClick: () => handleProviderTemplateChange(tpl.id), style: { ...ghostBtnStyle, borderColor: on ? T.accentBlueBorder : T.borderSubtle, color: on ? T.accentBlue : T.textSecondary, background: on ? T.accentBlueBg : T.bgElevated } }, tpl.id === 'custom' ? '自由填写中转/私有服务' : tpl.label.split(' ')[0])
                       }),
                     ),
-                    h(
-                      'div',
-                      { style: { display: 'grid', gridTemplateColumns: '1fr 240px', gap: '10px' } },
-                      h(
-                        'div',
-                        null,
-                        h('label', { style: { fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' } }, 'API 接口地址 (Base URL)'),
-                        h('input', {
-                          value: llmForm.baseUrl,
-                          onChange: (ev) => setLlmForm((p) => ({ ...p, baseUrl: ev.target.value })),
-                          placeholder: 'https://api.openai.com/v1 或 任意中转 URL',
-                          style: inputStyle,
-                        }),
-                      ),
-                      h(
-                        'div',
-                        null,
-                        h('label', { style: { fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' } }, '接口协议格式 (4 种协议)'),
-                        h(
-                          'select',
-                          {
-                            value: llmForm.format,
-                            onChange: (ev) => setLlmForm((p) => ({ ...p, format: ev.target.value })),
-                            style: inputStyle,
-                          },
-                          h('option', { value: 'auto' }, 'Auto 自动识别'),
-                          protocolOptions.map((po) => h('option', { key: po.id, value: po.id }, po.label)),
-                        ),
-                      ),
-                    ),
+                    h('input', { value: llmForm.baseUrl, onChange: (ev) => setLlmForm((p) => ({ ...p, baseUrl: ev.target.value })), placeholder: 'API 地址，例如 https://api.openai.com/v1 或中转网址', style: inputStyle }),
                     h(
                       'div',
                       { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } },
-                      h(
-                        'div',
-                        null,
-                        h('label', { style: { fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' } }, `API Key ${llmConfig?.mode === 'custom' && llmConfig?.hasApiKey ? `(已存: ${llmConfig.maskedApiKey})` : ''}`),
-                        h('input', {
-                          type: 'password',
-                          value: llmForm.apiKey,
-                          onChange: (ev) => setLlmForm((p) => ({ ...p, apiKey: ev.target.value })),
-                          placeholder: llmConfig?.mode === 'custom' && llmConfig?.hasApiKey ? '留空即保留原密钥' : 'sk-...',
-                          style: inputStyle,
-                        }),
-                      ),
-                      h(
-                        'div',
-                        null,
-                        h('label', { style: { fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' } }, '模型名称 ID（可自由填写任意模型）'),
-                        h('input', {
-                          value: llmForm.model,
-                          onChange: (ev) => setLlmForm((p) => ({ ...p, model: ev.target.value })),
-                          placeholder: '例如 claude-opus-5-5 / gpt-6.1-sol / gemini-2.5-pro',
-                          style: inputStyle,
-                        }),
-                      ),
+                      h('input', { type: 'password', value: llmForm.apiKey, onChange: (ev) => setLlmForm((p) => ({ ...p, apiKey: ev.target.value })), placeholder: llmConfig?.hasApiKey ? `已加密保存 (${llmConfig.maskedApiKey})` : '输入 API Key (sk-...)', style: inputStyle }),
+                      h('input', { value: llmForm.model, onChange: (ev) => setLlmForm((p) => ({ ...p, model: ev.target.value })), placeholder: '模型 ID (可自由手输任意模型)', style: inputStyle }),
                     ),
-                    (activeTemplate?.suggestedModels?.length || llmTestResult?.availableModels?.length)
+                    (llmTestResult?.availableModels?.length || activeTemplate?.suggestedModels?.length)
                       ? h(
                           'div',
                           { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
-                          (llmTestResult?.availableModels?.length ? llmTestResult.availableModels.slice(0, 12) : activeTemplate?.suggestedModels || []).map((m) =>
-                            h(
-                              'button',
-                              {
-                                key: m,
-                                className: 'dsh-vw-btn',
-                                onClick: () => setLlmForm((p) => ({ ...p, model: m })),
-                                style: { ...ghostBtnStyle, padding: '3px 8px', fontSize: '11px', fontFamily: 'Consolas, monospace' },
-                              },
-                              m,
-                            ),
+                          (llmTestResult?.availableModels?.length ? llmTestResult.availableModels.slice(0, 14) : activeTemplate?.suggestedModels || []).map((m) =>
+                            h('button', { key: m, type: 'button', className: 'dsh-vw-btn', onClick: () => setLlmForm((p) => ({ ...p, model: m })), style: { ...ghostBtnStyle, padding: '4px 10px', fontSize: '12px', fontFamily: 'Consolas, monospace' } }, m),
                           ),
                         )
                       : null,
@@ -7284,39 +5642,277 @@ window.__ModuleLoader__.load({
               h(
                 'div',
                 { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' } },
-                h('label', { style: { fontSize: '12px', color: T.textSecondary } }, '代码编译/质检自动修复最大轮数:'),
-                h(
-                  'select',
-                  {
-                    value: llmForm.maxRepairRounds,
-                    onChange: (ev) => setLlmForm((p) => ({ ...p, maxRepairRounds: Number(ev.target.value) })),
-                    style: { ...inputStyle, width: '100px' },
-                  },
-                  [1, 2, 3, 4, 5].map((n) => h('option', { key: n, value: n }, `${n} 轮`)),
-                ),
+                h('span', { style: { fontSize: '13.5px', color: T.textSecondary } }, 'AI 编译出错时自动修复最大轮次'),
+                h('div', { style: { width: '130px' } }, h(CinemaSelect, { compact: true, value: llmForm.maxRepairRounds, onChange: (v) => setLlmForm((p) => ({ ...p, maxRepairRounds: Number(v) })), T, options: [1, 2, 3, 4, 5].map((n) => ({ value: n, label: `最多 ${n} 轮` })) })),
               ),
               llmTestResult
                 ? h(
                     'div',
-                    {
-                      style: {
-                        padding: '10px 12px',
-                        borderRadius: '9px',
-                        fontSize: '12px',
-                        background: llmTestResult.ok ? T.accentGreenBg : T.accentRedBg,
-                        color: llmTestResult.ok ? T.accentGreen : T.accentRed,
-                      },
-                    },
-                    llmTestResult.ok
-                      ? `✓ 连接成功 (${llmTestResult.latencyMs}ms · 协议 ${llmTestResult.protocol} · 模型 ${llmTestResult.model})`
-                      : `✕ 测试失败: ${llmTestResult.error}`,
+                    { style: { padding: '11px 14px', borderRadius: '10px', fontSize: '13.5px', background: llmTestResult.ok ? T.accentGreenBg : T.accentRedBg, color: llmTestResult.ok ? T.accentGreen : T.accentRed } },
+                    llmTestResult.ok ? `✓ 测试联通 (${llmTestResult.latencyMs}ms · ${llmTestResult.protocol} · ${llmTestResult.model})` : `✕ ${llmTestResult.error}`,
                   )
                 : null,
               h(
                 'div',
-                { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' } },
-                h('button', { className: 'dsh-vw-btn', disabled: llmTesting, onClick: handleTestLlm, style: ghostBtnStyle }, llmTesting ? '测试中...' : '测试连接并获取模型'),
-                h('button', { className: 'dsh-vw-btn', onClick: handleSaveLlmConfig, style: goldBtnStyle }, '保存配置'),
+                { style: { display: 'flex', justifyContent: 'flex-end', gap: '10px' } },
+                h('button', { type: 'button', className: 'dsh-vw-btn', disabled: llmTesting, onClick: handleTestLlm, style: ghostBtnStyle }, llmTesting ? '正在探测接口...' : '测试连接并拉取模型'),
+                h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleSaveLlmConfig, style: goldBtnStyle }, '保存并生效'),
+              ),
+            ),
+          )
+        : null
+
+      const cloneStep = cloneAuditionVoiceId ? 3 : recordedB64 ? 2 : 1
+      const voiceModal = showVoiceModal
+        ? h(
+            'div',
+            { style: modalBackdropStyle, onClick: () => setShowVoiceModal(false) },
+            h(
+              'div',
+              { onClick: (ev) => ev.stopPropagation(), style: { ...panelStyle, width: '740px', maxWidth: '100%', maxHeight: '88vh', padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px', overflow: 'hidden' } },
+              h(
+                'div',
+                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                h('h3', { style: { margin: 0, fontSize: '18px', fontWeight: 800 } }, '🎙 IndexTTS-2.5 音色挑选与 3 步克隆工坊'),
+                h('button', { type: 'button', onClick: () => setShowVoiceModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 18 })),
+              ),
+              h(SegmentedPills, {
+                value: voiceModalTab,
+                onChange: setVoiceModalTab,
+                T,
+                fullWidth: true,
+                options: [
+                  { id: 'library', label: '📚 挑选本地内置音色库' },
+                  { id: 'clone', label: '🧬 3 步录制/上传克隆我的声音' },
+                ],
+              }),
+              voiceModalTab === 'clone'
+                ? h(
+                    'div',
+                    { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', paddingRight: '4px' } },
+                    // Guided 3-step banner
+                    h(
+                      'div',
+                      { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' } },
+                      [
+                        { n: 1, title: '① 采集 5-12 秒干净人声' },
+                        { n: 2, title: '② 降噪标准化入专属库' },
+                        { n: 3, title: '③ 即时试听并一键选用' },
+                      ].map((st) => {
+                        const on = cloneStep >= st.n
+                        return h('div', { key: st.n, style: { padding: '9px 11px', borderRadius: '10px', fontSize: '13px', fontWeight: 700, background: on ? T.accentBlueBg : T.bgElevated, border: `1px solid ${on ? T.accentBlueBorder : T.borderSubtle}`, color: on ? T.accentBlue : T.textMuted, textAlign: 'center' } }, st.title)
+                      }),
+                    ),
+                    h(SegmentedPills, {
+                      value: cloneSubMode,
+                      onChange: setCloneSubMode,
+                      T,
+                      size: 'sm',
+                      options: [
+                        { id: 'mic', label: '🎤 麦克风当场录音' },
+                        { id: 'file', label: '📁 选录音文件上传' },
+                        { id: 'path', label: '🔗 填本地音频路径' },
+                      ],
+                    }),
+                    cloneSubMode === 'mic'
+                      ? h(
+                          'div',
+                          { style: { padding: '14px', borderRadius: '11px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '10px' } },
+                          h(
+                            'div',
+                            { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' } },
+                            !micRecording
+                              ? h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleStartMicRecord, style: blueBtnStyle }, '● 开始录音 (说 5–12 秒普通话)')
+                              : h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleStopMicRecord, style: { ...goldBtnStyle, background: '#E11D48', color: '#fff' } }, `■ 停止录音 (${micSeconds}s)`),
+                            h('span', { style: { fontSize: '13px', color: recordedB64 ? T.accentGreen : T.textMuted } }, recordedB64 ? `✓ 已录好 (${recordedFileName})` : '找个安静环境自然读一段话效果最好'),
+                          ),
+                          micRecording
+                            ? h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, h('span', { style: { fontSize: '12px', color: T.textMuted } }, '收音音量'), h('div', { style: { flex: 1, height: '7px', borderRadius: '99px', background: 'rgba(148,163,184,0.2)', overflow: 'hidden' } }, h('div', { style: { width: `${micVuLevel}%`, height: '100%', background: T.accentGreen } })))
+                            : null,
+                        )
+                      : cloneSubMode === 'file'
+                        ? h(
+                            'div',
+                            { style: { padding: '14px', borderRadius: '11px', background: T.bgElevated, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' } },
+                            h('span', { style: { fontSize: '13.5px', color: recordedB64 ? T.accentGreen : T.textSecondary } }, recordedB64 ? `✓ 已载入：${recordedFileName}` : '支持 .wav / .mp3 / .flac / .m4a (建议 5–15 秒干声)'),
+                            h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => cloneFileInputRef.current?.click(), style: blueBtnStyle }, '选择音频文件'),
+                          )
+                        : h('input', { value: voiceImportPath, onChange: (ev) => setVoiceImportPath(ev.target.value), placeholder: '填写本机参考音频或索引绝对路径 (.wav/.mp3/.pt)', style: inputStyle }),
+
+                    // Step 2: Name + Gender + Submit
+                    h(
+                      'div',
+                      { style: { display: 'grid', gridTemplateColumns: '1.3fr auto 1.4fr', gap: '9px', alignItems: 'center' } },
+                      h('input', { value: cloneVoiceName, onChange: (ev) => setCloneVoiceName(ev.target.value), placeholder: '② 给声线起名 (如 我的解说音)', style: inputStyle }),
+                      h(SegmentedPills, { value: cloneVoiceGender, onChange: setCloneVoiceGender, T, size: 'sm', options: [{ id: 'female', label: '女声' }, { id: 'male', label: '男声' }] }),
+                      h('input', { value: cloneVoicePrompt, onChange: (ev) => setCloneVoicePrompt(ev.target.value), placeholder: '参考台词文本 (选填)', style: inputStyle }),
+                    ),
+                    h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleSubmitVoiceClone, style: { ...goldBtnStyle, width: '100%' } }, '🧬 ② 一键降噪标准化并入库'),
+
+                    // Step 3: Audition
+                    h(
+                      'div',
+                      { style: { padding: '14px', borderRadius: '11px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '9px' } },
+                      h('div', { style: { fontSize: '14px', fontWeight: 800 } }, '③ 即时试听克隆效果并选用'),
+                      h(
+                        'div',
+                        { style: { display: 'grid', gridTemplateColumns: '0.9fr 1.6fr', gap: '9px' } },
+                        h(CinemaSelect, {
+                          value: cloneAuditionVoiceId || voiceCatalog.find((v) => v.isCloned || v.id?.startsWith('clone-'))?.id || '',
+                          onChange: setCloneAuditionVoiceId,
+                          T,
+                          placeholder: '选择已克隆声线',
+                          options: (voiceCatalog.filter((v) => v.isCloned || v.id?.startsWith('clone-')).length ? voiceCatalog.filter((v) => v.isCloned || v.id?.startsWith('clone-')) : voiceCatalog.slice(0, 15)).map((v) => ({ value: v.id, label: v.name })),
+                        }),
+                        h('input', { value: cloneAuditionText, onChange: (ev) => setCloneAuditionText(ev.target.value), placeholder: '输入一句试听台词...', style: inputStyle }),
+                      ),
+                      h(
+                        'div',
+                        { style: { display: 'flex', gap: '9px' } },
+                        h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleAuditionClonedVoice, style: { ...blueBtnStyle, flex: 1 } }, '▶ 用 IndexTTS-2.5 合成试听'),
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'dsh-vw-btn',
+                            onClick: () => {
+                              const picked = cloneAuditionVoiceId || voiceCatalog.find((v) => v.isCloned || v.id?.startsWith('clone-'))?.id
+                              if (picked) handleAssignVoice(voiceCatalog.find((v) => v.id === picked) || { id: picked, name: picked })
+                            },
+                            style: ghostBtnStyle,
+                          },
+                          '✓ 设为当前全局音色',
+                        ),
+                      ),
+                      cloneAuditionUrl ? h('audio', { src: cloneAuditionUrl, controls: true, style: { width: '100%', height: '36px' } }) : null,
+                    ),
+                  )
+                : h(
+                    'div',
+                    { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '12px' } },
+                    h(
+                      'div',
+                      { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
+                      h('input', { value: voiceSearch, onChange: (ev) => setVoiceSearch(ev.target.value), placeholder: '搜索音色名称或风格标签...', style: { ...inputStyle, flex: 1 } }),
+                      h(SegmentedPills, { value: voiceGenderFilter, onChange: setVoiceGenderFilter, T, size: 'sm', accent: 'gold', options: [{ id: 'all', label: '全部' }, { id: 'female', label: '女声' }, { id: 'male', label: '男声' }] }),
+                      h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => handleAssignVoice({ id: 'auto', name: 'AI 自动匹配' }), style: blueBtnStyle }, '设为 AI 自动配'),
+                    ),
+                    h(
+                      'div',
+                      { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '7px' } },
+                      filteredVoices.slice(0, 60).map((v) => {
+                        const playingThis = playingVoiceId === v.id
+                        return h(
+                          'div',
+                          { key: v.id, style: { padding: '10px 14px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' } },
+                          h('div', { style: { minWidth: 0 } }, h('div', { style: { fontSize: '14px', fontWeight: 700 } }, v.name || v.id), h('div', { style: { fontSize: '12.5px', color: T.textMuted } }, `${v.gender || ''} · ${(v.tags || []).slice(0, 4).join(' / ')}`)),
+                          h(
+                            'div',
+                            { style: { display: 'flex', gap: '7px', flexShrink: 0 } },
+                            h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => handlePreviewVoice(v), style: { ...ghostBtnStyle, padding: '6px 12px' } }, h(Icon, { name: playingThis ? 'pause' : 'play', size: 13 }), playingThis ? '停止' : '试听'),
+                            h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => handleAssignVoice(v), style: { ...goldBtnStyle, padding: '6px 14px' } }, '选用'),
+                          ),
+                        )
+                      }),
+                    ),
+                  ),
+            ),
+          )
+        : null
+
+      const skinModal = showSkinModal
+        ? h(
+            'div',
+            { style: modalBackdropStyle, onClick: () => setShowSkinModal(false) },
+            h(
+              'div',
+              { onClick: (ev) => ev.stopPropagation(), style: { ...panelStyle, width: '600px', maxWidth: '100%', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' } },
+              h(
+                'div',
+                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                h('h3', { style: { margin: 0, fontSize: '18px', fontWeight: 800 } }, '🎨 作战大屏动态皮肤与玻璃磨砂'),
+                h('button', { type: 'button', onClick: () => setShowSkinModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 18 })),
+              ),
+              h(
+                'div',
+                { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '11px' } },
+                SKIN_PRESETS.map((sk) => {
+                  const on = skinConfig.id === sk.id
+                  return h(
+                    'div',
+                    { key: sk.id, onClick: () => setSkinConfig((p) => ({ ...p, id: sk.id })), style: { borderRadius: '11px', overflow: 'hidden', cursor: 'pointer', border: `2px solid ${on ? T.accentBlue : T.borderSubtle}`, background: T.bgElevated } },
+                    h('div', { style: { height: '68px', background: resolvedDark ? sk.darkBg : sk.lightBg } }),
+                    h('div', { style: { padding: '8px 11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: 700 } }, h('span', null, sk.name), h('span', { style: { color: on ? T.accentBlue : T.textMuted } }, on ? '✓ 当前' : sk.badge)),
+                  )
+                }),
+              ),
+              h(
+                'div',
+                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', padding: '11px 14px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}` } },
+                h('span', { style: { fontSize: '13.5px', fontWeight: 700 } }, skinConfig.customUrl ? '已使用自定义壁纸背景' : '导入一张自己的高清图片作为大屏壁纸'),
+                h(
+                  'div',
+                  { style: { display: 'flex', gap: '8px' } },
+                  h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => skinFileInputRef.current?.click(), style: blueBtnStyle }, h(Icon, { name: 'upload', size: 14 }), '上传壁纸'),
+                  skinConfig.customUrl ? h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setSkinConfig((p) => ({ ...p, id: 'obsidian-nebula', customUrl: '' })), style: ghostBtnStyle }, '恢复预设') : null,
+                ),
+              ),
+              h(
+                'div',
+                { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', fontSize: '13px', fontWeight: 600 } },
+                h('label', null, `磨砂模糊: ${skinConfig.blurPx}px`, h('input', { type: 'range', min: 0, max: 32, step: 1, value: skinConfig.blurPx, onChange: (ev) => setSkinConfig((p) => ({ ...p, blurPx: Number(ev.target.value) })), style: { width: '100%', marginTop: '6px' } })),
+                h('label', null, `显色强度: ${Math.round(skinConfig.opacity * 100)}%`, h('input', { type: 'range', min: 0.25, max: 1, step: 0.05, value: skinConfig.opacity, onChange: (ev) => setSkinConfig((p) => ({ ...p, opacity: Number(ev.target.value) })), style: { width: '100%', marginTop: '6px' } })),
+              ),
+              h('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowSkinModal(false), style: goldBtnStyle }, '完成')),
+            ),
+          )
+        : null
+
+      const vendorModal = showVendorModal
+        ? h(
+            'div',
+            { style: modalBackdropStyle, onClick: () => setShowVendorModal(false) },
+            h(
+              'div',
+              { onClick: (ev) => ev.stopPropagation(), style: { ...panelStyle, width: '540px', maxWidth: '100%', padding: '24px', display: 'flex', flexDirection: 'column', gap: '13px' } },
+              h(
+                'div',
+                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                h('h3', { style: { margin: 0, fontSize: '17px', fontWeight: 800 } }, '✨ 外部 .motion / HTML 动效隔离导入'),
+                h('button', { type: 'button', onClick: () => setShowVendorModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 17 })),
+              ),
+              h('p', { style: { margin: 0, fontSize: '13px', color: T.textSecondary, lineHeight: 1.55 } }, '在沙箱无头 Chromium 中把第三方动画工程安全渲染为无声纯画面 MP4，不会污染主项目规范。'),
+              h('input', { value: vendorSourceDir, onChange: (ev) => setVendorSourceDir(ev.target.value), placeholder: '外部模板目录绝对路径 (含 index.html)', style: inputStyle }),
+              h(
+                'div',
+                { style: { display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '9px' } },
+                h('input', { value: vendorName, onChange: (ev) => setVendorName(ev.target.value), placeholder: '片段代号 (如 logo-reveal)', style: inputStyle }),
+                h('input', { type: 'number', min: 1, max: 30, value: vendorDurationSec, onChange: (ev) => setVendorDurationSec(ev.target.value), placeholder: '时长 (秒)', style: inputStyle }),
+              ),
+              h(
+                'div',
+                { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } },
+                h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowVendorModal(false), style: ghostBtnStyle }, '取消'),
+                h('button', { type: 'button', className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleImportVendorMotion, style: goldBtnStyle }, '🎬 渲染导入'),
+              ),
+            ),
+          )
+        : null
+
+      const newProjectModal = showNewModal
+        ? h(
+            'div',
+            { style: modalBackdropStyle, onClick: () => setShowNewModal(false) },
+            h(
+              'div',
+              { onClick: (ev) => ev.stopPropagation(), style: { ...panelStyle, width: '440px', maxWidth: '100%', padding: '24px' } },
+              h('h3', { style: { margin: '0 0 14px', fontSize: '17px', fontWeight: 800 } }, '新建视频工程'),
+              h('input', { autoFocus: true, value: newProjectTitle, onChange: (ev) => setNewProjectTitle(ev.target.value), onKeyDown: (ev) => ev.key === 'Enter' && handleCreateProject(), placeholder: '例如：夏日新品概念发布片', style: { ...inputStyle, marginBottom: '16px' } }),
+              h(
+                'div',
+                { style: { display: 'flex', justifyContent: 'flex-end', gap: '9px' } },
+                h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => setShowNewModal(false), style: ghostBtnStyle }, '取消'),
+                h('button', { type: 'button', className: 'dsh-vw-btn', onClick: handleCreateProject, style: goldBtnStyle }, '创建工程'),
               ),
             ),
           )
@@ -7329,974 +5925,247 @@ window.__ModuleLoader__.load({
             { style: modalBackdropStyle, onClick: () => setShowCodeDrawer(false) },
             h(
               'div',
-              {
-                style: { ...panelStyle, width: '880px', maxWidth: '96vw', height: '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
-                onClick: (ev) => ev.stopPropagation(),
-              },
+              { onClick: (ev) => ev.stopPropagation(), style: { ...panelStyle, width: '900px', maxWidth: '96vw', height: '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' } },
               h(
                 'div',
-                { style: { padding: '14px 18px', borderBottom: `1px solid ${T.borderSubtle}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('strong', { style: { fontSize: '14px' } }, '工程源码与 AI 自动修复日志检视'),
-                h('button', { onClick: () => setShowCodeDrawer(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 16 })),
+                { style: { padding: '16px 20px', borderBottom: `1px solid ${T.borderSubtle}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                h('strong', { style: { fontSize: '16px' } }, '工程生成源码检视'),
+                h('button', { type: 'button', onClick: () => setShowCodeDrawer(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 18 })),
               ),
               h(
                 'div',
-                { style: { display: 'flex', gap: '6px', padding: '10px 14px', overflowX: 'auto', borderBottom: `1px solid ${T.borderSubtle}`, background: T.bgSidebar } },
-                codeFiles.map((f) =>
-                  h(
-                    'button',
-                    {
-                      key: f.path,
-                      className: 'dsh-vw-btn',
-                      onClick: () => setSelectedCodePath(f.path),
-                      style: {
-                        ...ghostBtnStyle,
-                        fontFamily: 'Consolas, monospace',
-                        fontSize: '11px',
-                        padding: '4px 10px',
-                        background: activeCodeFile?.path === f.path ? T.accentGoldBg : 'transparent',
-                        borderColor: activeCodeFile?.path === f.path ? T.accentGoldBorder : T.borderSubtle,
-                        color: activeCodeFile?.path === f.path ? T.accentGold : T.textSecondary,
-                      },
-                    },
-                    f.path,
-                  ),
-                ),
+                { style: { display: 'flex', gap: '7px', padding: '10px 16px', overflowX: 'auto', borderBottom: `1px solid ${T.borderSubtle}`, background: T.bgSidebar } },
+                codeFiles.map((f) => h('button', { key: f.path, type: 'button', className: 'dsh-vw-btn', onClick: () => setSelectedCodePath(f.path), style: { ...ghostBtnStyle, fontFamily: 'Consolas, monospace', fontSize: '12.5px', borderColor: activeCodeFile?.path === f.path ? T.accentGoldBorder : T.borderSubtle, color: activeCodeFile?.path === f.path ? T.accentGold : T.textSecondary } }, f.path)),
               ),
-              h(
-                'pre',
-                {
-                  className: 'dsh-vw-scroll',
-                  style: { flex: 1, margin: 0, padding: '16px', overflow: 'auto', fontFamily: 'Consolas, monospace', fontSize: '12px', lineHeight: 1.55, color: T.textPrimary, background: T.bgInput },
-                },
-                activeCodeFile ? activeCodeFile.content : '暂无源码文件',
-              ),
+              h('pre', { className: 'dsh-vw-scroll', style: { flex: 1, margin: 0, padding: '18px', overflow: 'auto', fontFamily: 'Consolas, monospace', fontSize: '13px', lineHeight: 1.6, color: T.textPrimary, background: T.bgInput } }, activeCodeFile ? activeCodeFile.content : '暂无源码文件'),
             ),
           )
         : null
 
-      const voiceModal = showVoiceModal
-        ? h(
-            'div',
-            { style: modalBackdropStyle, onClick: () => setShowVoiceModal(false) },
-            h(
-              'div',
-              {
-                style: { ...panelStyle, width: '680px', maxWidth: '95vw', maxHeight: '84vh', display: 'flex', flexDirection: 'column', padding: '20px', gap: '12px' },
-                onClick: (ev) => ev.stopPropagation(),
-              },
-              h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' } },
-                h(
-                  'div',
-                  { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
-                  h(
-                    'button',
-                    {
-                      className: 'dsh-vw-btn',
-                      onClick: () => setVoiceTab('library'),
-                      style: {
-                        ...ghostBtnStyle,
-                        padding: '7px 14px',
-                        background: voiceTab === 'library' ? T.accentGoldBg : T.bgElevated,
-                        borderColor: voiceTab === 'library' ? T.accentGoldBorder : T.borderSubtle,
-                        color: voiceTab === 'library' ? T.accentGold : T.textPrimary,
-                        fontWeight: 700,
-                      },
-                    },
-                    `🎙 本地音色库 (${voiceCatalog.length})`,
-                  ),
-                  h(
-                    'button',
-                    {
-                      className: 'dsh-vw-btn',
-                      onClick: () => setVoiceTab('clone'),
-                      style: {
-                        ...ghostBtnStyle,
-                        padding: '7px 14px',
-                        background: voiceTab === 'clone' ? T.accentBlueBg : T.bgElevated,
-                        borderColor: voiceTab === 'clone' ? T.accentBlueBorder : T.borderSubtle,
-                        color: voiceTab === 'clone' ? T.accentBlue : T.textPrimary,
-                        fontWeight: 700,
-                      },
-                    },
-                    '🧬 声音克隆实验室 (录 5 秒即克隆本人声音)',
-                  ),
-                ),
-                h('button', { 'aria-label': '关闭', title: '关闭弹窗', onClick: () => setShowVoiceModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 16 })),
-              ),
-              voiceTab === 'clone'
-                ? h(
-                    'div',
-                    { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' } },
-                    h(
-                      'div',
-                      { style: { padding: '12px', borderRadius: '10px', background: resolvedDark ? 'rgba(56,189,248,0.08)' : 'rgba(37,99,235,0.05)', border: `1px solid ${T.accentBlueBorder}`, fontSize: '12px', color: T.textSecondary, lineHeight: 1.55 } },
-                      'IndexTTS-2.5 支持零样本（Zero-Shot）人声克隆：只需 ',
-                      h('strong', { style: { color: T.textPrimary } }, '5–12 秒清晰干声'),
-                      '（现录麦克风 / 上传 mp3、wav、m4a、flac / 本机路径），系统自动用 FFmpeg 去除低频底噪、裁剪首尾静音并标准化至 24kHz 单声道 WAV 写入本地私有库，绝不上传云端。',
-                    ),
-                    // 3 clone input sources
-                    h(
-                      'div',
-                      { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' } },
-                      [
-                        { id: 'mic', label: '🎙 麦克风现场录音' },
-                        { id: 'file', label: '📁 选择本地音频文件' },
-                        { id: 'path', label: '📂 粘贴本机路径' },
-                      ].map((m) =>
-                        h(
-                          'button',
-                          {
-                            key: m.id,
-                            className: 'dsh-vw-btn',
-                            onClick: () => setCloneSubMode(m.id),
-                            style: {
-                              ...ghostBtnStyle,
-                              justifyContent: 'center',
-                              background: cloneSubMode === m.id ? T.accentGoldBg : T.bgElevated,
-                              borderColor: cloneSubMode === m.id ? T.accentGoldBorder : T.borderSubtle,
-                              color: cloneSubMode === m.id ? T.accentGold : T.textPrimary,
-                            },
-                          },
-                          m.label,
-                        ),
-                      ),
-                    ),
-                    cloneSubMode === 'mic'
-                      ? h(
-                          'div',
-                          { style: { padding: '14px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${micRecording ? T.accentRed : T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '9px' } },
-                          h('div', { style: { fontSize: '12px', color: T.textSecondary } }, '参考朗读示例（自然语速读完即可）：「你好，我是正在录制视频配音的创作者，今天天气晴朗，故事从这里正式开始。」'),
-                          h(
-                            'div',
-                            { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
-                            !micRecording
-                              ? h('button', { className: 'dsh-vw-btn', onClick: handleStartMicRecord, style: goldBtnStyle }, '🔴 开始录制声音 (5–15 秒)')
-                              : h('button', { className: 'dsh-vw-btn', onClick: handleStopMicRecord, style: { ...goldBtnStyle, background: T.accentRed, color: '#FFF' } }, `⏹ 停止录音 (${micSeconds}s / 15s)`),
-                            recordedB64
-                              ? h('span', { style: { fontSize: '12px', color: T.accentGreen, fontWeight: 700 } }, `✓ 已采集录音样本 (${recordedFileName})`)
-                              : null,
-                          ),
-                        )
-                      : cloneSubMode === 'file'
-                      ? h(
-                          'div',
-                          { style: { padding: '14px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' } },
-                          h(
-                            'div',
-                            { style: { fontSize: '12px', color: recordedB64 ? T.accentGreen : T.textSecondary } },
-                            recordedB64 ? `✓ 已选择音频样本：${recordedFileName}` : '支持本地 .wav / .mp3 / .flac / .m4a / .ogg 文件，推荐 5–15 秒纯净人声',
-                          ),
-                          h('button', { className: 'dsh-vw-btn', onClick: () => cloneFileInputRef.current?.click(), style: blueBtnStyle }, '选择音频文件'),
-                        )
-                      : h('input', {
-                          value: voiceImportPath,
-                          onChange: (ev) => setVoiceImportPath(ev.target.value),
-                          placeholder: '填写本机参考音频或索引文件绝对路径 (.wav / .mp3 / .pt)',
-                          style: inputStyle,
-                        }),
-                    // Clone metadata + submit
-                    h(
-                      'div',
-                      { style: { display: 'grid', gridTemplateColumns: '1.35fr 92px 1.65fr', gap: '8px' } },
-                      h('input', {
-                        value: cloneVoiceName,
-                        onChange: (ev) => setCloneVoiceName(ev.target.value),
-                        placeholder: '音色名称（如 我的配音）',
-                        style: inputStyle,
-                      }),
-                      h(
-                        'select',
-                        { value: cloneVoiceGender, onChange: (ev) => setCloneVoiceGender(ev.target.value), style: inputStyle },
-                        h('option', { value: 'female' }, '女声'),
-                        h('option', { value: 'male' }, '男声'),
-                      ),
-                      h('input', {
-                        value: cloneVoicePrompt,
-                        onChange: (ev) => setCloneVoicePrompt(ev.target.value),
-                        placeholder: '参考台词（选填，留空自动识别）',
-                        style: inputStyle,
-                      }),
-                    ),
-                    h(
-                      'button',
-                      { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleSubmitVoiceClone, style: { ...goldBtnStyle, width: '100%' } },
-                      '🧬 降噪标准化并加入专属音色库',
-                    ),
-                    // Audition Lab
-                    h(
-                      'div',
-                      { style: { padding: '12px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: '8px' } },
-                      h('div', { style: { fontSize: '12px', fontWeight: 800 } }, '🎧 克隆音色即时合成试听与选用'),
-                      h(
-                        'div',
-                        { style: { display: 'flex', gap: '8px' } },
-                        h(
-                          'select',
-                          {
-                            value:
-                              cloneAuditionVoiceId ||
-                              voiceCatalog.find((v) => v.isCloned || v.id?.startsWith('clone-') || v.category === '专属声纹克隆')?.id ||
-                              '',
-                            onChange: (ev) => setCloneAuditionVoiceId(ev.target.value),
-                            style: { ...inputStyle, flex: 0.9 },
-                          },
-                          voiceCatalog.filter((v) => v.isCloned || v.id?.startsWith('clone-') || v.category === '专属声纹克隆' || v.tags?.includes('自定义音色')).length
-                            ? voiceCatalog
-                                .filter((v) => v.isCloned || v.id?.startsWith('clone-') || v.category === '专属声纹克隆' || v.tags?.includes('自定义音色'))
-                                .map((v) => h('option', { key: v.id, value: v.id }, `${v.name} (已克隆)`))
-                            : voiceCatalog.slice(0, 20).map((v) => h('option', { key: v.id, value: v.id }, v.name)),
-                        ),
-                        h('input', {
-                          value: cloneAuditionText,
-                          onChange: (ev) => setCloneAuditionText(ev.target.value),
-                          placeholder: '输入任意一句台词，立即试听你克隆出来的配音效果...',
-                          style: { ...inputStyle, flex: 1.6 },
-                        }),
-                      ),
-                      h(
-                        'div',
-                        { style: { display: 'flex', gap: '8px' } },
-                        h(
-                          'button',
-                          { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleAuditionClonedVoice(), style: { ...blueBtnStyle, flex: 1 } },
-                          '▶ 用 IndexTTS-2.5 实时试听',
-                        ),
-                        h(
-                          'button',
-                          {
-                            className: 'dsh-vw-btn',
-                            onClick: () => {
-                              const picked =
-                                cloneAuditionVoiceId ||
-                                voiceCatalog.find((v) => v.isCloned || v.id?.startsWith('clone-') || v.category === '专属声纹克隆')?.id
-                              if (picked) handleAssignVoice(voiceCatalog.find((v) => v.id === picked) || { id: picked, name: picked })
-                            },
-                            style: { ...ghostBtnStyle, flex: 0.8 },
-                          },
-                          '✓ 设为当前全局配音',
-                        ),
-                      ),
-                      cloneAuditionUrl ? h('audio', { src: cloneAuditionUrl, controls: true, style: { width: '100%', height: '32px' } }) : null,
-                    ),
-                  )
-                : h(
-                    'div',
-                    { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '10px' } },
-                    h(
-                      'div',
-                      { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-                      h('input', {
-                        value: voiceSearch,
-                        onChange: (ev) => setVoiceSearch(ev.target.value),
-                        placeholder: '搜索音色名称或标签 (如 解说 / 男声 / 磁性)...',
-                        style: { ...inputStyle, flex: 1 },
-                      }),
-                      ['all', 'female', 'male'].map((g) =>
-                        h(
-                          'button',
-                          {
-                            key: g,
-                            className: 'dsh-vw-btn',
-                            onClick: () => setVoiceGenderFilter(g),
-                            style: {
-                              ...ghostBtnStyle,
-                              background: voiceGenderFilter === g ? T.accentGoldBg : T.bgElevated,
-                              borderColor: voiceGenderFilter === g ? T.accentGoldBorder : T.borderSubtle,
-                            },
-                          },
-                          g === 'all' ? '全部' : g === 'female' ? '女声' : '男声',
-                        ),
-                      ),
-                      h(
-                        'button',
-                        {
-                          className: 'dsh-vw-btn',
-                          onClick: () => handleAssignVoice({ id: 'auto', name: 'AI 自动匹配' }),
-                          style: { ...blueBtnStyle, fontSize: '12px', padding: '6px 12px' },
-                        },
-                        '设为 AI 自动分配',
-                      ),
-                    ),
-                    // Quick custom voice pack import
-                    h(
-                      'div',
-                      { style: { display: 'flex', gap: '6px', padding: '10px', borderRadius: '9px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}` } },
-                      h('input', {
-                        value: voiceImportPath,
-                        onChange: (ev) => setVoiceImportPath(ev.target.value),
-                        placeholder: '导入自定义参考音频/模型路径 (.wav / .pt)',
-                        style: { ...inputStyle, flex: 1.5, fontSize: '12px', padding: '6px 10px' },
-                      }),
-                      h('input', {
-                        value: voiceImportName,
-                        onChange: (ev) => setVoiceImportName(ev.target.value),
-                        placeholder: '音色名称',
-                        style: { ...inputStyle, flex: 0.7, fontSize: '12px', padding: '6px 10px' },
-                      }),
-                      h(
-                        'select',
-                        { value: voiceImportGender, onChange: (ev) => setVoiceImportGender(ev.target.value), style: { ...inputStyle, width: '74px', fontSize: '12px', padding: '6px' } },
-                        h('option', { value: 'female' }, '女'),
-                        h('option', { value: 'male' }, '男'),
-                      ),
-                      h('button', { className: 'dsh-vw-btn', onClick: handleImportVoicePack, style: ghostBtnStyle }, '导入'),
-                    ),
-                    h(
-                      'div',
-                      { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' } },
-                      filteredVoices.slice(0, 60).map((v) => {
-                        const isPlayingThis = playingVoiceId === v.id
-                        return h(
-                          'div',
-                          {
-                            key: v.id,
-                            style: {
-                              padding: '9px 12px',
-                              borderRadius: '9px',
-                              background: T.bgElevated,
-                              border: `1px solid ${T.borderSubtle}`,
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              gap: '10px',
-                            },
-                          },
-                          h(
-                            'div',
-                            { style: { minWidth: 0 } },
-                            h('div', { style: { fontSize: '13px', fontWeight: 700 } }, v.name || v.id),
-                            h('div', { style: { fontSize: '11px', color: T.textMuted } }, `${v.gender || ''} · ${(v.tags || []).slice(0, 4).join(' / ')}`),
-                          ),
-                          h(
-                            'div',
-                            { style: { display: 'flex', gap: '6px', flexShrink: 0 } },
-                            h(
-                              'button',
-                              { className: 'dsh-vw-btn', onClick: () => handlePreviewVoice(v), style: { ...ghostBtnStyle, padding: '4px 10px' } },
-                              h(Icon, { name: isPlayingThis ? 'pause' : 'play', size: 11 }),
-                              isPlayingThis ? '停止' : '试听',
-                            ),
-                            h(
-                              'button',
-                              { className: 'dsh-vw-btn', onClick: () => handleAssignVoice(v), style: { ...goldBtnStyle, padding: '4px 12px', fontSize: '12px' } },
-                              '选用',
-                            ),
-                          ),
-                        )
-                      }),
-                    ),
-                  ),
-            ),
-          )
-        : null
-
-      const vendorModal = showVendorModal
-        ? h(
-            'div',
-            { style: modalBackdropStyle, onClick: () => setShowVendorModal(false) },
-            h(
-              'div',
-              {
-                style: { ...panelStyle, width: '520px', maxWidth: '95vw', padding: '22px', display: 'flex', flexDirection: 'column', gap: '12px' },
-                onClick: (ev) => ev.stopPropagation(),
-              },
-              h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 800 } }, '✨ 外部 .motion / HTML 动效模板隔离导入'),
-                h('button', { 'aria-label': '关闭', title: '关闭弹窗', onClick: () => setShowVendorModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 16 })),
-              ),
-              h('p', { style: { margin: 0, fontSize: '12px', color: T.textSecondary, lineHeight: 1.55 } }, '为防外部复杂特效代码破坏主工程编译与字体规范，系统将把目录复制到 vendor/ 目录，通过独立无头 Chromium 渲染成纯画面无声 MP4 (-an) 后安全嵌入时间轴。'),
-              h('input', {
-                value: vendorSourceDir,
-                onChange: (ev) => setVendorSourceDir(ev.target.value),
-                placeholder: '填写本地 .motion / 外部 HTML 模板文件夹绝对路径 (含 index.html)',
-                style: inputStyle,
-              }),
-              h(
-                'div',
-                { style: { display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '8px' } },
-                h('input', {
-                  value: vendorName,
-                  onChange: (ev) => setVendorName(ev.target.value),
-                  placeholder: '片段名称 (如 logo-reveal)',
-                  style: inputStyle,
-                }),
-                h('input', {
-                  type: 'number',
-                  min: 1,
-                  max: 30,
-                  value: vendorDurationSec,
-                  onChange: (ev) => setVendorDurationSec(ev.target.value),
-                  placeholder: '截取时长 (秒)',
-                  style: inputStyle,
-                }),
-              ),
-              h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' } },
-                h('button', { className: 'dsh-vw-btn', onClick: () => setShowVendorModal(false), style: ghostBtnStyle }, '取消'),
-                h('button', { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: handleImportVendorMotion, style: goldBtnStyle }, '🎬 无头 Chromium 隔离渲染导入'),
-              ),
-            ),
-          )
-        : null
-
-      // -----------------------------------------------------------------------
-      // STEP 5: REAL-TIME AI AGENT TASK CENTER
-      // -----------------------------------------------------------------------
-      const filteredTaskRuns = taskRuns.filter((r) => {
-        if (taskFilter === 'active') return r.status === 'running' || r.status === 'paused' || r.status === 'queued'
-        if (taskFilter === 'done') return r.status === 'completed'
-        if (taskFilter === 'stopped') return r.status === 'stopped' || r.status === 'failed'
-        return true
-      })
-
-      const taskCenterView = h(
-        'div',
-        { className: 'dsh-vw-scroll', style: { flex: 1, overflowY: 'auto', padding: '22px 28px' } },
-        h(
-          'div',
-          { style: { maxWidth: '1180px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' } },
-          // Top Global Controls Header
-          h(
-            'div',
-            { style: { ...panelStyle, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' } },
-            h(
-              'div',
-              null,
-              h(
-                'h2',
-                { style: { fontSize: '19px', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' } },
-                h(Icon, { name: 'activity', size: 18, color: T.accentBlue }),
-                'AI Agent 实时任务中心 (Task Center)',
-              ),
-              h('p', { style: { margin: '4px 0 0', fontSize: '12px', color: T.textSecondary } }, '监控素材剪辑、文案导演、IndexTTS-2.5 配音修音、透明通道数字人与 MP4 渲染子进程，随时暂停、急停或单步重试。'),
-            ),
-            h(
-              'div',
-              { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-              h(
-                'button',
-                { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => handleStartOneClickPipeline(), style: goldBtnStyle },
-                h(Icon, { name: 'zap', size: 14 }),
-                '新建一键出片任务',
-              ),
-              h(
-                'button',
-                { className: 'dsh-vw-btn', disabled: !hasLiveTask, onClick: () => handleTaskControl('pause-all'), style: { ...ghostBtnStyle, color: T.accentGold, borderColor: T.accentGoldBorder } },
-                '⏸ 全局暂停',
-              ),
-              h(
-                'button',
-                { className: 'dsh-vw-btn', disabled: !hasLiveTask, onClick: () => handleTaskControl('stop-all'), style: { ...ghostBtnStyle, color: T.accentRed, borderColor: 'rgba(244,63,94,0.45)' } },
-                '■ 全局急停 (强杀子进程)',
-              ),
-              h(
-                'button',
-                { className: 'dsh-vw-btn', onClick: () => fetchTaskRuns(), style: ghostBtnStyle },
-                h(Icon, { name: 'refresh', size: 13 }),
-                '刷新',
-              ),
-            ),
-          ),
-
-          // Filter Strip
-          h(
-            'div',
-            { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-            [
-              { id: 'all', label: `全部流水线 (${taskRuns.length})` },
-              { id: 'active', label: `运行/暂停中 (${taskRuns.filter((r) => ['running', 'paused', 'queued'].includes(r.status)).length})` },
-              { id: 'done', label: `已交付 (${taskRuns.filter((r) => r.status === 'completed').length})` },
-              { id: 'stopped', label: `已停止/异常 (${taskRuns.filter((r) => ['stopped', 'failed'].includes(r.status)).length})` },
-            ].map((tb) => {
-              const on = taskFilter === tb.id
-              return h(
-                'button',
-                {
-                  key: tb.id,
-                  className: 'dsh-vw-btn',
-                  onClick: () => setTaskFilter(tb.id),
-                  style: {
-                    ...ghostBtnStyle,
-                    background: on ? T.accentBlueBg : T.bgPanel,
-                    borderColor: on ? T.accentBlueBorder : T.borderSubtle,
-                    color: on ? T.accentBlue : T.textSecondary,
-                  },
-                },
-                tb.label,
-              )
-            }),
-          ),
-
-          // Main Split View: Run History List + Active Subtask Console
-          h(
-            'div',
-            { style: { display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr)', gap: '16px', alignItems: 'start' } },
-            // Left: Run List
-            h(
-              'div',
-              { className: 'dsh-vw-scroll', style: { ...panelStyle, padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '640px', overflowY: 'auto' } },
-              filteredTaskRuns.length === 0
-                ? h('div', { style: { padding: '24px 12px', textAlign: 'center', fontSize: '12px', color: T.textMuted } }, '暂无匹配的流水线任务记录。点击右上角「新建一键出片任务」即可触发 4 大 AI Agent 协同执行。')
-                : filteredTaskRuns.map((run) => {
-                    const isSel = currentTaskRun?.id === run.id
-                    const st = taskStatusStyle(run.status)
-                    return h(
-                      'div',
-                      {
-                        key: run.id,
-                        onClick: () => setSelectedRunId(run.id),
-                        style: {
-                          padding: '10px 12px',
-                          borderRadius: '10px',
-                          cursor: 'pointer',
-                          background: isSel ? T.accentBlueBg : T.bgElevated,
-                          border: `1px solid ${isSel ? T.accentBlueBorder : T.borderSubtle}`,
-                        },
-                      },
-                      h(
-                        'div',
-                        { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' } },
-                        h('span', { style: { fontSize: '12px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, run.title || run.id),
-                        h('span', { style: { fontSize: '10px', padding: '2px 7px', borderRadius: '999px', background: st.bg, color: st.color, fontWeight: 700, flexShrink: 0 } }, st.label),
-                      ),
-                      h(
-                        'div',
-                        { style: { marginTop: '6px', height: '4px', borderRadius: '99px', background: 'rgba(128,128,128,0.2)', overflow: 'hidden' } },
-                        h('div', { style: { width: `${Math.round(Number(run.progress || 0))}%`, height: '100%', background: st.color } }),
-                      ),
-                      h(
-                        'div',
-                        { style: { display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', color: T.textMuted, marginTop: '5px', fontFamily: 'Consolas, monospace' } },
-                        h('span', null, `${Math.round(Number(run.progress || 0))}% · ${Math.round(Number(run.elapsedMs || 0) / 1000)}s`),
-                        h('span', null, run.createdAt ? new Date(run.createdAt).toLocaleTimeString('zh-CN', { hour12: false }) : ''),
-                      ),
-                    )
-                  }),
-            ),
-
-            // Right: Selected Run Control Detail
-            currentTaskRun
-              ? h(
-                  'div',
-                  { style: { ...panelStyle, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '16px' } },
-                  // Single Run Header + Control Buttons
-                  h(
-                    'div',
-                    { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', paddingBottom: '12px', borderBottom: `1px solid ${T.borderSubtle}` } },
-                    h(
-                      'div',
-                      null,
-                      h('div', { style: { fontSize: '15px', fontWeight: 800 } }, currentTaskRun.title || currentTaskRun.id),
-                      h(
-                        'div',
-                        { style: { fontSize: '11.5px', color: T.textMuted, marginTop: '3px', fontFamily: 'Consolas, monospace' } },
-                        `ID: ${currentTaskRun.id} · 进度 ${Math.round(Number(currentTaskRun.progress || 0))}% · 已耗时 ${Math.round(Number(currentTaskRun.elapsedMs || 0) / 1000)}s · 模式 ${currentTaskRun.mode || 'ai-coded'}`,
-                      ),
-                    ),
-                    h(
-                      'div',
-                      { style: { display: 'flex', gap: '7px', flexWrap: 'wrap' } },
-                      currentTaskRun.status === 'paused' || currentTaskRun.status === 'queued'
-                        ? h('button', { className: 'dsh-vw-btn', onClick: () => handleTaskControl('resume', currentTaskRun.id), style: blueBtnStyle }, '▶ 开始 / 恢复')
-                        : null,
-                      currentTaskRun.status === 'running'
-                        ? h('button', { className: 'dsh-vw-btn', onClick: () => handleTaskControl('pause', currentTaskRun.id), style: { ...ghostBtnStyle, color: T.accentGold, borderColor: T.accentGoldBorder } }, '⏸ 暂停')
-                        : null,
-                      currentTaskRun.status === 'running' || currentTaskRun.status === 'paused'
-                        ? h('button', { className: 'dsh-vw-btn', onClick: () => handleTaskControl('stop', currentTaskRun.id), style: { ...ghostBtnStyle, color: T.accentRed, borderColor: 'rgba(244,63,94,0.45)' } }, '■ 停止子进程')
-                        : null,
-                      ['stopped', 'failed', 'completed'].includes(currentTaskRun.status)
-                        ? h('button', { className: 'dsh-vw-btn', onClick: () => handleTaskControl('retry', currentTaskRun.id), style: { ...goldBtnStyle, padding: '7px 14px', fontSize: '12px' } }, '↻ 重新/继续执行')
-                        : null,
-                      currentTaskRun.status === 'completed'
-                        ? h('button', { className: 'dsh-vw-btn', onClick: () => setActiveStep(3), style: ghostBtnStyle }, '去监视与精修 →')
-                        : null,
-                    ),
-                  ),
-                  currentTaskRun.error
-                    ? h(
-                        'div',
-                        { style: { padding: '9px 12px', borderRadius: '8px', background: T.accentRedBg, color: T.accentRed, fontSize: '12px' } },
-                        `⚠ ${currentTaskRun.error}`,
-                      )
-                    : null,
-
-                  // 4-Agent Team Status Mini Cards
-                  h(
-                    'div',
-                    { style: { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px' } },
-                    (currentTaskRun.agents || []).map((ag) => {
-                      const st = taskStatusStyle(ag.status)
-                      return h(
-                        'div',
-                        { key: ag.id, style: { padding: '10px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${ag.status === 'running' ? T.accentBlueBorder : T.borderSubtle}` } },
-                        h(
-                          'div',
-                          { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11.5px', fontWeight: 800 } },
-                          h('span', null, ag.name),
-                          h('span', { style: { fontSize: '10px', color: st.color } }, st.label),
-                        ),
-                        h('div', { style: { fontSize: '10.5px', color: T.textMuted, marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ag.message || ag.subtitle),
-                      )
-                    }),
-                  ),
-
-                  // Subtask Rows Table
-                  h(
-                    'div',
-                    { style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
-                    h('div', { style: { fontSize: '12px', fontWeight: 800, color: T.textSecondary } }, '子任务实时清单'),
-                    (currentTaskRun.tasks || []).map((t) => {
-                      const st = taskStatusStyle(t.status)
-                      return h(
-                        'div',
-                        {
-                          key: t.id,
-                          style: {
-                            padding: '10px 12px',
-                            borderRadius: '10px',
-                            background: T.bgElevated,
-                            border: `1px solid ${t.status === 'running' ? T.accentBlueBorder : T.borderSubtle}`,
-                            display: 'grid',
-                            gridTemplateColumns: 'minmax(160px, 1.2fr) 130px 70px minmax(0, 1.4fr) auto',
-                            gap: '10px',
-                            alignItems: 'center',
-                          },
-                        },
-                        h(
-                          'div',
-                          null,
-                          h('div', { style: { fontSize: '12.5px', fontWeight: 700 } }, t.name),
-                          h('div', { style: { fontSize: '10.5px', color: T.textMuted, fontFamily: 'Consolas, monospace' } }, `${t.stage} · ${t.kind}`),
-                        ),
-                        h(
-                          'div',
-                          { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
-                          h(
-                            'div',
-                            { style: { flex: 1, height: '5px', borderRadius: '99px', background: 'rgba(128,128,128,0.22)', overflow: 'hidden' } },
-                            h('div', { style: { width: `${Math.round(Number(t.progress || 0))}%`, height: '100%', background: st.color } }),
-                          ),
-                          h('span', { style: { fontSize: '10.5px', fontFamily: 'Consolas, monospace', width: '32px', textAlign: 'right' } }, `${Math.round(Number(t.progress || 0))}%`),
-                        ),
-                        h('span', { style: { fontSize: '11px', fontFamily: 'Consolas, monospace', color: T.textMuted } }, `${Math.round(Number(t.elapsedMs || 0) / 1000)}s`),
-                        h(
-                          'div',
-                          { style: { display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 } },
-                          h('span', { style: { fontSize: '10px', padding: '2px 7px', borderRadius: '999px', background: st.bg, color: st.color, fontWeight: 700, flexShrink: 0 } }, st.label),
-                          h('span', { style: { fontSize: '11px', color: T.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t.error || t.message),
-                        ),
-                        h(
-                          'button',
-                          {
-                            className: 'dsh-vw-btn',
-                            disabled: currentTaskRun.status === 'running',
-                            onClick: () => handleTaskControl('retry', currentTaskRun.id, t.id),
-                            style: { ...ghostBtnStyle, padding: '4px 9px', fontSize: '10.5px' },
-                          },
-                          '从此重试',
-                        ),
-                      )
-                    }),
-                  ),
-
-                  // Live Log Console
-                  h(
-                    'div',
-                    null,
-                    h('div', { style: { fontSize: '12px', fontWeight: 800, color: T.textSecondary, marginBottom: '6px' } }, '协同实时日志流'),
-                    h(
-                      'div',
-                      {
-                        className: 'dsh-vw-scroll',
-                        style: {
-                          maxHeight: '190px',
-                          overflowY: 'auto',
-                          padding: '10px 12px',
-                          borderRadius: '10px',
-                          background: '#05070B',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          fontFamily: 'Consolas, monospace',
-                          fontSize: '11px',
-                          lineHeight: 1.6,
-                          color: '#CBD5E1',
-                        },
-                      },
-                      (currentTaskRun.logs || []).slice(-45).map((lg, idx) =>
-                        h(
-                          'div',
-                          {
-                            key: idx,
-                            style: {
-                              color: lg.level === 'error' ? '#FB7185' : lg.level === 'warn' ? '#FBBF24' : '#CBD5E1',
-                            },
-                          },
-                          `[${lg.ts ? new Date(lg.ts).toLocaleTimeString('zh-CN', { hour12: false }) : '--:--:--'}] [${lg.stage || 'sys'}] ${lg.message}`,
-                        ),
-                      ),
-                    ),
-                  ),
-                )
-              : h(
-                  'div',
-                  { style: { ...panelStyle, padding: '40px', textAlign: 'center', color: T.textMuted, fontSize: '13px' } },
-                  '尚未选定或启动流水线任务。请前往「01 素材与拍摄」或点击右上角「新建一键出片任务」启动 4 大 AI Agent 协同生产。',
-                ),
-          ),
-        ),
-      )
-
-      // -----------------------------------------------------------------------
-      // MODAL: BACKGROUND SKINS & FROSTED GLASS TUNER
-      // -----------------------------------------------------------------------
+      // =======================================================================
+      // 13. ROOT WORKBENCH SHELL WITH SKIN WALLPAPER BLENDING & BEGINNER TOASTS
+      // =======================================================================
       const activeSkinPreset = SKIN_PRESETS.find((s) => s.id === skinConfig.id) || SKIN_PRESETS[0]
+      const skinBackdropStyle =
+        skinConfig.id === 'custom-image' && skinConfig.customUrl
+          ? {
+              backgroundImage: `url("${skinConfig.customUrl}")`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              filter: `blur(${Number(skinConfig.blurPx) || 0}px)`,
+              opacity: Number(skinConfig.opacity) || 0.78,
+            }
+          : {
+              background: resolvedDark ? activeSkinPreset.darkBg : activeSkinPreset.lightBg,
+              opacity: 1,
+            }
 
-      const skinModal = showSkinModal
-        ? h(
-            'div',
-            {
-              onClick: () => setShowSkinModal(false),
-              style: {
-                position: 'fixed',
-                inset: 0,
-                background: 'rgba(0,0,0,0.68)',
-                backdropFilter: 'blur(6px)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 2500,
-                padding: '20px',
-              },
-            },
-            h(
-              'div',
-              {
-                onClick: (ev) => ev.stopPropagation(),
-                style: { ...panelStyle, width: '580px', maxWidth: '100%', padding: '22px', display: 'flex', flexDirection: 'column', gap: '16px' },
-              },
-              h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 800 } }, '🎨 AI 作战大屏背景皮肤与磨砂质感设置'),
-                h('button', { onClick: () => setShowSkinModal(false), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer' } }, h(Icon, { name: 'x', size: 16 })),
-              ),
-              h(
-                'div',
-                { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '10px' } },
-                SKIN_PRESETS.map((sk) => {
-                  const on = skinConfig.id === sk.id
-                  return h(
-                    'div',
-                    {
-                      key: sk.id,
-                      onClick: () => setSkinConfig((prev) => ({ ...prev, id: sk.id })),
-                      style: {
-                        borderRadius: '10px',
-                        overflow: 'hidden',
-                        cursor: 'pointer',
-                        border: `2px solid ${on ? T.accentBlue : T.borderSubtle}`,
-                        background: T.bgElevated,
-                      },
-                    },
-                    h('div', { style: { height: '64px', background: resolvedDark ? sk.css : sk.lightCss } }),
-                    h(
-                      'div',
-                      { style: { padding: '7px 9px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                      h('span', { style: { fontSize: '11.5px', fontWeight: 700 } }, sk.name),
-                      h('span', { style: { fontSize: '9.5px', color: on ? T.accentBlue : T.textMuted } }, on ? '✓ 当前' : sk.badge),
-                    ),
-                  )
-                }),
-              ),
-              h(
-                'div',
-                { style: { display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', padding: '10px 12px', borderRadius: '10px', background: T.bgElevated, border: `1px solid ${T.borderSubtle}` } },
-                h('span', { style: { fontSize: '12px', fontWeight: 700 } }, skinConfig.customUrl ? '已使用自定义壁纸背景图片' : '自定义导入个人背景壁纸图 (.jpg/.png/.webp)'),
-                h(
-                  'div',
-                  { style: { display: 'flex', gap: '7px' } },
-                  h(
-                    'button',
-                    { className: 'dsh-vw-btn', disabled: Boolean(busyLabel), onClick: () => skinFileInputRef.current?.click(), style: blueBtnStyle },
-                    h(Icon, { name: 'upload', size: 13 }),
-                    '上传自定义图片皮肤',
-                  ),
-                  skinConfig.customUrl
-                    ? h(
-                        'button',
-                        { className: 'dsh-vw-btn', onClick: () => setSkinConfig((prev) => ({ ...prev, id: 'obsidian-nebula', customUrl: '' })), style: ghostBtnStyle },
-                        '恢复预设',
-                      )
-                    : null,
-                ),
-              ),
-              h(
-                'div',
-                { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' } },
-                h(
-                  'label',
-                  { style: { fontSize: '12px', fontWeight: 600 } },
-                  `背景虚化模糊度: ${skinConfig.blurPx}px`,
-                  h('input', {
-                    type: 'range',
-                    min: 0,
-                    max: 36,
-                    step: 1,
-                    value: skinConfig.blurPx,
-                    onChange: (ev) => setSkinConfig((prev) => ({ ...prev, blurPx: Number(ev.target.value) })),
-                    style: { width: '100%', marginTop: '6px' },
-                  }),
-                ),
-                h(
-                  'label',
-                  { style: { fontSize: '12px', fontWeight: 600 } },
-                  `背景图显色强度: ${Math.round(skinConfig.opacity * 100)}%`,
-                  h('input', {
-                    type: 'range',
-                    min: 0.25,
-                    max: 1.0,
-                    step: 0.05,
-                    value: skinConfig.opacity,
-                    onChange: (ev) => setSkinConfig((prev) => ({ ...prev, opacity: Number(ev.target.value) })),
-                    style: { width: '100%', marginTop: '6px' },
-                  }),
-                ),
-              ),
-              h(
-                'div',
-                { style: { display: 'flex', justifyContent: 'flex-end' } },
-                h('button', { className: 'dsh-vw-btn', onClick: () => setShowSkinModal(false), style: goldBtnStyle }, '完成应用'),
-              ),
-            ),
-          )
-        : null
+      const rootLayout = {
+        ...(isMainSlot ? { width: '100%', height: '100%' } : { position: 'fixed', inset: 0, zIndex: 2000 }),
+        display: 'flex',
+        flexDirection: 'column',
+        background: T.bgRoot,
+        color: T.textPrimary,
+        fontFamily: 'Microsoft YaHei, PingFang SC, -apple-system, BlinkMacSystemFont, sans-serif',
+        fontSize: '14px',
+        overflow: 'hidden',
+      }
+
+      const parsedToastError = toast?.type === 'error' ? translateBeginnerError(toast.message) : null
 
       return h(
         'div',
-        {
-          className: 'dsh-vw-root',
-          'data-dsh-main-workbench': 'true',
-          'data-theme-mode': resolvedDark ? 'dark' : 'light',
-          style: {
-            position: isMainSlot ? 'relative' : 'fixed',
-            inset: isMainSlot ? undefined : 0,
-            width: '100%',
-            height: isMainSlot ? '100%' : '100vh',
-            zIndex: isMainSlot ? 1 : 2100,
-            display: 'flex',
-            background: T.bgApp,
-            color: T.textPrimary,
-            fontFamily: 'Microsoft YaHei, PingFang SC, Segoe UI, sans-serif',
-            overflow: 'hidden',
-          },
-        },
-        // Fixed Switchable Wallpaper Skin Layer behind frosted glass panels + Live Animated Telemetry Canvas
-        h('div', {
-          'aria-hidden': 'true',
-          style: {
-            position: 'absolute',
-            inset: '-20px',
-            zIndex: 0,
-            pointerEvents: 'none',
-            background:
-              skinConfig.id === 'custom-image' && skinConfig.customUrl
-                ? `url("${skinConfig.customUrl}") center / cover no-repeat`
-                : resolvedDark
-                  ? activeSkinPreset.css
-                  : activeSkinPreset.lightCss,
-            opacity: skinConfig.opacity,
-            filter: skinConfig.blurPx > 0 ? `blur(${skinConfig.blurPx}px)` : 'none',
-          },
-        }),
-        h(WarRoomCanvasBackdrop, { active: hasLiveTask || Boolean(busyLabel), dark: resolvedDark }),
+        { className: 'dsh-vw-root', style: rootLayout },
         hiddenInputs,
+        // Atmospheric Cinema Backdrop
+        h('div', { 'aria-hidden': 'true', style: { position: 'absolute', inset: '-18px', zIndex: 0, pointerEvents: 'none', transition: 'opacity 0.35s ease', ...skinBackdropStyle } }),
         h(
           'div',
-          { style: { position: 'relative', zIndex: 1, display: 'flex', width: '100%', height: '100%', overflow: 'hidden' } },
-          showProjectDrawer
-            ? h(
-                'div',
-                {
-                  onClick: () => setShowProjectDrawer(false),
-                  style: {
-                    position: 'fixed',
-                    inset: 0,
-                    zIndex: 60,
-                    background: 'rgba(3, 6, 12, 0.55)',
-                    backdropFilter: 'blur(4px)',
-                    display: 'flex',
-                  },
-                },
-                h(
-                  'div',
-                  {
-                    onClick: (ev) => ev.stopPropagation(),
-                    style: { height: '100%', boxShadow: '18px 0 48px rgba(0, 0, 0, 0.55)' },
-                  },
-                  sidebar,
-                ),
-              )
-            : null,
-          h(
-            'div',
-            { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' } },
-            topBar,
-            statusBanner,
-            activeStep === 0
-              ? warRoomView
-              : activeStep === 1
-                ? step1View
-                : activeStep === 2
-                  ? step2View
-                  : activeStep === 3
-                    ? step3View
-                    : activeStep === 4
-                      ? step4View
-                      : taskCenterView,
-          ),
+          { style: { position: 'relative', zIndex: 2, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' } },
+          topBar,
+          activeNav === 'warroom' ? warRoomView : activeNav === 'tasks' ? taskCenterView : studioWorkbenchView,
         ),
+        // Busy Overlay Progress Pill
+        busyLabel
+          ? h(
+              'div',
+              { style: { position: 'fixed', bottom: '26px', left: '50%', transform: 'translateX(-50%)', zIndex: 3500, padding: '13px 22px', borderRadius: '999px', background: T.bgPanelSolid, border: `1.5px solid ${T.accentBlueBorder}`, boxShadow: T.shadowPopover, display: 'flex', alignItems: 'center', gap: '12px', minWidth: '300px', maxWidth: '88vw' } },
+              h('span', { className: 'dsh-vw-rec-dot', style: { width: '10px', height: '10px', borderRadius: '50%', background: T.accentBlue, flexShrink: 0 } }),
+              h('span', { style: { fontSize: '13.5px', fontWeight: 700, flex: 1 } }, busyLabel),
+              busyProgress > 0 ? h('span', { style: { fontSize: '13px', fontFamily: 'Consolas, monospace', color: T.accentBlue, fontWeight: 800 } }, `${Math.round(busyProgress)}%`) : null,
+            )
+          : null,
+        // Toast / Plain-Chinese Beginner Error Banner
+        toast
+          ? h(
+              'div',
+              {
+                className: 'dsh-vw-popover-in',
+                style: {
+                  position: 'fixed',
+                  bottom: '26px',
+                  right: '26px',
+                  zIndex: 3600,
+                  maxWidth: '460px',
+                  padding: '13px 18px',
+                  borderRadius: '13px',
+                  background: T.bgPanelSolid,
+                  border: `1.5px solid ${toast.type === 'error' ? T.accentRed : toast.type === 'success' ? T.accentGreen : T.accentBlue}`,
+                  boxShadow: T.shadowPopover,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                },
+              },
+              h(
+                'div',
+                { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' } },
+                h('span', { style: { fontSize: '13.5px', fontWeight: 700, color: toast.type === 'error' ? T.accentRed : toast.type === 'success' ? T.accentGreen : T.textPrimary, lineHeight: 1.5 } }, parsedToastError ? parsedToastError.title : toast.message),
+                h('button', { type: 'button', onClick: () => setToast(null), style: { background: 'transparent', border: 'none', color: T.textMuted, cursor: 'pointer', flexShrink: 0 } }, h(Icon, { name: 'x', size: 15 })),
+              ),
+              parsedToastError?.action || parsedToastError?.detail
+                ? h(
+                    'div',
+                    { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
+                    parsedToastError.action === 'open-llm'
+                      ? h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => { setToast(null); setShowLlmModal(true) }, style: { ...ghostBtnStyle, padding: '5px 11px', fontSize: '12.5px', color: T.accentGold, borderColor: T.accentGoldBorder } }, '去检查 AI 模型配置')
+                      : null,
+                    parsedToastError.action === 'load-starter'
+                      ? h('button', { type: 'button', className: 'dsh-vw-btn', onClick: () => { setToast(null); handleLoadStarterPack() }, style: { ...ghostBtnStyle, padding: '5px 11px', fontSize: '12.5px', color: T.accentBlue, borderColor: T.accentBlueBorder } }, '一键加载演示素材包')
+                      : null,
+                    parsedToastError.detail
+                      ? h('button', { type: 'button', onClick: () => setShowRawError((v) => !v), style: { background: 'transparent', border: 'none', color: T.textMuted, fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' } }, showRawError ? '收起技术细节' : '查看技术细节')
+                      : null,
+                  )
+                : null,
+              showRawError && parsedToastError?.detail
+                ? h('pre', { style: { margin: 0, padding: '8px', borderRadius: '8px', background: T.bgInput, fontSize: '12px', whiteSpace: 'pre-wrap', color: T.textMuted, maxHeight: '110px', overflowY: 'auto' } }, parsedToastError.detail)
+                : null,
+            )
+          : null,
+        projectDrawer,
         newProjectModal,
         llmModal,
-        codeDrawer,
         voiceModal,
-        vendorModal,
         skinModal,
+        vendorModal,
+        codeDrawer,
       )
     }
 
+    // DSH Tool Call Inline Progress / Preview Card
+    function VideoToolCallCard(props) {
+      const name = props?.toolName || props?.name || props?.toolCall?.name || '视频工坊工具'
+      const status = props?.status || props?.toolCall?.status || 'completed'
+      const rawOut = props?.output || props?.result || props?.toolCall?.output
+      let summary = ''
+      try {
+        const parsed = typeof rawOut === 'string' ? JSON.parse(rawOut) : rawOut
+        if (parsed && typeof parsed === 'object') {
+          summary = parsed.message || parsed.mp4Path || parsed.relPath || parsed.projectDir || ''
+        }
+      } catch {
+        if (typeof rawOut === 'string') summary = rawOut.slice(0, 140)
+      }
+      return h(
+        'div',
+        {
+          style: {
+            padding: '12px 15px',
+            borderRadius: '12px',
+            background: 'rgba(13, 18, 30, 0.85)',
+            border: '1px solid rgba(34, 211, 238, 0.35)',
+            color: '#F1F5F9',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            fontFamily: '"Noto Sans SC", system-ui, sans-serif',
+          },
+        },
+        h(
+          'div',
+          { style: { minWidth: 0 } },
+          h('div', { style: { fontSize: '13.5px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '7px' } }, h(Icon, { name: 'film', size: 15, color: '#22D3EE' }), name),
+          summary ? h('div', { style: { fontSize: '12.5px', color: '#94A3B8', marginTop: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, summary) : null,
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 } },
+          h('span', { style: { fontSize: '12px', color: status === 'error' ? '#FB7185' : '#34D399', fontWeight: 700 } }, status === 'running' ? '执行中' : status === 'error' ? '异常' : '完成'),
+          h(
+            'button',
+            {
+              type: 'button',
+              onClick: () => window.dispatchEvent(new CustomEvent('dsh-video:switch-mode', { detail: { mode: 'video' } })),
+              style: { padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(245,185,66,0.45)', background: 'rgba(245,185,66,0.14)', color: '#F5B942', fontSize: '12.5px', fontWeight: 700, cursor: 'pointer' },
+            },
+            '进工坊查看',
+          ),
+        ),
+      )
+    }
+
+    function MainVideoWorkbenchPanel() {
+      return h(PanelBoundary, null, h(VideoWorkbenchApp, { isMainSlot: true }))
+    }
+
+    function ToolViewCard(props) {
+      return h(PanelBoundary, null, h(VideoToolCallCard, props))
+    }
+
     return {
-      name: 'dsh-web-video-workbench-client',
-      inject: ['slots', 'connection'],
+      name: '@dsh-video/web-video-workbench',
+      inject: ['slots'],
       apply(ctx) {
-        ctx.slots.register('shell.overlay', {
-          id: 'video-workbench-topbar-capsule',
-          order: 80,
-          render: () => h(PanelBoundary, null, h(VideoWorkbenchApp, { ctx, isMainSlot: false })),
-        })
-
-        ctx.slots.register('sidebar.panellist', {
-          key: 'video-workbench',
-          label: '电影视频工坊',
-          order: 35,
-          render: () => h(SidebarVideoIcon),
-        })
-
-        ctx.slots.register('main', {
-          key: 'video-workbench',
-          render: () => h(PanelBoundary, null, h(VideoWorkbenchApp, { ctx, isMainSlot: true })),
-        })
-
-        ctx.slots.register('tool.call.toolview', {
-          id: 'video-workbench-toolview',
-          order: 25,
-          render: (props) => h(PanelBoundary, null, h(VideoToolCallCard, props)),
-        })
+        if (typeof ctx?.slots?.inject === 'function') {
+          ctx.slots.inject('main', () =>
+            ctx.slots.register(
+              { name: 'main', key: 'video-workbench', label: 'AI 视频工坊' },
+              MainVideoWorkbenchPanel,
+            ),
+          )
+          ctx.slots.inject('sidebar.panellist', () =>
+            ctx.slots.register(
+              { name: 'sidebar.panellist', id: 'video-workbench', label: 'AI 视频工坊', order: 65 },
+              SidebarVideoIcon,
+            ),
+          )
+          const videoToolKeys = [
+            'produce_video',
+            'plan_video_from_assets',
+            'ai_create_video',
+            'ai_refine_scene',
+            'run_agent_pipeline',
+            'video_render',
+            'generate_avatar',
+            'generate_speech',
+          ]
+          for (const toolKey of videoToolKeys) {
+            ctx.slots.inject('tool.call.toolview', () =>
+              ctx.slots.register(
+                { name: 'tool.call.toolview', key: toolKey },
+                (props) => h(ToolViewCard, { toolName: toolKey, ...(props || {}) }),
+              ),
+            )
+          }
+        } else {
+          ctx.slots.register('sidebar.panellist', {
+            id: 'video-workbench',
+            label: 'AI 视频工坊',
+            order: 65,
+            render: () => h(SidebarVideoIcon),
+          })
+          ctx.slots.register('main', {
+            key: 'video-workbench',
+            render: () => h(MainVideoWorkbenchPanel),
+          })
+          ctx.slots.register('tool.call.toolview', {
+            id: 'video-workbench-toolview',
+            order: 25,
+            render: (props) => h(ToolViewCard, props),
+          })
+        }
       },
     }
   },

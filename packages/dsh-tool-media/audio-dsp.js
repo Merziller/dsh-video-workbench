@@ -510,6 +510,37 @@ export function synthSfxStereo(type = 'whoosh', opts = {}) {
     return { L, R }
   }
 
+  if (kind === 'flip' || kind === 'page_turn') {
+    const dur = 0.24
+    const n = Math.floor(dur * DSP_SR)
+    const noise = new Float32Array(n)
+    for (let i = 0; i < n; i++) noise[i] = rand() * 2 - 1
+    const bp = biquadFilter(noise, 'bp', 2200, 1.35)
+    const L = new Float32Array(n)
+    const R = new Float32Array(n)
+    for (let i = 0; i < n; i++) {
+      const t = i / DSP_SR
+      const env = Math.sin(clamp(t / dur) * Math.PI) * Math.exp(-t * 5.2)
+      const s = bp[i] * env * 0.42 + (i < 480 ? Math.sin(2 * Math.PI * 1450 * t) * Math.exp(-t * 95) * 0.16 : 0)
+      L[i] = s * (1 - (i / n) * 0.18)
+      R[i] = s * (0.82 + (i / n) * 0.18)
+    }
+    return { L, R }
+  }
+
+  if (kind === 'shimmer_swell') {
+    const dur = Math.min(2.2, Math.max(0.7, Number(opts.d) || 1.25))
+    const n = Math.floor(dur * DSP_SR)
+    const L = new Float32Array(n)
+    const R = new Float32Array(n)
+    const notes = [72, 79, 84, 88, 91]
+    notes.forEach((m, k) => {
+      const g = synthGlock(m, 0.9, 0.16)
+      addMonoPanned(L, R, g, k * 0.065, 0.9, ((k % 5) - 2) * 0.22)
+    })
+    return { L, R }
+  }
+
   if (kind === 'sparkle' || kind === 'chime' || kind === 'shine' || kind === 'ding' || kind === 'achieve' || kind === 'notif') {
     const notes =
       kind === 'shine'
@@ -530,28 +561,39 @@ export function synthSfxStereo(type = 'whoosh', opts = {}) {
     return { L, R }
   }
 
-  if (kind === 'tick' || kind === 'counter' || kind === 'typing' || kind === 'key_thock' || kind === 'click') {
-    const dur = kind === 'counter' || kind === 'typing' ? opts.d || 0.75 : 0.08
+  if (kind === 'tick' || kind === 'counter' || kind === 'tick_burst' || kind === 'typing' || kind === 'key_thock' || kind === 'click' || kind === 'lock' || kind === 'pop_soft') {
+    const isBurst = kind === 'counter' || kind === 'typing' || kind === 'tick_burst'
+    const dur = isBurst ? Math.min(2.8, Math.max(0.25, Number(opts.d) || 0.85)) : 0.11
     const n = Math.floor(dur * DSP_SR)
     const L = new Float32Array(n)
     const R = new Float32Array(n)
-    if (kind === 'counter' || kind === 'typing') {
-      const step = kind === 'counter' ? 0.055 : 0.068
+    if (isBurst) {
+      const step = kind === 'tick_burst' ? 0.08 : kind === 'counter' ? 0.062 : 0.068
       let k = 0
       for (let tt = 0; tt < dur - 0.03; tt += step) {
-        const micro = new Float32Array(Math.floor(0.03 * DSP_SR))
+        const micro = new Float32Array(Math.floor(0.032 * DSP_SR))
         for (let i = 0; i < micro.length; i++) {
           const t = i / DSP_SR
-          const f = kind === 'counter' ? 1750 + 480 * (k % 3) : 260 + 90 * (k % 2)
-          micro[i] = (Math.sin(2 * Math.PI * f * t) + (rand() * 2 - 1) * 0.35) * Math.exp(-t * 210) * 0.26
+          const f = kind === 'typing' ? 260 + 90 * (k % 2) : 1480 + 260 * (k % 4)
+          micro[i] = (Math.sin(2 * Math.PI * f * t) + (rand() * 2 - 1) * 0.24) * Math.exp(-t * 190) * 0.23
         }
-        addMonoPanned(L, R, micro, tt, 1.0, ((k % 5) - 2) * 0.15)
+        addMonoPanned(L, R, micro, tt, 1.0, ((k % 5) - 2) * 0.14)
         k++
+      }
+    } else if (kind === 'lock' || kind === 'pop_soft') {
+      let ph = 0
+      for (let i = 0; i < n; i++) {
+        const t = i / DSP_SR
+        const f = kind === 'lock' ? 920 * (1 + 0.65 * Math.exp(-t * 85)) : 520 * (1 + 1.1 * Math.exp(-t * 68))
+        ph += (2 * Math.PI * f) / DSP_SR
+        const s = (Math.sin(ph) * 0.72 + Math.sin(ph * 2) * 0.18) * Math.exp(-t * 42) * 0.44
+        L[i] = s
+        R[i] = s
       }
     } else {
       for (let i = 0; i < n; i++) {
         const t = i / DSP_SR
-        const s = (Math.sin(2 * Math.PI * (kind === 'click' ? 2800 : 1900) * t) + (rand() * 2 - 1) * 0.5) * Math.exp(-t * 230) * 0.42
+        const s = (Math.sin(2 * Math.PI * (kind === 'click' ? 2800 : 1900) * t) + (rand() * 2 - 1) * 0.45) * Math.exp(-t * 230) * 0.38
         L[i] = s
         R[i] = s
       }
@@ -621,6 +663,13 @@ const PROGRESSIONS = {
     [40, [64, 67, 71, 74]],
     [45, [64, 69, 72, 76]],
   ],
+  emerald: [
+    // Dm9 -> G13 -> Cmaj9 -> A7sus4 (modern sleek creative studio groove)
+    [38, [62, 65, 69, 72]],
+    [43, [62, 65, 71, 74]],
+    [36, [64, 67, 71, 74]],
+    [45, [64, 69, 72, 76]],
+  ],
 }
 
 export function renderBgmWavBuffer({ durationSec = 20, mood = 'tech', bpm, audioSpec = null }) {
@@ -628,7 +677,7 @@ export function renderBgmWavBuffer({ durationSec = 20, mood = 'tech', bpm, audio
   const specMood = String(audioSpec?.mood || mood || 'tech').toLowerCase()
   const resolvedBpm =
     Number(audioSpec?.bpm || bpm) ||
-    (specMood === 'energetic' ? 124 : specMood === 'tech' ? 118 : specMood === 'cinematic' ? 104 : 96)
+    (specMood === 'energetic' ? 124 : specMood === 'tech' ? 118 : specMood === 'emerald' ? 100 : specMood === 'cinematic' ? 104 : 96)
   const B = 60 / resolvedBpm
   const n = Math.floor(dur * DSP_SR)
   const L = new Float32Array(n)
@@ -648,8 +697,10 @@ export function renderBgmWavBuffer({ durationSec = 20, mood = 'tech', bpm, audio
   const drumDensity = Number.isFinite(Number(audioSpec?.drumDensity))
     ? clamp(Number(audioSpec.drumDensity), 0, 1)
     : specMood === 'tech' || specMood === 'energetic'
-      ? 0.88
-      : 0.48
+      ? 0.85
+      : specMood === 'emerald'
+        ? 0.68
+        : 0.48
   const leadStyle = String(
     audioSpec?.leadStyle || (specMood === 'tech' || specMood === 'energetic' ? 'pluck' : 'epiano'),
   ).toLowerCase()
@@ -661,16 +712,28 @@ export function renderBgmWavBuffer({ durationSec = 20, mood = 'tech', bpm, audio
   for (let bar = 0; bar < totalBars; bar++) {
     const tb = bar * barDur
     const [root, ch] = prog[bar % prog.length]
-    const isEnergetic = drumDensity >= 0.6
-    const lvl = bar === 0 ? 0.58 : bar >= totalBars - 1 ? 0.92 : 0.8
+    const phaseRatio = bar / Math.max(1, totalBars)
+    // 4-stage song narrative arc: atmospheric intro -> groove -> climax -> soft wind-down outro
+    const stage =
+      totalBars <= 2
+        ? 'groove'
+        : phaseRatio < 0.14
+          ? 'intro'
+          : phaseRatio < 0.55
+            ? 'groove'
+            : phaseRatio < 0.86
+              ? 'climax'
+              : 'outro'
+    const lvl = stage === 'intro' ? 0.52 : stage === 'groove' ? 0.78 : stage === 'climax' ? 0.96 : 0.56
+    const isEnergetic = drumDensity >= 0.6 && stage !== 'intro' && stage !== 'outro'
 
     // Stereo detuned pad
-    const p = synthPadStereo(ch.map((m) => m - 12), barDur + 0.35, baseCutoff + 1150 * lvl, 0.08, 0.24)
+    const p = synthPadStereo(ch.map((m) => m - 12), barDur + 0.35, baseCutoff + 1150 * lvl, 0.08, 0.22)
     addStereo(L, R, p.L, p.R, tb, 1.0)
 
-    // Crash cymbal at start of phrase bars (0, 4, 8...)
-    if (bar % 4 === 0 && bar > 0 && drumDensity > 0.25) {
-      addMonoPanned(L, R, synthCrash(rand, 0.16), tb, 1.0, 0)
+    // Crash cymbal at section transitions
+    if ((bar === 0 ? false : bar % 4 === 0 || (stage === 'climax' && (bar - 1) / Math.max(1, totalBars) < 0.55)) && drumDensity > 0.25) {
+      addMonoPanned(L, R, synthCrash(rand, stage === 'climax' ? 0.19 : 0.14), tb, 1.0, 0)
     }
 
     // 16th-note groove inside bar
@@ -678,41 +741,46 @@ export function renderBgmWavBuffer({ durationSec = 20, mood = 'tech', bpm, audio
       const tt = tb + (s * B) / 4
       if (tt >= dur) break
 
-      // Bass on 8th notes
-      if (s % 2 === 0 && drumDensity > 0.1) {
+      // Bass on 8th notes (soft in intro/outro)
+      if (s % 2 === 0 && drumDensity > 0.1 && stage !== 'intro') {
         const oct = s % 8 === 6 ? 12 : 0
-        addMonoPanned(L, R, synthBass(root + oct, (B / 2) * 0.82, s % 4 === 0 ? 0.44 : 0.34), tt, 1.0, 0)
+        const bGain = stage === 'outro' ? 0.22 : s % 4 === 0 ? 0.40 : 0.30
+        addMonoPanned(L, R, synthBass(root + oct, (B / 2) * 0.82, bGain), tt, 1.0, 0)
       }
 
-      // Kick drum
-      if (s % 4 === 0 && drumDensity > 0.2 && (isEnergetic || bar > 0)) {
-        addMonoPanned(L, R, synthKick(rand, 46, (isEnergetic ? 0.85 : 0.62) * Math.min(1, drumDensity + 0.2)), tt, 1.0, 0)
+      // Kick drum (hold back in intro and outro wind-down)
+      if (s % 4 === 0 && drumDensity > 0.2 && stage !== 'intro' && stage !== 'outro') {
+        addMonoPanned(L, R, synthKick(rand, 46, (isEnergetic ? 0.76 : 0.56) * Math.min(1, drumDensity + 0.18)), tt, 1.0, 0)
       }
 
       // Clap / snare on backbeats 2 and 4
-      if ((s === 4 || s === 12) && drumDensity > 0.35 && (isEnergetic || bar >= 1)) {
-        addMonoPanned(L, R, synthClap(rand, (isEnergetic ? 0.42 : 0.28) * lvl), tt, 1.0, 0)
+      if ((s === 4 || s === 12) && drumDensity > 0.35 && stage !== 'intro' && stage !== 'outro') {
+        addMonoPanned(L, R, synthClap(rand, (stage === 'climax' ? 0.38 : 0.26) * lvl), tt, 1.0, 0)
       }
 
       // Off-beat hi-hats
-      if (s % 2 === 1 && drumDensity > 0.55) {
-        addMonoPanned(L, R, synthHat(rand, false, 0.16 * lvl * drumDensity), tt, 1.0, 0.28)
+      if (s % 2 === 1 && drumDensity > 0.5 && stage !== 'intro' && stage !== 'outro') {
+        addMonoPanned(L, R, synthHat(rand, false, (stage === 'climax' ? 0.17 : 0.12) * lvl * drumDensity), tt, 1.0, 0.28)
       }
-      if (s % 4 === 2 && lvl > 0.65 && drumDensity > 0.65) {
-        addMonoPanned(L, R, synthHat(rand, true, 0.11 * lvl), tt, 1.0, -0.28)
+      if (s % 4 === 2 && stage === 'climax' && drumDensity > 0.65) {
+        addMonoPanned(L, R, synthHat(rand, true, 0.10 * lvl), tt, 1.0, -0.28)
       }
 
       // Lead synth voice from audioSpec.leadStyle
-      if (leadStyle === 'pluck' && s % 2 === 0) {
+      if (leadStyle === 'pluck' && s % 2 === 0 && (stage !== 'outro' || s % 4 === 0)) {
         const note = ch[[0, 2, 1, 3, 2, 1, 3, 2][(s >> 1) % 8] % ch.length] + 12
         const pan = (s >> 1) % 2 === 0 ? -0.35 : 0.35
-        addMonoPanned(L, R, synthPluck(note, 0.28, 1700 + 2400 * lvl, 0.26 * lvl), tt, 1.0, pan)
+        addMonoPanned(L, R, synthPluck(note, 0.28, 1700 + 2200 * lvl, 0.23 * lvl), tt, 1.0, pan)
       } else if (leadStyle === 'glock' && s % 4 === 0) {
         const note = ch[(s >> 2) % ch.length] + 24
-        addMonoPanned(L, R, synthGlock(note, 0.72, 0.24 * lvl), tt, 1.0, ((s >> 2) % 2 === 0 ? -0.28 : 0.28))
+        addMonoPanned(L, R, synthGlock(note, 0.72, 0.22 * lvl), tt, 1.0, ((s >> 2) % 2 === 0 ? -0.28 : 0.28))
       } else if (leadStyle === 'epiano' && s % 4 === 0) {
         const note = ch[(s >> 2) % ch.length] + 12
-        addMonoPanned(L, R, synthEpiano(note, 1.4, 0.28), tt, 1.0, ((s >> 2) - 1.5) * 0.22)
+        addMonoPanned(L, R, synthEpiano(note, 1.4, stage === 'climax' ? 0.28 : 0.23), tt, 1.0, ((s >> 2) - 1.5) * 0.22)
+      }
+      // Subtle climax high sparkle glock ornament
+      if (stage === 'climax' && s === 14) {
+        addMonoPanned(L, R, synthGlock(ch[3 % ch.length] + 24, 0.65, 0.15), tt, 1.0, 0.32)
       }
     }
   }

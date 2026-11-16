@@ -19,6 +19,8 @@ export const SHOTCRAFT_TSX_SOURCE = `/**
 import React from 'react'
 import {
   AbsoluteFill,
+  Easing,
+  Img,
   OffthreadVideo,
   interpolate,
   spring,
@@ -333,36 +335,512 @@ export interface AIBadgeProps {
   visible?: boolean
   text?: string
   accentColor?: string
+  position?: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | string
 }
 
 export const AIBadge: React.FC<AIBadgeProps> = ({
   visible = true,
   text = 'AI 辅助创作',
   accentColor = '#38BDF8',
+  position = 'top-right',
 }) => {
   const { width, height } = useVideoConfig()
   const isPortrait = width < height
   if (!visible) return null
+  const topPx = isPortrait ? Math.round(height * 0.088) : 22
+  const bottomPx = isPortrait ? Math.round(height * 0.20) : 28
+  const sidePx = 26
+  const posKey = String(position || 'top-right').toLowerCase()
+  const posStyle: React.CSSProperties =
+    posKey === 'top-left'
+      ? { top: topPx, left: sidePx }
+      : posKey === 'bottom-left'
+        ? { bottom: bottomPx, left: sidePx }
+        : posKey === 'bottom-right'
+          ? { bottom: bottomPx, right: sidePx }
+          : { top: topPx, right: sidePx }
   return (
     <div
       style={{
         position: 'absolute',
-        top: isPortrait ? Math.round(height * 0.092) : 24,
-        left: 26,
+        ...posStyle,
         zIndex: 70,
-        padding: '6px 14px',
+        padding: isPortrait ? '4px 11px' : '5px 13px',
         borderRadius: 999,
-        background: 'rgba(10, 14, 24, 0.78)',
+        background: 'rgba(10, 14, 24, 0.72)',
         border: \`1px solid \${accentColor}55\`,
         color: '#E2E8F0',
         fontFamily: FONT_SANS,
-        fontSize: isPortrait ? 15 : 16,
+        fontSize: isPortrait ? 13 : 15,
         fontWeight: 600,
         letterSpacing: '0.03em',
         backdropFilter: 'blur(6px)',
       }}
     >
       {text}
+    </div>
+  )
+}
+
+export interface HotspotMarkItem {
+  fx?: number
+  fy?: number
+  fw?: number
+  fh?: number
+  x?: number
+  y?: number
+  w?: number
+  h?: number
+  style?: string
+  label?: string
+  tone?: 'accent' | 'gold'
+  shape?: 'box' | 'ring'
+  startFrame?: number
+}
+
+export interface CamKeyframe {
+  t: number
+  fx: number
+  fy: number
+  z: number
+}
+
+export const AppWindow: React.FC<{
+  title?: string
+  kicker?: string
+  brandMark?: string
+  accentColor?: string
+  goldColor?: string
+  theme?: 'dark' | 'light'
+  style?: React.CSSProperties
+  children?: React.ReactNode
+}> = ({
+  title = '',
+  kicker = '',
+  brandMark = '',
+  accentColor = '#45D1B2',
+  goldColor = '#F6BA6F',
+  theme = 'dark',
+  style = {},
+  children,
+}) => {
+  const isLight = theme === 'light'
+  const cleanLogo = brandMark ? brandMark.replace(/^\\.?[\\\\/]+/, '').replace(/\\\\/g, '/') : ''
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        borderRadius: 18,
+        overflow: 'hidden',
+        background: isLight ? '#F8FAFC' : '#0B1514',
+        border: \`1.5px solid \${accentColor}55\`,
+        boxShadow: \`0 32px 84px rgba(0,0,0,0.62), 0 0 0 1px rgba(255,255,255,0.08) inset\`,
+        ...style,
+      }}
+    >
+      <div
+        style={{
+          height: 40,
+          padding: '0 16px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          background: isLight ? 'rgba(226,232,240,0.92)' : 'rgba(13,26,25,0.95)',
+          borderBottom: isLight ? '1px solid rgba(15,23,42,0.1)' : \`1px solid \${accentColor}26\`,
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 7 }}>
+            <span style={{ width: 11, height: 11, borderRadius: 99, background: '#FF5F56' }} />
+            <span style={{ width: 11, height: 11, borderRadius: 99, background: '#FFBD2E' }} />
+            <span style={{ width: 11, height: 11, borderRadius: 99, background: '#27C93F' }} />
+          </div>
+          {cleanLogo ? (
+            <Img src={staticFile(cleanLogo)} style={{ width: 18, height: 18, borderRadius: 4, objectFit: 'cover', marginLeft: 4 }} />
+          ) : null}
+          {title ? (
+            <span
+              style={{
+                fontFamily: FONT_SANS,
+                fontSize: 14,
+                fontWeight: 700,
+                color: isLight ? '#0F172A' : '#E2E8F0',
+                letterSpacing: '0.02em',
+              }}
+            >
+              {title}
+            </span>
+          ) : null}
+        </div>
+        {kicker ? (
+          <span
+            style={{
+              fontFamily: FONT_MONO,
+              fontSize: 12,
+              fontWeight: 700,
+              color: goldColor,
+              padding: '3px 10px',
+              borderRadius: 999,
+              background: isLight ? 'rgba(15,23,42,0.07)' : \`rgba(255,255,255,0.06)\`,
+            }}
+          >
+            {kicker}
+          </span>
+        ) : null}
+      </div>
+      <div style={{ position: 'relative', flex: 1, overflow: 'hidden', background: isLight ? '#FFFFFF' : '#081110' }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+export const HotspotMark: React.FC<{
+  item: HotspotMarkItem
+  accentColor?: string
+  goldColor?: string
+}> = ({ item, accentColor = '#45D1B2', goldColor = '#F6BA6F' }) => {
+  const frame = useCurrentFrame()
+  const { fps } = useVideoConfig()
+  const startF = Math.max(0, Number(item.startFrame || 6))
+  const sp = spring({ frame: Math.max(0, frame - startF), fps, config: { damping: 14, stiffness: 200 } })
+  if (frame < startF) return null
+  const col = item.tone === 'gold' ? goldColor : accentColor
+  const pulse = 0.72 + 0.28 * Math.sin((frame - startF) * 0.22)
+  const wPct = Math.max(3, Number(item.fw ?? item.w ?? 0.18) * 100)
+  const hPct = Math.max(3, Number(item.fh ?? item.h ?? 0.12) * 100)
+  const rawL = item.fx == null && item.x != null ? Number(item.x) * 100 : Number(item.fx ?? 0.5) * 100 - wPct / 2
+  const rawT = item.fy == null && item.y != null ? Number(item.y) * 100 : Number(item.fy ?? 0.5) * 100 - hPct / 2
+  const lPct = Math.max(0, Math.min(100 - wPct, rawL))
+  const tPct = Math.max(0, Math.min(100 - hPct, rawT))
+  const placeBelow = tPct < 14
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: \`\${lPct.toFixed(2)}%\`,
+        top: \`\${tPct.toFixed(2)}%\`,
+        width: \`\${wPct.toFixed(2)}%\`,
+        height: \`\${hPct.toFixed(2)}%\`,
+        borderRadius: item.shape === 'ring' ? 999 : 12,
+        border: \`2.5px solid \${col}\`,
+        boxShadow: \`0 0 0 4px rgba(0,0,0,0.35), 0 0 24px \${col}88\`,
+        opacity: interpolate(sp, [0, 1], [0, pulse]),
+        transform: \`scale(\${interpolate(sp, [0, 1], [1.18, 1])})\`,
+        pointerEvents: 'none',
+        zIndex: 15,
+      }}
+    >
+      {item.label ? (
+        <div
+          style={{
+            position: 'absolute',
+            left: '50%',
+            ...(placeBelow ? { top: 'calc(100% + 8px)' } : { bottom: 'calc(100% + 8px)' }),
+            transform: 'translateX(-50%)',
+            whiteSpace: 'nowrap',
+            padding: '5px 12px',
+            borderRadius: 999,
+            background: 'rgba(6, 14, 14, 0.92)',
+            border: \`1.5px solid \${col}\`,
+            color: '#F8FAFC',
+            fontFamily: FONT_SANS,
+            fontSize: 16,
+            fontWeight: 800,
+            boxShadow: '0 8px 20px rgba(0,0,0,0.55)',
+          }}
+        >
+          {item.label}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+export const FocusShot: React.FC<{
+  src: string
+  cams?: CamKeyframe[]
+  marks?: HotspotMarkItem[]
+  mediaWidth?: number
+  mediaHeight?: number
+  fitMode?: 'contain' | 'cover'
+  accentColor?: string
+  goldColor?: string
+}> = ({
+  src,
+  cams = [],
+  marks = [],
+  mediaWidth = 0,
+  mediaHeight = 0,
+  fitMode = 'contain',
+  accentColor = '#45D1B2',
+  goldColor = '#F6BA6F',
+}) => {
+  const frame = useCurrentFrame()
+  const { durationInFrames } = useVideoConfig()
+  const cleanRel = String(src || '').replace(/^\\.?[\\\\/]+/, '').replace(/\\\\/g, '/')
+  const p = Math.min(1, frame / Math.max(1, durationInFrames - 1))
+  const normKey = (rawKey: any, idx: number, totalLen: number) => {
+    const r = rawKey || {}
+    const tVal = Number.isFinite(Number(r.t))
+      ? Number(r.t)
+      : Number.isFinite(Number(r.at))
+        ? Number(r.at)
+        : idx / Math.max(1, totalLen - 1)
+    const fxVal = Number.isFinite(Number(r.fx))
+      ? Number(r.fx)
+      : Number.isFinite(Number(r.x))
+        ? Number(r.x)
+        : 0.5
+    const fyVal = Number.isFinite(Number(r.fy))
+      ? Number(r.fy)
+      : Number.isFinite(Number(r.y))
+        ? Number(r.y)
+        : 0.5
+    const zVal = Number.isFinite(Number(r.z))
+      ? Number(r.z)
+      : Number.isFinite(Number(r.s))
+        ? Number(r.s)
+        : 1.0
+    return { t: tVal, fx: fxVal, fy: fyVal, z: Math.max(0.5, zVal) }
+  }
+  const rawArr = Array.isArray(cams) ? cams.map((k, ki) => normKey(k, ki, cams.length)) : []
+  const keys = rawArr.length >= 2
+    ? [...rawArr].sort((a, b) => a.t - b.t)
+    : rawArr.length === 1
+      ? [rawArr[0], { ...rawArr[0], t: 1 }]
+      : [{ t: 0, fx: 0.5, fy: 0.5, z: 1.0 }, { t: 1, fx: 0.5, fy: 0.5, z: 1.06 }]
+
+  let fx = keys[0].fx
+  let fy = keys[0].fy
+  let z = keys[0].z
+  for (let i = 0; i < keys.length - 1; i++) {
+    const a = keys[i]
+    const b = keys[i + 1]
+    if (p >= a.t && p <= b.t) {
+      const local = (p - a.t) / Math.max(0.001, b.t - a.t)
+      const ease = local * local * (3 - 2 * local)
+      fx = a.fx + (b.fx - a.fx) * ease
+      fy = a.fy + (b.fy - a.fy) * ease
+      z = a.z + (b.z - a.z) * ease
+      break
+    }
+    if (p > b.t) {
+      fx = b.fx; fy = b.fy; z = b.z
+    }
+  }
+  const tx = Math.max(1 - z, Math.min(0, 0.5 - fx * z)) * 100
+  const ty = Math.max(1 - z, Math.min(0, 0.5 - fy * z)) * 100
+  const isVid = /\\.(mp4|mov|webm|mkv)$/i.test(cleanRel)
+  const hasAspect = Number(mediaWidth) > 0 && Number(mediaHeight) > 0
+  const stageStyle: React.CSSProperties = hasAspect
+    ? {
+        position: 'relative',
+        aspectRatio: \`\${Number(mediaWidth)} / \${Number(mediaHeight)}\`,
+        maxWidth: '100%',
+        maxHeight: '100%',
+        height: '100%',
+        width: 'auto',
+        margin: 'auto',
+        transformOrigin: '0 0',
+        transform: \`translate(\${tx.toFixed(3)}%, \${ty.toFixed(3)}%) scale(\${z.toFixed(4)})\`,
+      }
+    : {
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        transformOrigin: '0 0',
+        transform: \`translate(\${tx.toFixed(3)}%, \${ty.toFixed(3)}%) scale(\${z.toFixed(4)})\`,
+      }
+  const imgFit = hasAspect ? 'fill' : fitMode
+
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+      <div style={stageStyle}>
+        {cleanRel ? (
+          isVid ? (
+            <OffthreadVideo src={staticFile(cleanRel)} style={{ width: '100%', height: '100%', objectFit: imgFit }} muted />
+          ) : (
+            <Img src={staticFile(cleanRel)} style={{ width: '100%', height: '100%', objectFit: imgFit }} />
+          )
+        ) : null}
+        {(marks || []).map((m, mi) => (
+          <HotspotMark key={mi} item={m} accentColor={accentColor} goldColor={goldColor} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export const WorkflowBar: React.FC<{
+  steps?: string[]
+  activeStep?: number
+  sectionLabel?: string
+  accentColor?: string
+  goldColor?: string
+}> = ({ steps = [], activeStep = 0, sectionLabel = '', accentColor = '#45D1B2', goldColor = '#F6BA6F' }) => {
+  const { width, height } = useVideoConfig()
+  const isPortrait = width < height
+  if (!steps.length && !sectionLabel) return null
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: isPortrait ? Math.round(height * 0.042) : 22,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: isPortrait ? 6 : 10,
+        padding: isPortrait ? '6px 14px' : '7px 18px',
+        borderRadius: 999,
+        background: 'rgba(8, 16, 15, 0.82)',
+        border: \`1px solid \${accentColor}44\`,
+        boxShadow: '0 10px 28px rgba(0,0,0,0.45)',
+        zIndex: 68,
+        pointerEvents: 'none',
+      }}
+    >
+      {steps.map((st, si) => {
+        const isActive = si === activeStep
+        const isDone = si < activeStep
+        return (
+          <div key={si} style={{ display: 'flex', alignItems: 'center', gap: isPortrait ? 6 : 8 }}>
+            <span
+              style={{
+                padding: '3px 10px',
+                borderRadius: 999,
+                background: isActive ? \`linear-gradient(90deg, \${accentColor}, \${goldColor})\` : isDone ? \`\${accentColor}24\` : 'transparent',
+                color: isActive ? '#061211' : isDone ? accentColor : '#94A3B8',
+                fontFamily: FONT_SANS,
+                fontSize: isPortrait ? 14 : 15,
+                fontWeight: isActive ? 900 : 700,
+              }}
+            >
+              {st}
+            </span>
+            {si < steps.length - 1 ? <span style={{ color: 'rgba(255,255,255,0.22)', fontSize: 13 }}>›</span> : null}
+          </div>
+        )
+      })}
+      {sectionLabel ? (
+        <span style={{ fontFamily: FONT_MONO, fontSize: 14, fontWeight: 700, color: goldColor, marginLeft: steps.length ? 8 : 0 }}>
+          {sectionLabel}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+export const BeforeAfterWipe: React.FC<{
+  beforeSrc: string
+  afterSrc: string
+  beforeLabel?: string
+  afterLabel?: string
+  accentColor?: string
+  goldColor?: string
+}> = ({ beforeSrc, afterSrc, beforeLabel = 'MODE A', afterLabel = 'MODE B', accentColor = '#45D1B2', goldColor = '#F6BA6F' }) => {
+  const frame = useCurrentFrame()
+  const { durationInFrames } = useVideoConfig()
+  const p = Math.min(1, frame / Math.max(1, durationInFrames - 1))
+  const split = 0.5 + 0.34 * Math.sin(p * Math.PI * 2 - Math.PI / 2)
+  const bRel = String(beforeSrc || '').replace(/^\\.?[\\\\/]+/, '').replace(/\\\\/g, '/')
+  const aRel = String(afterSrc || '').replace(/^\\.?[\\\\/]+/, '').replace(/\\\\/g, '/')
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: '#07100F' }}>
+      {bRel ? <Img src={staticFile(bRel)} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain' }} /> : null}
+      {aRel ? (
+        <div style={{ position: 'absolute', inset: 0, clipPath: \`inset(0 0 0 \${(split * 100).toFixed(2)}%)\` }}>
+          <Img src={staticFile(aRel)} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        </div>
+      ) : null}
+      <div
+        style={{
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: \`\${(split * 100).toFixed(2)}%\`,
+          width: 3,
+          background: \`linear-gradient(180deg, \${accentColor}, \${goldColor})\`,
+          boxShadow: \`0 0 18px \${accentColor}\`,
+          transform: 'translateX(-1.5px)',
+          zIndex: 10,
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            width: 36,
+            height: 36,
+            borderRadius: 999,
+            background: '#081312',
+            border: \`2px solid \${goldColor}\`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#F8FAFC',
+            fontFamily: FONT_MONO,
+            fontSize: 13,
+            fontWeight: 900,
+          }}
+        >
+          ⇆
+        </div>
+      </div>
+      <div style={{ position: 'absolute', top: 18, left: 18, padding: '6px 14px', borderRadius: 999, background: 'rgba(6,14,14,0.88)', border: \`1px solid \${accentColor}88\`, color: accentColor, fontFamily: FONT_SANS, fontSize: 16, fontWeight: 800, zIndex: 12 }}>
+        {beforeLabel}
+      </div>
+      <div style={{ position: 'absolute', top: 18, right: 18, padding: '6px 14px', borderRadius: 999, background: 'rgba(6,14,14,0.88)', border: \`1px solid \${goldColor}88\`, color: goldColor, fontFamily: FONT_SANS, fontSize: 16, fontWeight: 800, zIndex: 12 }}>
+        {afterLabel}
+      </div>
+    </div>
+  )
+}
+
+export const MetricPanel: React.FC<{
+  label: string
+  value: number
+  suffix?: string
+  subLabel?: string
+  gridCount?: number
+  accentColor?: string
+  goldColor?: string
+}> = ({ label, value, suffix = '', subLabel = '', gridCount = 20, accentColor = '#45D1B2', goldColor = '#F6BA6F' }) => {
+  const frame = useCurrentFrame()
+  const { durationInFrames } = useVideoConfig()
+  const p = interpolate(frame, [6, Math.min(durationInFrames - 8, 52)], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
+  const eased = 1 - Math.pow(1 - p, 3)
+  const lit = Math.round(eased * gridCount)
+  return (
+    <div style={{ background: 'rgba(10, 22, 21, 0.88)', border: \`1.5px solid \${accentColor}44\`, borderRadius: 20, padding: 26, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ fontFamily: FONT_SANS, fontSize: 20, fontWeight: 800, color: '#E2E8F0' }}>{label}</span>
+        {subLabel ? <span style={{ fontFamily: FONT_MONO, fontSize: 14, color: goldColor, fontWeight: 700 }}>{subLabel}</span> : null}
+      </div>
+      <div style={{ fontFamily: FONT_MONO, fontSize: 56, fontWeight: 900, color: accentColor, lineHeight: 1.05 }}>
+        <DigitRoll from={0} to={value} suffix={suffix} startFrame={6} durationFrames={46} color={accentColor} fontSize={56} />
+      </div>
+      <div style={{ height: 8, borderRadius: 99, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: \`\${(eased * 100).toFixed(1)}%\`, background: \`linear-gradient(90deg, \${accentColor}, \${goldColor})\` }} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(10, 1fr)', gap: 6 }}>
+        {Array.from({ length: gridCount }, (_, gi) => (
+          <div
+            key={gi}
+            style={{
+              height: 14,
+              borderRadius: 4,
+              background: gi < lit ? (gi % 4 === 0 ? goldColor : accentColor) : 'rgba(255,255,255,0.08)',
+              opacity: gi < lit ? 0.92 : 0.45,
+            }}
+          />
+        ))}
+      </div>
     </div>
   )
 }
@@ -396,7 +874,7 @@ export const EndNotice: React.FC<EndNoticeProps> = ({
         position: 'absolute',
         left: '6%',
         right: '6%',
-        bottom: isPortrait ? Math.round(height * 0.30) : Math.round(height * 0.21),
+        bottom: isPortrait ? Math.round(height * 0.20) : Math.round(height * 0.036),
         display: 'flex',
         justifyContent: 'center',
         pointerEvents: 'none',
@@ -406,15 +884,19 @@ export const EndNotice: React.FC<EndNoticeProps> = ({
     >
       <div
         style={{
-          padding: '8px 20px',
+          padding: isPortrait ? '4px 14px' : '5px 16px',
           borderRadius: 999,
-          background: 'rgba(6, 10, 18, 0.86)',
+          background: 'rgba(6, 10, 18, 0.84)',
           border: \`1px solid \${accentColor}44\`,
           color: '#CBD5E1',
           fontFamily: FONT_SANS,
-          fontSize: isPortrait ? 18 : 16,
+          fontSize: isPortrait ? 13 : 14,
           fontWeight: 600,
           letterSpacing: '0.02em',
+          whiteSpace: 'nowrap',
+          maxWidth: '92%',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
           textAlign: 'center',
         }}
       >
@@ -487,6 +969,275 @@ export const AvatarOverlay: React.FC<AvatarOverlayProps> = ({
     </div>
   )
 }
+
+// =========================================================================
+// Universal Beat-Sync, Camera, Vector-Path & Transition Primitives
+// Usable across ANY genre: product UI, science/math, brand ads, story MV.
+// =========================================================================
+
+const easeOutFast = Easing.bezier(0.22, 1, 0.36, 1)
+
+export function computeBeatPulse(absTimeSec: number, beats: any[] = []): { pulse: number; strongPulse: number; isHitFrame: boolean } {
+  if (!Array.isArray(beats) || beats.length === 0) return { pulse: 0, strongPulse: 0, isHitFrame: false }
+  let pulse = 0
+  let strongPulse = 0
+  let isHitFrame = false
+  for (let i = 0; i < beats.length; i++) {
+    const raw = beats[i]
+    const bt = typeof raw === 'number' ? raw : Number(raw?.time)
+    if (!Number.isFinite(bt)) continue
+    const dt = absTimeSec - bt
+    if (dt >= -0.017 && dt < 0.35) {
+      const c = Math.max(0, dt)
+      const val = Math.exp(-c * 10.5)
+      if (val > pulse) pulse = val
+      const strong = typeof raw === 'object' ? Boolean(raw?.strong) : i % 4 === 0
+      if (strong && val > strongPulse) strongPulse = val
+      if (c < 0.065) isHitFrame = true
+    }
+  }
+  return { pulse, strongPulse, isHitFrame }
+}
+
+const TX_BLOCK_CELLS = Array.from({ length: 24 }, (_, idx) => ({
+  col: idx % 6,
+  row: Math.floor(idx / 6),
+  delay: (idx * 3) % 6,
+}))
+
+export interface SceneTransitionOverlayProps {
+  txKind?: string
+  localFrame: number
+  dur: number
+  accentColor?: string
+  goldColor?: string
+  bgColor?: string
+}
+
+export const SceneTransitionOverlay: React.FC<SceneTransitionOverlayProps> = ({
+  txKind = 'cut',
+  localFrame,
+  dur,
+  accentColor = '#38BDF8',
+  goldColor = '#F59E0B',
+  bgColor = '#070B16',
+}) => {
+  const { width, height } = useVideoConfig()
+  const safeDur = Math.max(8, dur)
+  if (!txKind || txKind === 'cut') return null
+  const inEnd = Math.min(16, Math.max(6, Math.round(safeDur * 0.45)))
+  const outStart = Math.max(inEnd, safeDur - 5)
+  if (localFrame > inEnd && localFrame < outStart) return null
+
+  const enterT = interpolate(localFrame, [0, inEnd], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: easeOutFast })
+  const exitFlash = localFrame >= outStart ? interpolate(localFrame, [outStart, safeDur], [0, 0.36], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }) : 0
+  const maxDim = Math.max(width, height)
+
+  return (
+    <AbsoluteFill style={{ pointerEvents: 'none', zIndex: 28 }}>
+      {txKind === 'flash-cut' && localFrame < Math.min(9, inEnd) ? (
+        <AbsoluteFill
+          style={{
+            background: \`radial-gradient(circle at center, #FFFFFF 0%, \${goldColor}88 45%, transparent 80%)\`,
+            opacity: interpolate(localFrame, [0, Math.min(9, inEnd)], [0.88, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }),
+          }}
+        />
+      ) : null}
+
+      {txKind === 'slash-wipe' && localFrame < inEnd ? (
+        <AbsoluteFill style={{ overflow: 'hidden' }}>
+          <div
+            style={{
+              position: 'absolute',
+              top: -height * 0.3,
+              bottom: -height * 0.3,
+              width: Math.round(width * 0.32),
+              left: interpolate(enterT, [0, 1], [-width * 0.45, width * 1.28]),
+              transform: 'skewX(-24deg)',
+              background: \`linear-gradient(90deg, transparent 0%, \${accentColor}AA 42%, #FFFBEB 50%, \${goldColor}AA 58%, transparent 100%)\`,
+              opacity: interpolate(enterT, [0, 0.25, 1], [0.95, 0.85, 0]),
+            }}
+          />
+        </AbsoluteFill>
+      ) : null}
+
+      {txKind === 'zoom-punch' && localFrame < inEnd ? (
+        <svg width={width} height={height} style={{ position: 'absolute', inset: 0 }}>
+          <circle
+            cx={width / 2}
+            cy={height / 2}
+            r={interpolate(enterT, [0, 1], [maxDim * 0.08, maxDim * 0.78])}
+            fill="none"
+            stroke="#FFFFFF"
+            strokeWidth={interpolate(enterT, [0, 1], [34, 2])}
+            opacity={interpolate(enterT, [0, 0.7, 1], [0.9, 0.5, 0])}
+          />
+          <circle
+            cx={width / 2}
+            cy={height / 2}
+            r={interpolate(enterT, [0, 1], [maxDim * 0.02, maxDim * 0.62])}
+            fill="none"
+            stroke={goldColor}
+            strokeWidth={interpolate(enterT, [0, 1], [18, 1])}
+            opacity={interpolate(enterT, [0, 0.75, 1], [0.85, 0.4, 0])}
+          />
+        </svg>
+      ) : null}
+
+      {txKind === 'iris-circle' && localFrame < inEnd ? (
+        <svg width={width} height={height} style={{ position: 'absolute', inset: 0 }}>
+          <circle
+            cx={width / 2}
+            cy={height / 2}
+            r={interpolate(enterT, [0, 1], [50, maxDim * 0.72])}
+            fill="none"
+            stroke={accentColor}
+            strokeWidth={interpolate(enterT, [0, 1], [26, 2])}
+            opacity={interpolate(enterT, [0, 0.7, 1], [0.92, 0.6, 0])}
+          />
+          <circle
+            cx={width / 2}
+            cy={height / 2}
+            r={interpolate(enterT, [0, 1], [10, maxDim * 0.62])}
+            fill="none"
+            stroke={goldColor}
+            strokeWidth={interpolate(enterT, [0, 1], [14, 1])}
+            opacity={interpolate(enterT, [0, 0.65, 1], [0.85, 0.45, 0])}
+          />
+        </svg>
+      ) : null}
+
+      {txKind === 'block-wipe' && localFrame < Math.min(14, inEnd) ? (
+        <AbsoluteFill>
+          {TX_BLOCK_CELLS.map((cell, bi) => {
+            const p = interpolate(localFrame - cell.delay, [0, 8], [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
+            if (p <= 0.01) return null
+            const cw = width / 6
+            const ch = height / 4
+            return (
+              <div
+                key={bi}
+                style={{
+                  position: 'absolute',
+                  left: cell.col * cw,
+                  top: cell.row * ch,
+                  width: cw + 2,
+                  height: ch + 2,
+                  background: bi % 3 === 0 ? accentColor : bgColor,
+                  opacity: p * 0.85,
+                  transform: \`scale(\${p})\`,
+                }}
+              />
+            )
+          })}
+        </AbsoluteFill>
+      ) : null}
+
+      {txKind === 'glitch-cut' && localFrame < Math.min(10, inEnd) ? (
+        <AbsoluteFill style={{ opacity: interpolate(localFrame, [0, Math.min(10, inEnd)], [0.88, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }) }}>
+          <div style={{ position: 'absolute', top: '24%', left: 0, right: 0, height: 42, background: 'linear-gradient(90deg, rgba(255,40,90,0.55), transparent, rgba(0,235,255,0.55))' }} />
+          <div style={{ position: 'absolute', top: '52%', left: 0, right: 0, height: 18, background: \`\${goldColor}88\` }} />
+          <div style={{ position: 'absolute', top: '71%', left: 0, right: 0, height: 28, background: \`\${accentColor}77\` }} />
+        </AbsoluteFill>
+      ) : null}
+
+      {txKind === 'light-wipe' && localFrame < inEnd ? (
+        <div
+          style={{
+            position: 'absolute',
+            top: -120,
+            bottom: -120,
+            width: Math.round(width * 0.2),
+            left: interpolate(enterT, [0, 1], [-width * 0.28, width * 1.15]),
+            transform: 'skewX(-18deg)',
+            background: \`linear-gradient(90deg, transparent, rgba(255,255,255,0.34), \${accentColor}66, transparent)\`,
+          }}
+        />
+      ) : null}
+
+      {exitFlash > 0 ? <AbsoluteFill style={{ backgroundColor: accentColor, opacity: exitFlash }} /> : null}
+    </AbsoluteFill>
+  )
+}
+
+export const CameraRig: React.FC<{
+  children: React.ReactNode
+  zoomFrom?: number
+  zoomTo?: number
+  panXFrom?: number
+  panXTo?: number
+  panYFrom?: number
+  panYTo?: number
+  beatPulse?: number
+  cutKickPx?: number
+}> = ({ children, zoomFrom = 1.0, zoomTo = 1.06, panXFrom = 0, panXTo = 0, panYFrom = 0, panYTo = 0, beatPulse = 0, cutKickPx = 0 }) => {
+  const frame = useCurrentFrame()
+  const { durationInFrames } = useVideoConfig()
+  const p = Math.min(1, frame / Math.max(1, durationInFrames - 1))
+  const eased = easeOutFast(p)
+  const sc = zoomFrom + (zoomTo - zoomFrom) * eased + beatPulse * 0.022
+  const dx = panXFrom + (panXTo - panXFrom) * eased + (frame < 7 ? Math.sin(frame * 3.8) * (7 - frame) * (cutKickPx || 0) : 0)
+  const dy = panYFrom + (panYTo - panYFrom) * eased + (frame < 7 ? Math.cos(frame * 4.4) * (7 - frame) * (cutKickPx || 0) * 0.8 : 0)
+  return (
+    <AbsoluteFill style={{ transform: \`translate3d(\${dx.toFixed(1)}px, \${dy.toFixed(1)}px, 0) scale(\${sc.toFixed(4)})\`, transformOrigin: 'center center' }}>
+      {children}
+    </AbsoluteFill>
+  )
+}
+
+export const AnimatedRoutePath: React.FC<{
+  d: string
+  progress: number
+  lengthApprox?: number
+  strokeColor?: string
+  glowColor?: string
+  strokeWidth?: number
+}> = ({ d, progress, lengthApprox = 900, strokeColor = '#F59E0B', glowColor = '#FEF3C7', strokeWidth = 6 }) => {
+  const p = Math.max(0, Math.min(1, progress))
+  return (
+    <g>
+      <path d={d} fill="none" stroke={strokeColor} strokeWidth={strokeWidth * 2.4} strokeLinecap="round" strokeDasharray={lengthApprox} strokeDashoffset={lengthApprox * (1 - p)} opacity={0.22} />
+      <path d={d} fill="none" stroke={strokeColor} strokeWidth={strokeWidth} strokeLinecap="round" strokeDasharray={lengthApprox} strokeDashoffset={lengthApprox * (1 - p)} opacity={0.96} />
+      <path d={d} fill="none" stroke={glowColor} strokeWidth={Math.max(2, strokeWidth * 0.38)} strokeLinecap="round" strokeDasharray={lengthApprox} strokeDashoffset={lengthApprox * (1 - p)} opacity={0.9} />
+    </g>
+  )
+}
+
+export const ParallaxHorizon: React.FC<{
+  bgTop?: string
+  bgBot?: string
+  gridColor?: string
+  accentColor?: string
+  starCount?: number
+  driftSpeed?: number
+}> = ({ bgTop = '#070A12', bgBot = '#171C2E', gridColor = '#F59E0B', accentColor = '#38BDF8', starCount = 26, driftSpeed = 1 }) => {
+  const frame = useCurrentFrame()
+  const driftX = (frame * 1.4 * driftSpeed) % 120
+  return (
+    <svg viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" width="100%" height="100%" style={{ position: 'absolute', inset: 0 }}>
+      <defs>
+        <linearGradient id="ph-sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={bgTop} />
+          <stop offset="100%" stopColor={bgBot} />
+        </linearGradient>
+      </defs>
+      <rect x={0} y={0} width={1920} height={1080} fill="url(#ph-sky)" />
+      {Array.from({ length: 18 }, (_, i) => (
+        <line key={\`v-\${i}\`} x1={i * 120 - driftX} y1={0} x2={i * 120 - driftX} y2={1080} stroke={gridColor} strokeWidth={1} opacity={0.07} />
+      ))}
+      {Array.from({ length: 10 }, (_, j) => (
+        <line key={\`h-\${j}\`} x1={0} y1={j * 110 + ((frame * 0.6 * driftSpeed) % 110)} x2={1920} y2={j * 110 + ((frame * 0.6 * driftSpeed) % 110)} stroke={accentColor} strokeWidth={1} opacity={0.06} />
+      ))}
+      {Array.from({ length: starCount }, (_, si) => {
+        const x = ((si * 317 + frame * (0.4 + (si % 3) * 0.35) * driftSpeed) % 1920)
+        const y = ((si * 173 + frame * 0.15) % 980)
+        const r = 1.4 + (si % 4) * 0.8
+        const op = 0.25 + 0.35 * Math.abs(Math.sin(frame * 0.08 + si))
+        return <circle key={\`st-\${si}\`} cx={x} cy={y} r={r} fill={si % 3 === 0 ? accentColor : gridColor} opacity={op} />
+      })}
+    </svg>
+  )
+}
 `
 
 export function writeShotcraftRemotionLib(projectDir) {
@@ -508,26 +1259,71 @@ export function buildDirectorPromptPackage({
   targetEngine,
   assets = [],
   draftScript = null,
+  bgmMeta = null,
+  narrationMode = 'tts',
+  pacingMode = 'auto',
 }) {
-  const system = `你是顶级电影动态视觉导演兼音画编曲总监 (AI Director & Sound Designer)。
+  const zeroVisualAssets = !Array.isArray(assets) || assets.length === 0
+  const normPacing = ['calm', 'balanced', 'dynamic'].includes(String(pacingMode || '').toLowerCase())
+    ? String(pacingMode).toLowerCase()
+    : narrationMode === 'subtitle-mv' || /历史|霸王|史诗|演义|战役|卡点|快闪|混剪|高燃|\bMV\b/i.test(`${topic || ''} ${userPrompt || ''}`)
+      ? 'dynamic'
+      : /故事|品牌|温情|人物|访谈|纪实|心路|传记|文化/i.test(`${topic || ''} ${userPrompt || ''}`)
+        ? 'calm'
+        : zeroVisualAssets && narrationMode !== 'tts'
+          ? 'dynamic'
+          : 'balanced'
+  const zeroPacingSpec =
+    normPacing === 'calm'
+      ? { label: '沉稳叙事', shotRange: '8~14', durRule: '每镜保持 4.2~7.5 秒从容留白与自然呼吸，让观众充分理解故事细节，严禁急促闪切' }
+      : normPacing === 'dynamic'
+        ? { label: '高燃快节奏', shotRange: '22~38', durRule: '常规镜 2~4 拍（1.3~2.8s），高潮冲击/突降点(drops)/转折闪切可设 0.5 拍或 1 拍（beatCount: 0.5 或 1，transition 设为 "flash-cut" | "zoom-punch" | "slash-wipe" | "glitch-cut"），严禁出现 >4.5 秒的呆板静止镜' }
+        : { label: '稳健解说', shotRange: '10~18', durRule: '以信息清晰传达为先：开场与收尾 2.2~3.2s，核心原理/功能讲解保持 3.2~5.5s 舒适节奏，不赶语速、每句口播从容说完' }
+  const beatInfoText = bgmMeta?.analyzed
+    ? `实测音乐节奏：BPM=${bgmMeta.bpm}，首拍偏移 phaseSec=${bgmMeta.phaseSec}s，单拍=${bgmMeta.beatSec}s，音乐总长=${bgmMeta.durationSec}s，高潮突降点 drops=${JSON.stringify((bgmMeta.drops || []).slice(0, 10))}。请让分镜数与每镜 beatCount（1/2/4/8 拍）贴合音乐起承转合！`
+    : ''
+  const system = zeroVisualAssets
+    ? `你是顶级全题材动态视觉导演兼音画卡点总监 (AI Dynamic Visual & Beat-Sync Director)，精通人物传记/历史史诗、软件原理/架构科普、产品商业发布、数据科学图解、抽象律动短片。
+当前没有任何现成图片/视频素材 (zeroVisualAssets=true)，全部画面由 AI Remotion TSX 代码生成与内置 SVG 矢量舞台联合绘制，禁止编造任何 \`assets/xxx.png\` 文件名或软件窗口占位图！
+${beatInfoText}
+
+必须遵循以下规范：
+1. 你只输出严格的 JSON 对象，不要包含额外 Markdown 文字。
+2. **依题材适配节奏（${zeroPacingSpec.label}）**：根据主题语境与音乐起承转合拆分为 **${zeroPacingSpec.shotRange} 个镜头**！${zeroPacingSpec.durRule}；narrationMode=${narrationMode}：
+   - 若用户指定第二人称（如"你"）或科普/叙事人称，全篇严格统一；单句字幕 <= 18 字，充满具体时间节点、实体细节、金句或客观指标，杜绝空洞废话！accentWords 标出 1~2 个亮点金色词汇；
+   - narration 与 subChunks 逐字一致，严禁空洞套话！
+3. 每镜必须携带完整 \`visualBlueprint\`（下游逐镜 TSX 程序员直读：具体描述 SVG 角色/器械/图表/地图/符号结构与镜内中段动作变化）、\`layout: "narrative-diorama"\` 与精雕 \`stageSpec\`：
+   - mood: "dawn-amber" | "crimson-war" | "indigo-night" | "ash-twilight" | "bronze-hall" | "jade-river" | "void-gold"
+   - setting: "palace-stairs" | "mountain-camp" | "city-siege" | "river-gorge" | "vast-plain"
+   - archetype: "hero-numeral" | "hero-stand" | "oath-break" | "cavalry-rush" | "slash-climax" | "duel-confront" | "farewell-tent" | "strategic-map" | "scroll-calligraphy" | "plaque-summary" | "channel-end"
+   - transition 仅允许: "cut" | "flash-cut" | "slash-wipe" | "iris-circle" | "block-wipe" | "glitch-cut" | "zoom-punch" | "light-wipe"（禁止填入配方名）
+   - 可选精致参数：heroNum/heroUnit（开篇核心数值）、bannerChar（旗帜/核心字）、calligraphy（1~3列竖排古典引文）+ sealText（朱红篆章）、strategic-map 专属 zones/routes/stamps（印章字如"破"/"胜"/"围"/"霸"）、plaque-summary 专属 plaques（4~7枚总结匾额词）。
+4. 每个分镜搭配精确落拍的 sfxCues，可在 0.00s 放置 "hit"/"sub_drop"/"slash"/"stamp"/"whoosh" 等音效。`
+    : `你是顶级电影动态视觉导演兼音画编曲总监 (AI Director & Sound Designer)。
 你的职责不是套模板，而是针对用户提供的主题与真实素材，构思极具大厂发布会/电影预告片质感的视频蓝图与定制合成音乐音效方案。
+${beatInfoText}
 
 必须遵循以下规范：
 1. 你只输出严格的 JSON 对象，不要包含额外 Markdown 解释文字。
-2. 文案口播 (narration) 必须自然有力、节奏明快、无废话套话，每镜字数匹配镜头节奏（通常 15-45 个汉字）。
-3. 画面布局与镜头语言必须根据画幅比例 (${aspectRatio}, ${width}x${height}) 量身定制：
+2. **口播稿 (narration) 与屏幕底部字幕 (subtitleText / subChunks) 严格逐字一致！标题卡片另行提炼！**
+   - narration: 自然流畅口语表达，单镜 **10-28 字**为主，节奏明快，适合 3.5-6.5 秒快速切镜。如果素材丰富，优先拆分为 **8-16 个紧凑短镜**，避免 10 秒超长呆板大段独白！
+   - subChunks: 必须与 narration 的实际读音一字不差地按语意/标点拆分为 1-3 段屏幕单行字幕（每段 6-16 字），严禁改写或替换口播用词；视觉关键词标语请放在 title / highlights / tag 中！
+3. **产品截图/UI 软件宣传片禁止把截图放在黑遮罩后面模糊背景！** 应使用 AppWindow (shotType: "app-focus-shot" | "split-wipe-compare" | "metric-dashboard" | "multi-window-trio" | "workflow-steps" | "card-fan-opener"):
+   - cams: 归一化镜头推拉序列 [{ t: 0, fx: 0.5, fy: 0.5, z: 1.0 }, { t: 1, fx: 0.28, fy: 0.36, z: 1.65 }]，精确放大软件 UI 局部细节；
+   - marks: 截图内部归一化坐标高亮标注框 [{ fx: 0.25, fy: 0.35, fw: 0.22, fh: 0.14, label: "一键AI拆分镜", tone: "gold", startFrame: 10 }]！
+4. 画面布局与镜头语言必须根据画幅比例 (${aspectRatio}, ${width}x${height}) 量身定制：
    - 竖屏 (9:16 / 3:4): 采用上下构图、中心主体聚焦、大字号大数字、安全边距避开底部 12% 区域。
-   - 横屏 (16:9): 采用非对称 60/40 分屏、数字指标仪表台、虚拟摄像机推拉摇移、景深卡片堆叠。
-4. 为整部作品编曲：生成 audioSpec，包含：
-   - mood: "tech" | "energetic" | "cinematic" | "warm"
+   - 横屏 (16:9): 采用全清 AppWindow 推镜聚焦、A/B 擦除对比、三主题并排窗或双轨数据仪表台。
+5. 为整部作品编曲：生成 audioSpec，包含：
+   - mood: "tech" | "energetic" | "cinematic" | "warm" | "emerald"
    - bpm: 整数 (88-136)
    - drumDensity: 0.0 - 1.0
    - leadStyle: "pluck" | "epiano" | "glock" | "pad-only"
    - padCutoff: 800 - 3200
-   - chords: 4组和弦进度，格式为 [[rootMidi, [m1, m2, m3, m4]], ...]，例如 [[38,[62,65,69,72]],[34,[62,65,70,74]],[41,[65,69,72,76]],[36,[64,67,72,76]]]
-5. 每个分镜设计 2-5 个精密时间点音效 (sfxCues)，既可使用内置类型 ("hit","whoosh","swoosh","glitch","pop","thud","card","sparkle","chime","riser","sub_drop","crash_cym","counter","typing","stamp")，也可使用 "synth_sfx" 参数化实时合成：
+   - chords: 4组和弦进度，格式为 [[rootMidi, [m1, m2, m3, m4]], ...]，例如 [[38,[62,65,69,72]],[43,[62,65,71,74]],[36,[64,67,71,74]],[45,[64,69,72,76]]]
+6. 每个分镜设计 2-5 个精密时间点音效 (sfxCues)，既可使用内置类型 ("hit","whoosh","swoosh","flip","lock","pop_soft","tick_burst","shimmer_swell","glitch","pop","thud","card","sparkle","chime","riser","sub_drop","crash_cym","counter","typing","stamp")，也可使用 "synth_sfx" 参数化实时合成：
    { "type": "synth_sfx", "offsetSec": 0.15, "volume": 0.55, "pan": -0.3, "freqStart": 920, "freqEnd": 180, "durationMs": 320, "q": 1.4, "wave": "saw" }。
-6. 若用户已有参考草稿 (draftScript)，请充分吸收已定稿的分镜数与叙事脉络，但在视觉动效、镜头创意、文案锐度和音效配乐上做电影级跃升。`
+7. 若用户已有参考草稿 (draftScript)，请充分吸收已定稿的分镜数与叙事脉络，但在视觉动效、镜头创意、文案锐度和音效配乐上做电影级跃升。`
 
   const assetSummary = (assets || []).map((a) => ({
     id: a.id,
@@ -563,10 +1359,21 @@ export function buildDirectorPromptPackage({
       targetEngine,
       format: { aspectRatio, quality, width, height },
       availableAssets: assetSummary,
+      bgmBeatAnalysis: bgmMeta?.analyzed
+        ? {
+            bpm: bgmMeta.bpm,
+            phaseSec: bgmMeta.phaseSec,
+            durationSec: bgmMeta.durationSec,
+            downbeats: (bgmMeta.downbeats || []).slice(0, 28),
+            drops: bgmMeta.drops || [],
+          }
+        : undefined,
+      narrationMode,
       confirmedDraftReference: draftSummary,
       requiredOutputSchema: {
         title: 'string (作品主标题)',
-        style: 'cyber | cinema | editorial | luxury | minimal',
+        style: 'emerald | cyber | cinema | editorial | luxury | minimal',
+        workflowSteps: ['例如: 原文', '分镜', '资产', '成图', '导出'],
         theme: {
           bgPrimary: '#hex',
           bgSecondary: '#hex',
@@ -576,29 +1383,33 @@ export function buildDirectorPromptPackage({
           accentSecondary: '#hex',
         },
         audioSpec: {
-          mood: 'tech | energetic | cinematic | warm',
-          bpm: 118,
-          drumDensity: 0.8,
+          mood: 'emerald | tech | energetic | cinematic | warm',
+          bpm: 100,
+          drumDensity: 0.7,
           leadStyle: 'pluck | epiano | glock | pad-only',
           padCutoff: 1900,
-          volume: 0.28,
+          volume: 0.24,
           chords: '[[rootMidi,[m1,m2,m3,m4]], ...] x4',
         },
         scenes: [
           {
             id: 'scene-01',
             title: 'string',
-            shotType: 'hero-title | metric-counter | bento-grid | split-showcase | terminal-code | media-spotlight | closing-cta',
-            emotion: '激情 | 平静 | 自信 | 温暖 | 科技感',
+            shotType: 'card-fan-opener | workflow-steps | app-focus-shot | split-wipe-compare | metric-dashboard | multi-window-trio | hero-title | bento-grid | closing-cta',
+            emotion: '激昂 | 平静 | 自信 | 温暖 | 科技感',
             role: 'narrator | tech | energetic | calm',
-            narration: '口播文案...',
+            narration: '口播文案 (自然短句)...',
+            subChunks: ['精简屏幕字幕1', '核心卖点2'],
             headline: '画面主大字标题 (短小震撼)',
             kicker: '上方小英文标签',
-            metrics: [{ label: '指标名', value: 99, suffix: '%' }],
+            hudStep: 0,
+            cams: [{ t: 0, fx: 0.5, fy: 0.5, z: 1.0 }, { t: 1, fx: 0.35, fy: 0.4, z: 1.5 }],
+            marks: [{ fx: 0.35, fy: 0.4, fw: 0.22, fh: 0.14, label: '重点区域说明', tone: 'gold', startFrame: 8 }],
+            metrics: [{ label: '指标名', value: 100, suffix: '%' }],
             assetPaths: ['assets/xxx'],
-            motionNotes: '详述该镜头动画时序：例如 0s 激光扫描+PageCam推镜，0.4s 卡片弹簧弹入，1.2s 数字滚动，转场 FlashCut',
+            motionNotes: '详述该镜头动画时序与交互重点',
             sfxCues: [
-              { type: 'riser | whoosh | hit | synth_sfx ...', offsetSec: 0, volume: 0.55, pan: 0 },
+              { type: 'riser | whoosh | flip | lock | tick_burst | shimmer_swell | impact | synth_sfx ...', offsetSec: 0, volume: 0.55, pan: 0 },
             ],
           },
         ],
@@ -629,7 +1440,9 @@ export function buildRemotionCoderSkillsPrompt({
 4. 禁止使用 Node 内置模块 (fs/path/child_process)、eval、new Function、外部网络字体/CDN 脚本链接或本地盘符路径。
 5. 商业版权字体安全铁律：禁止声明或使用微软雅黑 (Microsoft YaHei)、宋体 (SimSun)、黑体 (SimHei) 等受限商业字体！必须使用系统随包分发的 SIL OFL 开源商用字体栈：\`FONT_SANS\` ('Noto Sans SC', sans-serif) 与 \`FONT_MONO\` ('JetBrains Mono', monospace)。
 6. 可从 '../lib/shotcraft'（在 src/scenes/Scenes.tsx 中）或 './lib/shotcraft'（在 src/VideoComposition.tsx 中）导入已提供的组件：
-   - PageCam, ClipCard, DigitRoll, FlashCut, ShotCaption, AIBadge, EndNotice, AvatarOverlay, FONT_SANS, FONT_MONO, FONT_SERIF
+   - PageCam, ClipCard, DigitRoll, FlashCut, ShotCaption, AIBadge, EndNotice, AvatarOverlay, AppWindow, HotspotMark, FocusShot, WorkflowBar, BeforeAfterWipe, MetricPanel, FONT_SANS, FONT_MONO, FONT_SERIF
+   还可从 './lib/narrative-diorama'（或 '../lib/narrative-diorama'）导入无素材纯叙事 SVG 动画舞台组件：
+   - NarrativeDioramaStage, HeroWarriorFigure, StrategicMapStage, SlashBurstOverlay, CalligraphyColumnPanel, MOOD_PRESETS, computeBeatSignal（当场景没有截图素材 publicAssetFiles 为空或 layout === 'narrative-diorama' 时，优先用自定义内联 &lt;svg&gt; 动画与舞台原语联动演绎，严禁臆造假 staticFile('assets/...') 路径！同时严禁把 Sequence 的 durationInFrames 硬钳到 >=30，必须使用 Math.max(8, Number(s.durationInFrames)) 支持急速踩拍切镜！）。
 7. 合规与数字人叠层铁律：src/VideoComposition.tsx 必须在合成器最外层强制挂载 <AIBadge visible={true} /> 与末尾 <EndNotice />；当 script.json 中存在 avatarClip.path 且 avatarLayout !== 'off' 时，必须渲染 <AvatarOverlay clipPath={scriptData.avatarClip.path} layout={scriptData.avatarLayout || 'pip-br'} />（使用 transparent 透明通道合成）；字幕 <ShotCaption bottomPx={...} /> 必须遵循目标平台安全区留白（竖屏底部至少留白 22%）。
 8. 如需使用本地素材图片/视频（如 public/...），必须使用 staticFile('相对路径')（去掉前导 public/），使用 <Img src={staticFile(...)} />。
 9. 音轨对齐铁律：src/VideoComposition.tsx 必须导出命名组件 VideoComposition，并在最外层挂载：
@@ -642,11 +1455,17 @@ export function buildRemotionCoderSkillsPrompt({
       task: '生成定制 Remotion TSX 代码文件 (严格 JSON { "files": { ... } })',
       canvas: { width, height, aspectRatio, fps: timingContract.fps, totalDurationInFrames: timingContract.totalDurationInFrames },
       aiBadge: Boolean(timingContract.aiBadge),
+      narrationMode: timingContract.narrationMode || 'tts',
+      subtitleStyle: timingContract.subtitleStyle || 'pill',
+      bgmBeats: timingContract.bgmBeats || undefined,
       theme: plan.theme,
       timingContract: timingContract.scenes.map((s, i) => ({
         id: s.id,
         index: s.index,
         title: s.title,
+        layout: plan.scenes?.[i]?.layout || 'hero-title',
+        stageSpec: plan.scenes?.[i]?.stageSpec || undefined,
+        accentWords: plan.scenes?.[i]?.accentWords || undefined,
         startFrame: s.startFrame,
         durationInFrames: s.durationInFrames,
         durationSec: s.durationSec,
@@ -664,6 +1483,107 @@ export function buildRemotionCoderSkillsPrompt({
   )
 
   return { system, user }
+}
+
+/**
+ * Modular Genre-Agnostic Batch Coder Prompt:
+ * Produces `src/scenes/BatchNN.tsx` exporting `BATCH_NN_SCENES: Record<string, React.FC<CustomSceneProps>>`,
+ * where EVERY scene receives genuine custom TSX/SVG/UI/motion choreography driven by useCurrentFrame().
+ */
+export function buildBatchedRemotionScenesPrompt({
+  batchIndex,
+  totalBatches,
+  batchScenes,
+  totalScenes,
+  width,
+  height,
+  fps = 30,
+  aspectRatio = '16:9',
+  theme = {},
+  topic = '',
+  style = 'cinematic',
+  bgmMeta = null,
+}) {
+  const isPortrait = width < height
+  const pad = String(batchIndex + 1).padStart(2, '0')
+  const filePath = `src/scenes/Batch${pad}.tsx`
+  const exportName = `BATCH_${pad}_SCENES`
+
+  const system = `你是全球顶尖的 Remotion (v4) 视频动效创意主程与 SVG 视觉艺术家。
+你的核心使命：不是套用枯燥的静态模板卡片，而是为本批次的每一个分镜，用纯 React + 内联动态 <svg> + 逐帧数学插值，编写**各具特色、帧帧流畅变化、信息明确、直击题材灵魂**的定制动画组件！
+
+=== 适用全题材动态视觉创作指南（按每个分镜自身场景自适应 · 当前画布 ${width}x${height} ${isPortrait ? '竖屏短视频构图' : '横屏影院构图'}） ===
+1. **有截图/实拍素材时 (publicAssetFiles 非空)**：请优先通过 \`<AppWindow title={scene.title} kicker="DSH WORKBENCH" style={{ width: '100%', height: ${isPortrait ? 720 : 680} }}><FocusShot src={scene.publicAssetFiles?.[0] || scene.assetPaths?.[0] || scene.media?.[0]?.path} cams={scene.cams} marks={scene.marks} /></AppWindow>\`（或者 \`<BeforeAfterWipe>\`、3D 悬浮卡片、多窗口并排等配合外框动态标题与指标）高清呈现真实画面，禁止把文字盖住截图主体，更禁止自己在组件里画占位假框替代截图！严禁虚构不存在的 staticFile 路径！
+2. **纯代码/无外部素材时 (publicAssetFiles 为空 —— 涵盖历史人物/建筑史诗、软件原理/架构拓扑图解、数据图表、产品发布会概念视觉、文字动能 MV)**：
+   - **禁止**把所有分镜写成一模一样的单个背景模板调用！你必须在每个分镜中手写富有个性的**多层次内联 <svg viewBox="0 0 ${width} ${height}"> 动态场景**（严格匹配画布 ${width}x${height}；${isPortrait ? '竖屏采用上下分栏强冲击构图，主视觉与大数字放在居中上部，留出右下侧互动与底部字幕空间' : '横屏采用景深错落全景构图'}！可搭配 \`ParallaxHorizon\` / \`CameraRig\` / \`AnimatedRoutePath\` / \`MetricPanel\` 等组件拼装，在前景绘制独属于本镜具体剧情/技术架构的动态 SVG 节点、关节挥动、数据脉冲连线、柱状增长图、实时波纹、大字号动能标题与粒子！）
+   - **反静止僵硬法则**：每一个分镜从 progress=0 到 progress=1 必须具备肉眼可见的连续演进：
+     * 相机动势：\`CameraRig\` 或外层 \`transform\` 持续缓推/平移 + 在节奏点 \`pulse\` 触发微微冲击缩放与震动；
+     * 中段形态变化：例如前半拍立势/起笔/构架展开 -> 节拍命中时脉冲连线贯通/框选高亮/数值跃迁；
+     * 前景粒子/波纹/飘带/光线随 \`localFrame\` 持续流动画出。
+   - **安全留白与尾帧明度法则**：屏幕底部 \`${isPortrait ? 420 : 165}px\` 区域（Y > ${isPortrait ? Math.round(height - 460) : Math.round(height - 170)}）由外部主合成器绘制字幕与进度条，${isPortrait ? '顶部 Y < 220px 为平台状态栏与可配置 AI 标识安全区（严禁把标题或 Kicker 卡片放到 Y < 225px 造成角落遮挡），右侧 X > 910（Y > 680 时）保留平台点赞栏安全区，' : ''}画中主文字/重要视觉主体务必布局在 \`Y = ${isPortrait ? '225 ~ 1410' : '80 ~ 860'}\` 安全区以内！禁止自行额外重复渲染底部大字幕条、AiBadge 或 Audio！最后一个分镜严禁渐变黑屏收尾，务必保持亮色文字/光效清晰直至片尾最后一帧！
+
+=== 绝对不允许触犯的工程红线（触发即被沙箱打回！） ===
+1. 输出严格 JSON 对象（禁止外层包裹解释文字）：
+   { "files": { "${filePath}": "<完整 TypeScript JSX 代码>" } }
+2. 文件路径严格为 \`${filePath}\`，且末尾必须精确导出字典：
+   \`\`\`ts
+   export interface CustomSceneProps { scene: any; idx: number; total: number; beats: any[]; }
+   export const ${exportName}: Record<string, React.FC<CustomSceneProps>> = {
+     ${batchScenes.map((s) => `'${s.id}': Scene_${String(s.id).replace(/[^a-zA-Z0-9]/g, '_')}`).join(',\n     ')}
+   };
+   \`\`\`
+   注意键名必须与 batchScenes 中的 \`id\` 逐字完全一致！
+3. **严禁出现 \`Math.random(\`、\`@keyframes\`、CSS \`animation:\`、以及英文单词 transition 后跟冒号的语法（即使在注释、类型接口或变量说明中也绝对不能出现 \`transition\` 后紧跟 \`:\`！）**
+4. 严禁使用 Node 内置模块、\`eval\`、\`new Function\`、外网 URL、本地盘符、受限商业字体（微软雅黑/宋体/黑体等）。必须仅使用 \`FONT_SANS\` / \`FONT_SERIF\` / \`FONT_MONO\`。
+5. **每个 <defs> 里的渐变/滤镜/ClipPath ID 必须附带 \`\${idx}\` 或场景唯一后缀**（如 \`id={\`bg-\${idx}\`}\`），防止多场景同时挂载时 SVG ID 冲突。
+6. **TypeScript strict 零错误要求**：
+   - 必须为 \`.map\` / 回调参数与对象字典标注明确类型（如 \`(pt: number, i: number)\`、\`const pal: any = MOOD_PRESETS[...]\`）；
+   - 若需要使用 \`staticFile\`，只可传入 \`publicAssetFiles\` 里明确存在的文件；不要 import 用不到的变量。
+   - 可用的稳定导入路径与符号（不要臆造其它不存在的导出！）：
+     * \`from 'remotion'\`: \`AbsoluteFill, Easing, Img, interpolate, random, spring, staticFile, useCurrentFrame, useVideoConfig\`
+     * \`from '../lib/shotcraft'\`: \`CameraRig, AnimatedRoutePath, ParallaxHorizon, AppWindow, FocusShot, BeforeAfterWipe, MetricPanel, DigitRoll, ClipCard, PageCam, computeBeatPulse, FONT_SANS, FONT_MONO, FONT_SERIF\`
+     * \`from '../lib/narrative-diorama'\`: \`NarrativeDioramaStage, HeroWarriorFigure, StrategicMapStage, SlashBurstOverlay, CalligraphyColumnPanel, MOOD_PRESETS, computeBeatSignal\``
+
+  const user = JSON.stringify(
+    {
+      task: `请编写模块 ${filePath}（第 ${batchIndex + 1}/${totalBatches} 批，共 ${batchScenes.length} 镜 / 全片 ${totalScenes} 镜）`,
+      topic,
+      style,
+      canvas: { width, height, fps, aspectRatio },
+      themePalette: theme,
+      bgmSummary: bgmMeta?.analyzed
+        ? { bpm: bgmMeta.bpm, beatSec: bgmMeta.beatSec, drops: (bgmMeta.drops || []).slice(0, 8) }
+        : undefined,
+      scenes: batchScenes.map((s) => ({
+        id: s.id,
+        index: s.index,
+        title: s.title,
+        headline: s.headline || s.title,
+        narration: s.narration,
+        accentWords: s.accentWords || [],
+        highlights: s.highlights || [],
+        visualBlueprint: s.visualBlueprint || s.motionNotes || s.visualPrompt || s.title,
+        layout: s.layout,
+        txKind: s.transition || 'cut',
+        durationSec: s.durationSec,
+        durationInFrames: s.durationInFrames,
+        startSec: s.startSec,
+        stageSpec: s.stageSpec || undefined,
+        metrics: s.metrics?.length ? s.metrics : undefined,
+        cams: s.cams?.length ? s.cams : undefined,
+        marks: s.marks?.length ? s.marks : undefined,
+        publicAssetFiles: Array.isArray(s.media) && s.media.length > 0
+          ? s.media.map((m) => String(m?.path || '').replace(/^\/+/, '').replace(/\\/g, '/')).filter(Boolean)
+          : Array.isArray(s.assetPaths)
+            ? s.assetPaths.map((p) => String(p || '').replace(/^\/+/, '').replace(/\\/g, '/')).filter(Boolean)
+            : [],
+      })),
+    },
+    null,
+    2,
+  )
+
+  return { system, user, filePath, exportName }
 }
 
 export function buildHtmlCoderSkillsPrompt({

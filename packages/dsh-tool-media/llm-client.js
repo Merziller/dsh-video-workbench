@@ -693,6 +693,137 @@ function buildModelsEndpoint(baseUrl, protocol) {
   return `${root}/v1/models`
 }
 
+function extractFirstJsonObject(rawText) {
+  const s = String(rawText || '').trimStart()
+  if (!s.startsWith('{')) return null
+  let depth = 0
+  let inStr = false
+  let escape = false
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (inStr) {
+      if (escape) escape = false
+      else if (ch === '\\') escape = true
+      else if (ch === '"') inStr = false
+      continue
+    }
+    if (ch === '"') {
+      inStr = true
+      continue
+    }
+    if (ch === '{') depth++
+    else if (ch === '}') {
+      depth--
+      if (depth === 0) {
+        try {
+          return JSON.parse(s.slice(0, i + 1))
+        } catch {
+          return null
+        }
+      }
+    }
+  }
+  return null
+}
+
+function parseRawLlmResponse(rawText, protocol) {
+  const trimmed = String(rawText || '').trim()
+  if (!trimmed) return { data: null, text: '', streamError: '' }
+
+  // 1. Standard pure JSON response
+  try {
+    const data = JSON.parse(trimmed)
+    return {
+      data,
+      text: extractTextFromReply(data, protocol),
+      streamError: data?.error?.message || '',
+    }
+  } catch {}
+
+  // 2. Leading JSON object before trailing proxy SSE lines (e.g. `{...}event: response.failed`)
+  const leadingObj = extractFirstJsonObject(trimmed)
+  if (leadingObj) {
+    const leadingText = extractTextFromReply(leadingObj, protocol)
+    if (leadingText.trim()) {
+      return {
+        data: leadingObj,
+        text: leadingText,
+        streamError: '',
+      }
+    }
+  }
+
+  // 3. Server-Sent Events (SSE: `data: {...}`) across all 4 wire protocols
+  const deltas = []
+  let completedData = leadingObj
+  let streamError = ''
+  let geminiLastText = ''
+
+  for (const rawLine of trimmed.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line.startsWith('data:')) continue
+    const payloadStr = line.slice(5).trim()
+    if (!payloadStr || payloadStr === '[DONE]') continue
+    let ev = null
+    try {
+      ev = JSON.parse(payloadStr)
+    } catch {
+      continue
+    }
+    if (!ev || typeof ev !== 'object') continue
+
+    if (protocol === 'openai-responses') {
+      if (ev.type === 'response.output_text.delta' && typeof ev.delta === 'string') {
+        deltas.push(ev.delta)
+      } else if (ev.type === 'response.output_text.done' && typeof ev.text === 'string' && deltas.length === 0) {
+        deltas.push(ev.text)
+      } else if ((ev.type === 'response.completed' || ev.type === 'response.incomplete') && ev.response) {
+        completedData = ev.response
+      } else if (ev.type === 'response.failed' || ev.type === 'error') {
+        streamError = ev?.response?.error?.message || ev?.error?.message || ev?.message || streamError
+      } else if (ev.object === 'response' && Array.isArray(ev.output)) {
+        completedData = ev
+      }
+    } else if (protocol === 'anthropic-messages') {
+      if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
+        deltas.push(ev.delta.text)
+      } else if (ev.type === 'message' && Array.isArray(ev.content)) {
+        completedData = ev
+      } else if (ev.type === 'error') {
+        streamError = ev?.error?.message || ev?.message || streamError
+      }
+    } else if (protocol === 'gemini-native') {
+      const partText = extractTextFromReply(ev, 'gemini-native')
+      if (partText) {
+        geminiLastText += partText
+        completedData = ev
+      }
+      if (ev.error?.message) streamError = ev.error.message
+    } else {
+      if (Array.isArray(ev.choices)) {
+        const d = ev.choices[0]?.delta?.content
+        if (typeof d === 'string') deltas.push(d)
+        else if (typeof ev.choices[0]?.message?.content === 'string') completedData = ev
+      }
+      if (ev.usage || ev.model) completedData = { ...(completedData || {}), ...ev }
+      if (ev.error?.message) streamError = ev.error.message
+    }
+  }
+
+  const completedText = completedData ? extractTextFromReply(completedData, protocol) : ''
+  const finalText = completedText.trim()
+    ? completedText
+    : deltas.length > 0
+      ? deltas.join('')
+      : geminiLastText
+
+  return {
+    data: completedData,
+    text: finalText,
+    streamError,
+  }
+}
+
 function extractTextFromReply(data, protocol) {
   if (!data || typeof data !== 'object') return ''
 
@@ -754,19 +885,56 @@ function extractTextFromReply(data, protocol) {
   return ''
 }
 
+async function readResponseTextSafe(res) {
+  if (res?.body && typeof res.body.getReader === 'function') {
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    const chunks = []
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      if (value) chunks.push(decoder.decode(value, { stream: true }))
+    }
+    const tail = decoder.decode()
+    if (tail) chunks.push(tail)
+    return chunks.join('')
+  }
+  return await res.text()
+}
+
+function isTransientLlmError(err, status = 0) {
+  if ([429, 502, 503, 504, 524].includes(status)) return true
+  const msg = String(err?.message || err || '').toLowerCase()
+  const code = String(err?.code || err?.cause?.code || '').toLowerCase()
+  return (
+    msg.includes('fetch failed') ||
+    msg.includes('network') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('socket') ||
+    msg.includes('other side closed') ||
+    msg.includes('terminated') ||
+    msg.includes('超时') ||
+    code.includes('econnreset') ||
+    code.includes('etimedout') ||
+    code.includes('und_err')
+  )
+}
+
 /**
  * Call any configured LLM across all 4 wire protocols:
  * - openai-completions (/v1/chat/completions)
  * - anthropic-messages (/v1/messages)
  * - openai-responses (/v1/responses)
  * - gemini-native (/v1beta/models)
+ * Includes incremental stream reading + transient relay/network retries.
  */
 export async function callLlmChat({
   messages = [],
   system = '',
   temperature,
   maxTokens,
-  timeoutMs = 150000,
+  timeoutMs = 180000,
   overrideConfig = {},
   fetchImpl = globalThis.fetch,
   signal,
@@ -791,128 +959,159 @@ export async function callLlmChat({
   const temp = Number.isFinite(Number(temperature)) ? Number(temperature) : cfg.temperature
   const maxOut = Number(maxTokens) > 0 ? Number(maxTokens) : cfg.maxTokens
 
-  const controller = new AbortController()
-  const onExternalAbort = () => controller.abort(signal?.reason || Object.assign(new Error('Request aborted'), { name: 'AbortError' }))
-  if (signal) {
-    if (signal.aborted) onExternalAbort()
-    else signal.addEventListener('abort', onExternalAbort, { once: true })
-  }
-  const timer = setTimeout(() => controller.abort(new Error(`LLM 请求超时 (${Math.round(timeoutMs / 1000)}s)`)), timeoutMs)
+  let headers
+  let payload
+  const sysParts = [system, ...messages.filter((m) => m?.role === 'system').map((m) => m.content)]
+    .filter(Boolean)
+    .join('\n\n')
+  const chatMsgs = messages
+    .filter((m) => m && m.role !== 'system' && m.content)
+    .map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: String(m.content || ''),
+    }))
 
-  try {
-    let headers
-    let payload
-    const sysParts = [system, ...messages.filter((m) => m?.role === 'system').map((m) => m.content)]
-      .filter(Boolean)
-      .join('\n\n')
-    const chatMsgs = messages
-      .filter((m) => m && m.role !== 'system' && m.content)
-      .map((m) => ({
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: String(m.content || ''),
-      }))
-
-    if (protocol === 'anthropic-messages') {
-      headers = {
-        'content-type': 'application/json',
-        'x-api-key': cfg.apiKey,
-        'anthropic-version': '2023-06-01',
-      }
-      payload = {
-        model: cfg.model,
-        max_tokens: maxOut,
-        temperature: temp,
-        ...(sysParts ? { system: sysParts } : {}),
-        messages: chatMsgs,
-      }
-    } else if (protocol === 'openai-responses') {
-      headers = {
-        'content-type': 'application/json',
-        ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}),
-      }
-      payload = {
-        model: cfg.model,
-        ...(sysParts ? { instructions: sysParts } : {}),
-        input: chatMsgs.map((m) => ({
-          type: 'message',
-          role: m.role,
-          content: [{ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: m.content }],
-        })),
-        max_output_tokens: maxOut,
-      }
-    } else if (protocol === 'gemini-native') {
-      headers = {
-        'content-type': 'application/json',
-        ...(cfg.apiKey ? { 'x-goog-api-key': cfg.apiKey } : {}),
-      }
-      payload = {
-        ...(sysParts ? { systemInstruction: { parts: [{ text: sysParts }] } } : {}),
-        contents: chatMsgs.map((m) => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: m.content }],
-        })),
-        generationConfig: {
-          temperature: temp,
-          maxOutputTokens: maxOut,
-        },
-      }
-    } else {
-      headers = {
-        'content-type': 'application/json',
-        ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}),
-      }
-      const normMsgs = []
-      if (sysParts) normMsgs.push({ role: 'system', content: sysParts })
-      for (const m of chatMsgs) normMsgs.push(m)
-      payload = {
-        model: cfg.model,
-        messages: normMsgs,
-        temperature: temp,
-        max_tokens: maxOut,
-      }
+  if (protocol === 'anthropic-messages') {
+    headers = {
+      'content-type': 'application/json',
+      'x-api-key': cfg.apiKey,
+      'anthropic-version': '2023-06-01',
     }
+    payload = {
+      model: cfg.model,
+      max_tokens: maxOut,
+      temperature: temp,
+      ...(sysParts ? { system: sysParts } : {}),
+      messages: chatMsgs,
+    }
+  } else if (protocol === 'openai-responses') {
+    headers = {
+      'content-type': 'application/json',
+      ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}),
+    }
+    payload = {
+      model: cfg.model,
+      stream: true,
+      ...(sysParts ? { instructions: sysParts } : {}),
+      input: chatMsgs.map((m) => ({
+        type: 'message',
+        role: m.role,
+        content: [{ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: m.content }],
+      })),
+      max_output_tokens: maxOut,
+    }
+  } else if (protocol === 'gemini-native') {
+    headers = {
+      'content-type': 'application/json',
+      ...(cfg.apiKey ? { 'x-goog-api-key': cfg.apiKey } : {}),
+    }
+    payload = {
+      ...(sysParts ? { systemInstruction: { parts: [{ text: sysParts }] } } : {}),
+      contents: chatMsgs.map((m) => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }],
+      })),
+      generationConfig: {
+        temperature: temp,
+        maxOutputTokens: maxOut,
+      },
+    }
+  } else {
+    headers = {
+      'content-type': 'application/json',
+      ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}),
+    }
+    const normMsgs = []
+    if (sysParts) normMsgs.push({ role: 'system', content: sysParts })
+    for (const m of chatMsgs) normMsgs.push(m)
+    payload = {
+      model: cfg.model,
+      messages: normMsgs,
+      temperature: temp,
+      max_tokens: maxOut,
+    }
+  }
 
-    const res = await fetchImpl(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    })
+  const maxAttempts = fetchImpl === globalThis.fetch ? 3 : 2
+  const baseBackoffMs = fetchImpl === globalThis.fetch ? 1500 : 30
+  let lastErr = null
 
-    const rawText = await res.text()
-    let data = null
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (signal?.aborted) {
+      throw signal.reason || Object.assign(new Error('Request aborted'), { name: 'AbortError' })
+    }
+    const controller = new AbortController()
+    const onExternalAbort = () => controller.abort(signal?.reason || Object.assign(new Error('Request aborted'), { name: 'AbortError' }))
+    if (signal) {
+      if (signal.aborted) onExternalAbort()
+      else signal.addEventListener('abort', onExternalAbort, { once: true })
+    }
+    const timer = setTimeout(() => controller.abort(new Error(`LLM 请求超时 (${Math.round(timeoutMs / 1000)}s)`)), timeoutMs)
+    let resStatus = 0
+
     try {
-      data = JSON.parse(rawText)
-    } catch {
-      data = null
-    }
+      const res = await fetchImpl(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+      resStatus = res.status || 0
+      const rawText = await readResponseTextSafe(res)
+      const parsed = parseRawLlmResponse(rawText, protocol)
+      const data = parsed.data
 
-    if (!res.ok) {
-      const msg =
-        data?.error?.message ||
-        data?.message ||
-        rawText.slice(0, 300) ||
-        `HTTP ${res.status}`
-      throw new Error(`大模型接口 (${protocol}) 返回错误 (${res.status}): ${msg}`)
-    }
+      if (!res.ok) {
+        const msg =
+          data?.error?.message ||
+          parsed.streamError ||
+          data?.message ||
+          rawText.slice(0, 300) ||
+          `HTTP ${res.status}`
+        const httpErr = new Error(`大模型接口 (${protocol}) 返回错误 (${res.status}): ${msg}`)
+        if (attempt < maxAttempts && isTransientLlmError(httpErr, resStatus)) {
+          lastErr = httpErr
+          await new Promise((r) => setTimeout(r, baseBackoffMs * attempt))
+          continue
+        }
+        throw httpErr
+      }
 
-    const text = extractTextFromReply(data, protocol)
-    if (!text.trim()) {
-      throw new Error('大模型返回内容为空，请检查模型 ID、协议类型或额度限制。')
-    }
+      const text = parsed.text || ''
+      if (!text.trim()) {
+        const emptyErr = parsed.streamError
+          ? new Error(`大模型接口 (${protocol}) 返回错误: ${parsed.streamError}`)
+          : new Error('大模型返回内容为空，请检查模型 ID、协议类型或额度限制。')
+        if (attempt < maxAttempts && parsed.streamError && isTransientLlmError(emptyErr, resStatus)) {
+          lastErr = emptyErr
+          await new Promise((r) => setTimeout(r, baseBackoffMs * attempt))
+          continue
+        }
+        throw emptyErr
+      }
 
-    return {
-      ok: true,
-      protocol,
-      endpoint,
-      model: data?.model || cfg.model,
-      text,
-      usage: data?.usage || data?.usageMetadata || null,
+      return {
+        ok: true,
+        protocol,
+        endpoint,
+        model: data?.model || cfg.model,
+        text,
+        usage: data?.usage || data?.usageMetadata || null,
+      }
+    } catch (err) {
+      lastErr = err
+      if (err?.name === 'AbortError' || signal?.aborted) throw err
+      if (attempt < maxAttempts && isTransientLlmError(err, resStatus)) {
+        await new Promise((r) => setTimeout(r, baseBackoffMs * attempt))
+        continue
+      }
+      throw err
+    } finally {
+      clearTimeout(timer)
+      if (signal) signal.removeEventListener('abort', onExternalAbort)
     }
-  } finally {
-    clearTimeout(timer)
-    if (signal) signal.removeEventListener('abort', onExternalAbort)
   }
+  throw lastErr || new Error('LLM 请求失败')
 }
 
 export async function fetchAvailableModels(overrideConfig = {}, fetchImpl = globalThis.fetch) {
@@ -947,7 +1146,6 @@ export async function fetchAvailableModels(overrideConfig = {}, fetchImpl = glob
     return []
   } finally {
     clearTimeout(timer)
-    if (signal) signal.removeEventListener('abort', onExternalAbort)
   }
 }
 

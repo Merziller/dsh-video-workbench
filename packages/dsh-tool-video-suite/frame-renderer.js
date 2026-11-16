@@ -21,6 +21,7 @@ import {
   writeSync,
 } from 'node:fs'
 import { extname, join, resolve } from 'node:path'
+import { cpus } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import {
   REPO_ROOT,
@@ -370,6 +371,17 @@ export async function renderHtmlVideoToMp4({
                 optimizeForSpeed: true,
               })
               writeSync(mjpegFd, Buffer.from(shot.data, 'base64'))
+              if (onProgress && ((f - startFrame) % 15 === 0 || f === endFrameExclusive - 1)) {
+                const denom = Math.max(1, Number(totalFrames) || endFrameExclusive)
+                const pct = Math.min(94, Math.max(10, Math.round(((f + 1) / denom) * 90)))
+                onProgress({
+                  frame: f + 1,
+                  totalFrames: denom,
+                  pct,
+                  progress: pct,
+                  message: `正在逐帧合成高清画面 (${f + 1}/${denom} 帧 · ${pct}%)...`,
+                })
+              }
               if (snapshotDir && snapMap.has(f)) {
                 const pShot = await sess.cdp.send('Page.captureScreenshot', { format: 'png' })
                 const pngBuf = Buffer.from(pShot.data, 'base64')
@@ -582,29 +594,45 @@ export async function renderRemotionProject({ projectDir, outMp4Path, snapshotFr
   }
 
   if (!onlySnapshots && outMp4Path) {
-    const { cancelSignal, cancel } = typeof rendererMod.makeCancelSignal === 'function'
-      ? rendererMod.makeCancelSignal()
-      : { cancelSignal: undefined, cancel: () => {} }
-    const onRemotionAbort = () => {
-      try { cancel() } catch {}
+    const cpuCount = cpus()?.length || 4
+    // Cap browser tab concurrency on Windows so multiple tabs don't race Remotion's OffthreadVideo Rust extractor
+    const defaultConcurrency = Math.max(1, Math.min(3, Math.floor(cpuCount / 4)))
+    const attemptRender = async (concurrency, videoThreads) => {
+      const { cancelSignal, cancel } = typeof rendererMod.makeCancelSignal === 'function'
+        ? rendererMod.makeCancelSignal()
+        : { cancelSignal: undefined, cancel: () => {} }
+      const onRemotionAbort = () => {
+        try { cancel() } catch {}
+      }
+      signal?.addEventListener('abort', onRemotionAbort, { once: true })
+      try {
+        await rendererMod.renderMedia({
+          composition,
+          serveUrl,
+          codec: 'h264',
+          pixelFormat: 'yuv420p',
+          audioCodec: 'aac',
+          crf: 19,
+          outputLocation: outMp4Path,
+          browserExecutable,
+          concurrency,
+          offthreadVideoThreads: videoThreads,
+          offthreadVideoCacheSizeInBytes: 512 * 1024 * 1024,
+          delayRenderTimeoutInMilliseconds: 60000,
+          cancelSignal,
+        })
+      } finally {
+        signal?.removeEventListener('abort', onRemotionAbort)
+      }
     }
-    signal?.addEventListener('abort', onRemotionAbort, { once: true })
+
     try {
-      await rendererMod.renderMedia({
-      composition,
-      serveUrl,
-      codec: 'h264',
-      pixelFormat: 'yuv420p',
-      audioCodec: 'aac',
-      crf: 19,
-      outputLocation: outMp4Path,
-      browserExecutable,
-      offthreadVideoThreads: 1,
-      offthreadVideoCacheSizeInBytes: 512 * 1024 * 1024,
-      cancelSignal,
-    })
-    } finally {
-      signal?.removeEventListener('abort', onRemotionAbort)
+      await attemptRender(defaultConcurrency, 2)
+    } catch (err) {
+      const msg = String(err?.message || err || '')
+      const isTransientCompositor = !signal?.aborted && /No frame found at position|Compositor error/i.test(msg)
+      if (!isTransientCompositor) throw err
+      await attemptRender(1, 1)
     }
   }
 

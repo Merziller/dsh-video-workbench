@@ -17,9 +17,22 @@ import {
   synthSfxStereo,
 } from './audio-dsp.js'
 
+import {
+  analyzeAudioBeatStructure,
+  choreographBeatSfxCues,
+  quantizeScenesToBeatGrid,
+  snapTimeToBeatGrid,
+} from './beat-analyzer.js'
+
 const SR = DSP_SR
 
-export { buildBeatGrid }
+export {
+  analyzeAudioBeatStructure,
+  buildBeatGrid,
+  choreographBeatSfxCues,
+  quantizeScenesToBeatGrid,
+  snapTimeToBeatGrid,
+}
 
 export function generateSfxWav(type, outPath, opts = {}) {
   mkdirSync(dirname(outPath), { recursive: true })
@@ -212,7 +225,12 @@ export async function mixVideoAudio({ projectDir, script, assetsManifest, output
 
   const absBgm = bgmPath ? (isAbsolute(bgmPath) ? bgmPath : resolve(absDir, bgmPath)) : ''
   const hasBgm = Boolean(absBgm && existsSync(absBgm)) && script?.bgm?.enabled !== false
-  const bgmVol = Number.isFinite(Number(script?.bgm?.volume)) ? Number(script.bgm.volume) : 0.28
+  const isPureMvNoVoice = voiceEvents.length === 0 || script?.narrationMode === 'subtitle-mv'
+  const rawBgmVol = Number(script?.bgm?.volume)
+  const bgmVol = isPureMvNoVoice
+    ? (Number.isFinite(rawBgmVol) && rawBgmVol >= 0.45 && rawBgmVol <= 1.0 ? rawBgmVol : 0.80)
+    : (Number.isFinite(rawBgmVol) ? rawBgmVol : 0.24)
+  const bgmFadeInSec = isPureMvNoVoice ? 0.16 : 0.45
 
   const args = ['-y']
   const filters = []
@@ -226,7 +244,7 @@ export async function mixVideoAudio({ projectDir, script, assetsManifest, output
     args.push('-i', v.path)
     const lbl = `v${idx}`
     filters.push(
-      `[${idx}:a]aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=${v.delayMs}|${v.delayMs},volume=1.18[${lbl}]`,
+      `[${idx}:a]aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=${v.delayMs}|${v.delayMs},volume=1.06[${lbl}]`,
     )
     voiceLabels.push(`[${lbl}]`)
     idx++
@@ -236,7 +254,7 @@ export async function mixVideoAudio({ projectDir, script, assetsManifest, output
   if (procSfxWav && existsSync(procSfxWav)) {
     args.push('-i', procSfxWav)
     const lbl = `sxproc`
-    filters.push(`[${idx}:a]aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.82[${lbl}]`)
+    filters.push(`[${idx}:a]aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${isPureMvNoVoice ? '1.15' : '0.88'}[${lbl}]`)
     sfxLabels.push(`[${lbl}]`)
     idx++
   }
@@ -255,12 +273,19 @@ export async function mixVideoAudio({ projectDir, script, assetsManifest, output
     args.push('-stream_loop', '-1', '-t', String(totalSec), '-i', absBgm)
     bgmIdx = idx++
     const fadeOutStart = Math.max(0, Number((totalSec - 1.5).toFixed(2)))
-    filters.push(
-      `[${bgmIdx}:a]aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${bgmVol},afade=t=in:st=0:d=0.45,afade=t=out:st=${fadeOutStart}:d=1.5[bgm_raw]`,
-    )
+    if (isPureMvNoVoice) {
+      filters.push(
+        `[${bgmIdx}:a]aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,loudnorm=I=-14.5:TP=-2.0:LRA=6,volume=${bgmVol},afade=t=in:st=0:d=${bgmFadeInSec},afade=t=out:st=${fadeOutStart}:d=1.5[bgm_raw]`,
+      )
+    } else {
+      filters.push(
+        `[${bgmIdx}:a]aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${bgmVol},afade=t=in:st=0:d=${bgmFadeInSec},afade=t=out:st=${fadeOutStart}:d=1.5[bgm_raw]`,
+      )
+    }
   }
 
   const mixInputs = [`[${baseIdx}:a]`]
+  let bgmStreamForMix = hasBgm ? '[bgm_raw]' : ''
 
   if (voiceLabels.length > 0) {
     if (voiceLabels.length === 1) {
@@ -271,25 +296,35 @@ export async function mixVideoAudio({ projectDir, script, assetsManifest, output
     if (hasBgm) {
       filters.push('[voices]asplit=2[v_out][v_sc]')
       mixInputs.push('[v_out]')
-      filters.push('[bgm_raw][v_sc]sidechaincompress=threshold=0.02:ratio=6:attack=12:release=280[bgm_ducked]')
-      mixInputs.push('[bgm_ducked]')
+      filters.push('[bgm_raw][v_sc]sidechaincompress=threshold=0.025:ratio=4.5:attack=16:release=260[bgm_vduck]')
+      bgmStreamForMix = '[bgm_vduck]'
     } else {
       mixInputs.push('[voices]')
     }
-  } else if (hasBgm) {
-    mixInputs.push('[bgm_raw]')
   }
 
   if (sfxLabels.length > 0) {
+    const sfxBoost = isPureMvNoVoice ? '1.65' : '1.18'
     if (sfxLabels.length === 1) {
-      filters.push(`${sfxLabels[0]}apad,atrim=0:${totalSec}[sfx]`)
+      filters.push(`${sfxLabels[0]}apad,atrim=0:${totalSec},volume=${sfxBoost},alimiter=limit=0.78:level=disabled:attack=2:release=50[sfx_bus]`)
     } else {
-      filters.push(`${sfxLabels.join('')}amix=inputs=${sfxLabels.length}:normalize=0:duration=longest,apad,atrim=0:${totalSec}[sfx]`)
+      filters.push(`${sfxLabels.join('')}amix=inputs=${sfxLabels.length}:normalize=0:duration=longest,apad,atrim=0:${totalSec},volume=${sfxBoost},alimiter=limit=0.78:level=disabled:attack=2:release=50[sfx_bus]`)
     }
-    mixInputs.push('[sfx]')
+    if (hasBgm && bgmStreamForMix) {
+      // Transient micro-duck BGM ~2-4dB on impact/transition SFX bursts so cuts punch crisply across any music genre
+      filters.push('[sfx_bus]asplit=2[sfx_out][sfx_sc]')
+      filters.push(`${bgmStreamForMix}[sfx_sc]sidechaincompress=threshold=0.055:ratio=2.6:attack=3:release=115[bgm_final]`)
+      mixInputs.push('[bgm_final]')
+      mixInputs.push('[sfx_out]')
+    } else {
+      if (hasBgm && bgmStreamForMix) mixInputs.push(bgmStreamForMix)
+      mixInputs.push('[sfx_bus]')
+    }
+  } else if (hasBgm && bgmStreamForMix) {
+    mixInputs.push(bgmStreamForMix)
   }
 
-  filters.push(`${mixInputs.join('')}amix=inputs=${mixInputs.length}:normalize=0:duration=first,alimiter=limit=0.92[master]`)
+  filters.push(`${mixInputs.join('')}amix=inputs=${mixInputs.length}:normalize=0:duration=first,alimiter=limit=0.74:level=disabled:attack=2:release=50[master]`)
   args.push('-filter_complex', filters.join(';'), '-map', '[master]', '-c:a', 'pcm_s16le', '-ar', String(SR), '-t', String(totalSec), outWav)
 
   const res = await runCommandRedirected(ffmpeg, args, { timeoutMs: 120_000, signal, onChild })

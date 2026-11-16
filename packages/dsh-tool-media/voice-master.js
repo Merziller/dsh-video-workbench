@@ -9,6 +9,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import {
+  alignSubtitlesToSpeechAudio,
   probeAudioDuration,
   readScriptJson,
   resolveBinaries,
@@ -95,15 +96,16 @@ function buildAdaptivePresetForScene(scene, telemetry, style = 'tech') {
   const targetLufs = isCinematic ? -15.0 : -15.5
   const highpassHz = isWarm ? 72 : 85
   const lowWarmthFreq = isCinematic ? 175 : 200
-  const lowWarmthGainDb = isCinematic ? 2.2 : isWarm ? 2.0 : 1.3
-  const mudCutDb = telemetry.integratedLufs < -22 ? -1.2 : -1.8
-  const presenceFreq = isHighEnergy ? 3600 : 3200
-  const presenceGainDb = isHighEnergy ? 2.5 : 1.9
-  const deEssDb = telemetry.dynamicCrestDb > 18 ? -2.4 : -1.6
+  const lowWarmthGainDb = isCinematic ? 1.4 : isWarm ? 1.2 : 0.8
+  const mudCutDb = telemetry.integratedLufs < -22 ? -0.9 : -1.2
+  const presenceFreq = isHighEnergy ? 3500 : 3100
+  const presenceGainDb = isHighEnergy ? 1.6 : 1.2
+  const deEssDb = telemetry.dynamicCrestDb > 18 ? -1.8 : -1.2
+  const needsComp = telemetry.loudnessRangeLu > 4.5 || telemetry.dynamicCrestDb > 15
 
   return {
     sceneId: scene.id,
-    rationale: `自适应人声母带：将 ${telemetry.integratedLufs.toFixed(1)} LUFS 统一至 ${targetLufs} LUFS，${highpassHz}Hz 低切防喷麦并提升 ${presenceFreq}Hz 明亮度。`,
+    rationale: `广播级透明人声母带：保持自然动态范围 (LRA ${telemetry.loudnessRangeLu.toFixed(1)} LU)，校准至 ${targetLufs} LUFS，${highpassHz}Hz 低切清噪并微提 ${presenceFreq}Hz 清晰度。`,
     highpassHz,
     lowWarmthFreq,
     lowWarmthGainDb,
@@ -112,10 +114,10 @@ function buildAdaptivePresetForScene(scene, telemetry, style = 'tech') {
     presenceGainDb,
     deEssFreq: 6400,
     deEssDb,
-    compThresholdDb: -18,
-    compRatio: isCinematic ? 3.0 : 2.6,
-    airBoostDb: isWarm ? 0.8 : 1.3,
-    reverbWet: isCinematic ? 0.05 : isWarm ? 0.04 : 0.025,
+    compThresholdDb: -15,
+    compRatio: needsComp ? 1.9 : 1.2,
+    airBoostDb: isWarm ? 0.5 : 0.9,
+    reverbWet: isCinematic ? 0.015 : 0,
     targetLufs,
     trimLeadingSilence: telemetry.leadingSilenceSec > 0.35,
   }
@@ -128,17 +130,17 @@ function clampSpec(raw, scene, telemetry, style) {
     rationale: String(raw?.rationale || fb.rationale).trim(),
     highpassHz: Math.round(clamp(raw?.highpassHz, 60, 140, fb.highpassHz)),
     lowWarmthFreq: Math.round(clamp(raw?.lowWarmthFreq, 130, 300, fb.lowWarmthFreq)),
-    lowWarmthGainDb: Number(clamp(raw?.lowWarmthGainDb, -2.5, 4.5, fb.lowWarmthGainDb).toFixed(2)),
-    mudCutDb: Number(clamp(raw?.mudCutDb, -5.0, 0.5, fb.mudCutDb).toFixed(2)),
+    lowWarmthGainDb: Number(clamp(raw?.lowWarmthGainDb, -2.0, 2.5, fb.lowWarmthGainDb).toFixed(2)),
+    mudCutDb: Number(clamp(raw?.mudCutDb, -3.5, 0.5, fb.mudCutDb).toFixed(2)),
     presenceFreq: Math.round(clamp(raw?.presenceFreq, 2200, 5000, fb.presenceFreq)),
-    presenceGainDb: Number(clamp(raw?.presenceGainDb, -1.0, 4.5, fb.presenceGainDb).toFixed(2)),
+    presenceGainDb: Number(clamp(raw?.presenceGainDb, -1.0, 2.6, fb.presenceGainDb).toFixed(2)),
     deEssFreq: Math.round(clamp(raw?.deEssFreq, 5200, 8200, fb.deEssFreq)),
-    deEssDb: Number(clamp(raw?.deEssDb, -5.0, 0.0, fb.deEssDb).toFixed(2)),
-    compThresholdDb: Number(clamp(raw?.compThresholdDb, -26, -10, fb.compThresholdDb).toFixed(1)),
-    compRatio: Number(clamp(raw?.compRatio, 1.5, 5.0, fb.compRatio).toFixed(2)),
-    airBoostDb: Number(clamp(raw?.airBoostDb, -1.0, 3.0, fb.airBoostDb).toFixed(2)),
-    reverbWet: Number(clamp(raw?.reverbWet, 0, 0.12, fb.reverbWet).toFixed(3)),
-    targetLufs: Number(clamp(raw?.targetLufs, -19.0, -12.5, fb.targetLufs).toFixed(1)),
+    deEssDb: Number(clamp(raw?.deEssDb, -3.5, 0.0, fb.deEssDb).toFixed(2)),
+    compThresholdDb: Number(clamp(raw?.compThresholdDb, -22, -10, fb.compThresholdDb).toFixed(1)),
+    compRatio: Number(clamp(raw?.compRatio, 1.1, 2.6, fb.compRatio).toFixed(2)),
+    airBoostDb: Number(clamp(raw?.airBoostDb, -1.0, 2.0, fb.airBoostDb).toFixed(2)),
+    reverbWet: Number(clamp(raw?.reverbWet, 0, 0.035, fb.reverbWet).toFixed(3)),
+    targetLufs: Number(clamp(raw?.targetLufs, -18.5, -13.5, fb.targetLufs).toFixed(1)),
     trimLeadingSilence:
       raw?.trimLeadingSilence !== undefined ? Boolean(raw.trimLeadingSilence) : fb.trimLeadingSilence,
   }
@@ -156,7 +158,7 @@ async function applyFfmpegVocalChain(ffmpeg, srcWav, dstWav, spec) {
     `equalizer=f=${spec.presenceFreq}:t=q:w=1.2:g=${spec.presenceGainDb}`,
     `equalizer=f=${spec.deEssFreq}:t=q:w=2.0:g=${spec.deEssDb}`,
     `highshelf=f=9500:g=${spec.airBoostDb}`,
-    `acompressor=threshold=${spec.compThresholdDb}dB:ratio=${spec.compRatio}:attack=8:release=140:makeup=1.5`,
+    ...(spec.compRatio > 1.25 ? [`acompressor=threshold=${spec.compThresholdDb}dB:ratio=${spec.compRatio}:attack=18:release=200:makeup=1`] : []),
   ]
 
   let filterComplex = ''
@@ -166,17 +168,17 @@ async function applyFfmpegVocalChain(ffmpeg, srcWav, dstWav, spec) {
     tempoChain.push(`atempo=${safeTempo.toFixed(3)}`)
   }
   const fullChain = [...baseFilters, ...tempoChain]
+  const loudnormChain = `loudnorm=I=${spec.targetLufs}:TP=-1.5:LRA=11:linear=true,alimiter=limit=0.95`
   if (spec.reverbWet > 0.005) {
-    const dryWeight = Math.max(0.75, Number((1 - spec.reverbWet).toFixed(3)))
+    const dryWeight = Math.max(0.85, Number((1 - spec.reverbWet).toFixed(3)))
     const wet2 = Number((spec.reverbWet * 0.55).toFixed(3))
     filterComplex =
       `[0:a]${fullChain.join(',')},asplit=2[vd][vr];` +
       `[vr]aecho=0.8:0.72:26|46:${spec.reverbWet}|${wet2}[vr_wet];` +
       `[vd][vr_wet]amix=inputs=2:normalize=0:weights=${dryWeight}|1,` +
-      `loudnorm=I=${spec.targetLufs}:TP=-1.5:LRA=7,alimiter=limit=0.92[v_master]`
+      `${loudnormChain}[v_master]`
   } else {
-    filterComplex =
-      `[0:a]${fullChain.join(',')},loudnorm=I=${spec.targetLufs}:TP=-1.5:LRA=7,alimiter=limit=0.92[v_master]`
+    filterComplex = `[0:a]${fullChain.join(',')},${loudnormChain}[v_master]`
   }
 
   const res = await runCommandRedirected(
@@ -370,6 +372,26 @@ export async function masterVoiceTracks({
     sc.voiceDurationSec = after.durationSec
     sc.durationSec = Number((leadSec + after.durationSec + tailSec).toFixed(4))
     sc.durationInFrames = Math.max(1, Math.ceil(sc.durationSec * fps))
+
+    // Re-sync subtitle cue boundaries against the actual mastered/retimed vocal waveform
+    const subMaxW =
+      Number(script.width) < Number(script.height) ? 11 : Number(script.width) === Number(script.height) ? 13 : 16
+    if (sc.narration || sc.subtitleText || (Array.isArray(sc.subChunks) && sc.subChunks.length > 0)) {
+      const syncedSubs = await alignSubtitlesToSpeechAudio({
+        audioPath: dstAbs,
+        narration: sc.narration,
+        subtitleText: sc.subtitleText,
+        subChunks: sc.subChunks,
+        leadSec,
+        durationSec: after.durationSec,
+        fps,
+        maxLineWidth: subMaxW,
+      })
+      if (syncedSubs.length > 0) {
+        sc.subtitles = syncedSubs
+        sc.subChunks = syncedSubs.map((s) => s.text)
+      }
+    }
 
     results.push({
       sceneId: sc.id,

@@ -29,6 +29,7 @@ import {
   executeGenerateAvatar,
   getAvatarProviderSummary,
   probeVideoStream,
+  saveAvatarConfig,
 } from '@dsh-video/tool-avatar'
 import {
   cloneRecordedVoice,
@@ -45,9 +46,11 @@ import {
   runPostRenderQa,
 } from '@dsh-video/tool-video-suite'
 import {
+  analyzeAudioBeatStructure,
   callLlmChat,
   exportPublishPack,
   generateAiCodedBgmTrack,
+  generateBgmWav,
   getAiCodingHistory,
   getSafeLlmConfigSummary,
   importAssets,
@@ -185,6 +188,77 @@ export function listVideoProjects() {
     } catch {}
   }
   return { workspaceRoot: wsRoot, projects }
+}
+
+/**
+ * Expand a short user video idea into a structured director prompt while preserving user assets and URLs.
+ */
+export async function polishTopicPrompt(body = {}, { fetchImpl } = {}) {
+  const rawPrompt = String(body.rawPrompt || body.topic || '').trim()
+  if (!rawPrompt) {
+    const err = new Error('请先在输入框中写一句简单需求，再点击 AI 润色。')
+    err.status = 400
+    throw err
+  }
+  const overrideConfig = body.llmOverride && typeof body.llmOverride === 'object' ? body.llmOverride : undefined
+  const llmSummary = getSafeLlmConfigSummary()
+  if (!llmSummary.configured && !overrideConfig) {
+    const err = new Error('当前尚未配置可用的大模型 API，请先在右上角「模型配置」连接或同步 DSH 客户端模型。')
+    err.status = 400
+    throw err
+  }
+  const projectDir = body.projectDir || ''
+  const manifest = projectDir ? readAssets(projectDir) : { items: [], notes: [] }
+  const visualList = (manifest.items || [])
+    .filter((it) => it.type === 'image' || it.type === 'video')
+    .map((it) => `${it.originalName || it.name || it.path} (${it.type}${it.width ? ` ${it.width}x${it.height}` : ''})`)
+    .slice(0, 16)
+  const musicList = (manifest.items || []).filter((it) => it.role === 'music').map((it) => it.originalName || it.name)
+  const noteSnippets = (manifest.notes || []).map((n) => String(n.text || '').slice(0, 600)).filter(Boolean)
+
+  const systemPrompt = `你是深谙短视频爆款结构与产品发布的顶级视频总导演。
+用户只输入了一句简单直观的想法，请你帮他将其润色扩写为一段可直接驱动 AI 团队（策划导演 + 素材剪辑 + 配音混音 + Remotion/HTML动效）产出高质量成品的完整中文导演指令！
+要求：
+1. 直接输出润色后的纯文本导演指令正文，**禁止**附加开场寒暄（如“好的，以下是...”）、Markdown 标题前缀或代码块围栏。
+2. 结构紧凑有力（约 120~280 字），包含：核心叙事视角/开场黄金 3 秒钩子、结合实际可用素材（或无素材时定制纯代码动效）的分段结构、贴合题材的节奏基调、结尾号召/落款要点。
+3. 严禁虚构不存在的数据指标，若用户提供了具体产品名、链接或网址须原样保留，不要丢掉用户的原意。`
+
+  const userMsg = JSON.stringify({
+    userInput: rawPrompt,
+    style: body.style || 'tech',
+    aspectRatio: body.aspectRatio || 'auto',
+    targetPlatform: body.targetPlatform || 'universal',
+    pacingMode: body.pacingMode || 'auto',
+    creationMode: body.creationMode || 'ai-coded',
+    narrationMode: body.narrationMode || 'tts',
+    uploadedVisualAssets: visualList,
+    uploadedMusic: musicList,
+    uploadedNotes: noteSnippets,
+  })
+
+  const reply = await callLlmChat({
+    ...(overrideConfig ? { overrideConfig } : {}),
+    ...(fetchImpl ? { fetchImpl } : {}),
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMsg }],
+    temperature: 0.45,
+    maxTokens: 1200,
+    timeoutMs: 60_000,
+  })
+  const polishedTopic = String(reply?.text || '')
+    .replace(/^```[\w]*\r?\n?/, '')
+    .replace(/\r?\n?```$/, '')
+    .trim()
+  if (!polishedTopic) {
+    const err = new Error('大模型未返回有效润色文本，请稍后重试。')
+    err.status = 502
+    throw err
+  }
+  return {
+    ok: true,
+    polishedTopic,
+    model: reply.model || overrideConfig?.model || llmSummary.model,
+  }
 }
 
 /**
@@ -453,7 +527,11 @@ export async function handleWorkbenchApiRequest(req) {
         requestedAspectRatio: dims.requestedAspectRatio,
         quality: dims.quality,
         dimensionReason: dims.reason,
-        aiBadge: body.aiBadge !== undefined ? Boolean(body.aiBadge) : true,
+        aiBadge: body.aiBadgeEnabled !== undefined ? Boolean(body.aiBadgeEnabled) : (body.aiBadge !== undefined ? Boolean(body.aiBadge) : true),
+        aiBadgeEnabled: body.aiBadgeEnabled !== undefined ? Boolean(body.aiBadgeEnabled) : (body.aiBadge !== undefined ? Boolean(body.aiBadge) : true),
+        aiBadgePosition: body.aiBadgePosition || 'top-right',
+        aiBadgeText: body.aiBadgeText || '',
+        pacingMode: body.pacingMode || 'auto',
         targetPlatform: body.targetPlatform || 'universal',
         bgmMode: body.bgmMode || 'auto',
         creationMode: body.creationMode || 'ai-coded',
@@ -535,28 +613,50 @@ export async function handleWorkbenchApiRequest(req) {
       })
     }
 
-    // 3c. POST /api/video-workbench/assets/upload (upload browser-picked files/folders)
+    // 3c. POST /api/video-workbench/assets/upload (supports raw binary stream OR legacy JSON base64 files[])
     if (pathname === '/api/video-workbench/assets/upload' && req.method === 'POST') {
-      const body = await parseRequestJson(req)
-      const { projectDir, files } = body
-      if (!projectDir || !Array.isArray(files) || files.length === 0) {
-        return jsonResponse({ ok: false, error: 'projectDir and files[] are required' }, 400)
-      }
+      const ct = String(req.headers.get('content-type') || '').toLowerCase()
+      let projectDir = ''
+      let uploadRole = ''
       const savedPaths = []
-      for (const file of files) {
-        if (!file?.name || typeof file.dataBase64 !== 'string') continue
-        const cleanB64 = file.dataBase64.replace(/^data:[^;]+;base64,/, '')
-        const buf = Buffer.from(cleanB64, 'base64')
-        const savedPath = await saveUploadedAsset(projectDir, file.name, buf)
+
+      if (ct.includes('application/json')) {
+        const body = await parseRequestJson(req)
+        projectDir = body.projectDir || ''
+        uploadRole = body.role ? String(body.role) : ''
+        const files = body.files
+        if (!projectDir || !Array.isArray(files) || files.length === 0) {
+          return jsonResponse({ ok: false, error: 'projectDir and files[] are required' }, 400)
+        }
+        for (const file of files) {
+          if (!file?.name || typeof file.dataBase64 !== 'string') continue
+          const cleanB64 = file.dataBase64.replace(/^data:[^;]+;base64,/, '')
+          const buf = Buffer.from(cleanB64, 'base64')
+          const savedPath = await saveUploadedAsset(projectDir, file.name, buf)
+          savedPaths.push(savedPath)
+        }
+      } else {
+        projectDir = url.searchParams.get('projectDir') || ''
+        uploadRole = url.searchParams.get('role') || ''
+        const fileName = url.searchParams.get('fileName') || `upload-${Date.now()}.bin`
+        if (!projectDir) {
+          return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
+        }
+        const buf = Buffer.from(await req.arrayBuffer())
+        if (!buf || buf.length === 0) {
+          return jsonResponse({ ok: false, error: 'Uploaded binary file is empty' }, 400)
+        }
+        const savedPath = await saveUploadedAsset(projectDir, fileName, buf)
         savedPaths.push(savedPath)
       }
+
       const res = await importAssets({
         projectDir,
         sources: savedPaths,
       })
-      if (body.role && Array.isArray(res.added)) {
+      if (uploadRole && Array.isArray(res.added)) {
         for (const item of res.added) {
-          updateAsset(projectDir, item.id, { role: String(body.role) })
+          updateAsset(projectDir, item.id, { role: uploadRole })
         }
       }
       const manifest = readAssets(projectDir)
@@ -747,47 +847,76 @@ export async function handleWorkbenchApiRequest(req) {
       })
     }
 
-    // 4d. POST /api/video-workbench/bgm/upload (dedicated BGM uploader + script bgmMode binder)
+    // 4d. POST /api/video-workbench/bgm/upload (dedicated BGM uploader: raw binary OR JSON base64)
     if (pathname === '/api/video-workbench/bgm/upload' && req.method === 'POST') {
-      const body = await parseRequestJson(req)
-      if (!body.projectDir || !body.fileName || !body.dataBase64) {
-        return jsonResponse({ ok: false, error: 'projectDir, fileName, and dataBase64 are required' }, 400)
+      const ct = String(req.headers.get('content-type') || '').toLowerCase()
+      let projectDir = ''
+      let fileName = `bgm-${Date.now()}.mp3`
+      let description = '用户自由上传的背景音乐 BGM'
+      let buf = null
+      if (ct.includes('application/json')) {
+        const body = await parseRequestJson(req)
+        projectDir = body.projectDir || ''
+        fileName = body.fileName || fileName
+        description = body.description || description
+        if (typeof body.dataBase64 === 'string') {
+          buf = Buffer.from(body.dataBase64.replace(/^data:[^;]+;base64,/, ''), 'base64')
+        }
+      } else {
+        projectDir = url.searchParams.get('projectDir') || ''
+        fileName = url.searchParams.get('fileName') || fileName
+        buf = Buffer.from(await req.arrayBuffer())
       }
-      const cleanB64 = String(body.dataBase64).replace(/^data:[^;]+;base64,/, '')
-      const buf = Buffer.from(cleanB64, 'base64')
-      const safeName = `bgm-${basename(body.fileName)}`
-      const savedPath = await saveUploadedAsset(body.projectDir, safeName, buf)
-      const imp = await importAssets({ projectDir: body.projectDir, sources: [savedPath] })
-      const manifestBefore = readAssets(body.projectDir)
+      if (!projectDir || !buf || buf.length === 0) {
+        return jsonResponse({ ok: false, error: 'projectDir and BGM audio payload are required' }, 400)
+      }
+      const safeName = `bgm-${basename(fileName)}`
+      const savedPath = await saveUploadedAsset(projectDir, safeName, buf)
+      const imp = await importAssets({ projectDir, sources: [savedPath] })
+      const manifestBefore = readAssets(projectDir)
       const uploadedItem =
         manifestBefore.items.find((x) => x.id === imp.added?.[0]?.id) ||
-        manifestBefore.items.find((x) => x.type === 'audio' && (x.originalName === safeName || x.originalName === basename(body.fileName))) ||
+        manifestBefore.items.find((x) => x.type === 'audio' && (x.originalName === safeName || x.originalName === basename(fileName))) ||
         manifestBefore.items.find((x) => x.role === 'music' || x.type === 'audio')
       if (!uploadedItem) {
         return jsonResponse({ ok: false, error: '上传文件未识别为有效音频格式 (.mp3/.wav/.flac/.m4a/.ogg/.aac)' }, 400)
       }
-      const patchedAsset = updateAsset(body.projectDir, uploadedItem.id, {
+      const patchedAsset = updateAsset(projectDir, uploadedItem.id, {
         role: 'music',
-        description: body.description || '用户自由上传的背景音乐 BGM',
+        description,
       })
-      const { data } = readScriptJson(body.projectDir)
+      let beatInfo = null
+      try {
+        beatInfo = await analyzeAudioBeatStructure(savedPath)
+      } catch {}
+      const { data } = readScriptJson(projectDir)
       data.bgmMode = 'uploaded'
-      data.audioSpec = { ...(data.audioSpec || {}), bgmMode: 'uploaded' }
+      data.audioSpec = { ...(data.audioSpec || {}), bgmMode: 'uploaded', ...(beatInfo?.bpm ? { bpm: beatInfo.bpm } : {}) }
       data.bgm = {
         ...(data.bgm || {}),
+        ...(beatInfo || {}),
         enabled: true,
         mode: 'uploaded',
         uploadedPath: patchedAsset.path,
         path: patchedAsset.path,
         source: 'user-imported',
       }
-      writeScriptJson(body.projectDir, data)
-      const manifest = readAssets(body.projectDir)
+      writeScriptJson(projectDir, data)
+      const manifest = readAssets(projectDir)
       return jsonResponse({
         ok: true,
         asset: patchedAsset,
+        beatAnalysis: beatInfo
+          ? {
+              bpm: beatInfo.bpm,
+              phaseSec: beatInfo.phaseSec,
+              durationSec: beatInfo.durationSec,
+              downbeatsCount: beatInfo.downbeats?.length || 0,
+              dropsCount: beatInfo.drops?.length || 0,
+            }
+          : null,
         assets: manifest.items || [],
-        script: readScriptJson(body.projectDir).data,
+        script: readScriptJson(projectDir).data,
       })
     }
 
@@ -1072,6 +1201,7 @@ export async function handleWorkbenchApiRequest(req) {
           ...(body.targetPlatform ? { targetPlatform: body.targetPlatform } : {}),
           ...(body.bgmMode ? { bgmMode: body.bgmMode, audioSpec: { ...(data.audioSpec || {}), bgmMode: body.bgmMode } } : {}),
           ...(body.creationMode ? { creationMode: body.creationMode } : {}),
+          ...(body.narrationMode ? { narrationMode: body.narrationMode } : {}),
           ...(body.engine ? { engine: body.engine } : {}),
         })
         syncProjectCodeFromScript(projectDir, updated.data)
@@ -1291,6 +1421,56 @@ export async function handleWorkbenchApiRequest(req) {
       })
     }
 
+    // 6f-2. POST /api/video-workbench/assets/starter-pack (1-click beginner demo assets)
+    if (pathname === '/api/video-workbench/assets/starter-pack' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      if (!body.projectDir) return jsonResponse({ ok: false, error: 'projectDir is required' }, 400)
+      const absDir = resolve(body.projectDir)
+      const starterDir = join(absDir, 'uploads', '_starter-pack')
+      mkdirSync(starterDir, { recursive: true })
+      const { ffmpeg } = resolveBinaries()
+      const slides = [
+        { name: '01-cinema-opener.png', expr: "gradients=s=1280x720:c0=0x1e3a8a:c1=0x38bdf8:nb_colors=4:seed=11,eq=contrast=1.12:saturation=1.35", role: 'visual' },
+        { name: '02-aurora-showcase.png', expr: "gradients=s=1280x720:c0=0x0b2b36:c1=0x1ea896:nb_colors=4:seed=27,eq=contrast=1.08:saturation=1.28", role: 'visual' },
+        { name: '03-amber-finale.png', expr: "gradients=s=1280x720:c0=0x2a1a0a:c1=0xd97706:nb_colors=4:seed=42,eq=contrast=1.08:saturation=1.22", role: 'visual' },
+      ]
+      const generatedFiles = []
+      for (const sl of slides) {
+        const outPng = join(starterDir, sl.name)
+        const ff = await runCommandRedirected(
+          ffmpeg,
+          ['-y', '-f', 'lavfi', '-i', sl.expr, '-frames:v', '1', outPng],
+          { timeoutMs: 20_000 },
+        ).catch(() => ({ code: 1 }))
+        if (ff.code !== 0 || !existsSync(outPng)) {
+          await runCommandRedirected(
+            ffmpeg,
+            ['-y', '-f', 'lavfi', '-i', `color=c=#13243e:s=1280x720:d=0.1`, '-frames:v', '1', outPng],
+            { timeoutMs: 15_000 },
+          )
+        }
+        if (existsSync(outPng)) generatedFiles.push(outPng)
+      }
+      const starterBgm = join(starterDir, 'starter-cinematic-bgm.wav')
+      generateBgmWav({ durationSec: 18, mood: 'cinematic', bpm: 108, outPath: starterBgm })
+      if (existsSync(starterBgm)) generatedFiles.push(starterBgm)
+
+      const res = await importAssets({ projectDir: absDir, sources: generatedFiles })
+      const manifest = readAssets(absDir)
+      for (const item of manifest.items || []) {
+        if (item.originalName?.includes('starter-cinematic-bgm')) {
+          updateAsset(absDir, item.id, { role: 'music', description: '新手试玩演示配乐' })
+        }
+      }
+      const finalManifest = readAssets(absDir)
+      return jsonResponse({
+        ok: true,
+        addedCount: res.addedCount || generatedFiles.length,
+        manifest: finalManifest,
+        summary: summarizeAssets(finalManifest),
+      })
+    }
+
     // 6g. POST /api/video-workbench/teleprompter/generate (AI Teleprompter script lines)
     if (pathname === '/api/video-workbench/teleprompter/generate' && req.method === 'POST') {
       const body = await parseRequestJson(req)
@@ -1371,6 +1551,29 @@ export async function handleWorkbenchApiRequest(req) {
           : '',
         script: updatedScript,
       })
+    }
+
+    // 6h-2. GET/POST /api/video-workbench/avatar/config (External MuseTalk / LatentSync config)
+    if (pathname === '/api/video-workbench/avatar/config') {
+      if (req.method === 'GET') {
+        return jsonResponse({ ok: true, avatarProvider: getAvatarProviderSummary() })
+      }
+      if (req.method === 'POST') {
+        const body = await parseRequestJson(req)
+        const updated = saveAvatarConfig(body)
+        return jsonResponse({ ok: true, avatarProvider: updated })
+      }
+    }
+
+    // 6h-3. POST /api/video-workbench/polish-topic (AI polish user short prompt into rich director brief)
+    if (pathname === '/api/video-workbench/polish-topic' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      try {
+        const res = await polishTopicPrompt(body)
+        return jsonResponse(res)
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err?.message || String(err) }, Number(err?.status) || 500)
+      }
     }
 
     // 6i. POST /api/video-workbench/skin/upload & GET /api/video-workbench/skin (Custom background skin)
@@ -1491,8 +1694,11 @@ export function apply(ctx) {
       { path: '/api/video-workbench/assets/recording', methods: ['POST'] },
       { path: '/api/video-workbench/assets/role', methods: ['POST'] },
       { path: '/api/video-workbench/assets/curate', methods: ['POST'] },
+      { path: '/api/video-workbench/assets/starter-pack', methods: ['POST'] },
       { path: '/api/video-workbench/teleprompter/generate', methods: ['POST'] },
       { path: '/api/video-workbench/avatar/generate', methods: ['POST'] },
+      { path: '/api/video-workbench/avatar/config', methods: ['GET', 'POST'] },
+      { path: '/api/video-workbench/polish-topic', methods: ['POST'] },
       { path: '/api/video-workbench/skin/upload', methods: ['POST'] },
       { path: '/api/video-workbench/skin', methods: ['GET'] },
       { path: '/api/video-workbench/asset', methods: ['GET'] },
@@ -1517,13 +1723,15 @@ export function apply(ctx) {
     }
   } catch {}
 
-  // 2. Inject Frontend Module (`lib/client.js`) into DSH Web UI (`webui.addStaticModule`)
-  ctx.inject(['webui'], (innerCtx) => {
-    innerCtx.webui.addStaticModule({
-      id: 'dsh-web-video-workbench',
-      path: join(__dirname, 'client.js'),
+  // 2. Inject Frontend Module (`lib/client.js`) into DSH Web UI when webui service is available
+  try {
+    ctx.inject(['webui'], (innerCtx) => {
+      innerCtx?.webui?.addStaticModule?.({
+        id: 'dsh-web-video-workbench',
+        path: join(__dirname, 'client.js'),
+      })
     })
-  })
+  } catch {}
 }
 
 export { VIDEO_MAKER_SYSTEM_PROMPT }

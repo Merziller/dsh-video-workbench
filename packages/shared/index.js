@@ -423,11 +423,27 @@ export function resolveVideoDimensions({
 }
 
 /**
+ * Strip web search citations, markdown links, bare URLs, and citation brackets cleanly
+ * so LLM-grounded narration/subtitles never show `utm_source` or broken `https:` strings.
+ */
+export function sanitizeSpokenNarration(raw = '') {
+  return String(raw || '')
+    .replace(/\(\s*\[[^\]]*\]\(\s*https?:\/\/[^)]*\)\s*\)/gi, '')
+    .replace(/\[([^\]]+)\]\(\s*https?:\/\/[^)]*\)/gi, '$1')
+    .replace(/\(\s*https?:\/\/[^)]*\)/gi, '')
+    .replace(/https?:\/\/[^\s)）\]】"']+/gi, '')
+    .replace(/\[cite[:：\s][^\]]*\]/gi, '')
+    .replace(/\(\s*\)|（\s*）/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+/**
  * Split narration text into clean single-line subtitle cues proportional to character count.
  * Adapts line width automatically for portrait (11 CJK chars), square (13), or landscape (16).
  */
 export function buildSentenceSubtitles(narration, durationSec, fps = 30, opts = {}) {
-  const clean = String(narration || '').trim()
+  const clean = sanitizeSpokenNarration(narration)
   if (!clean || durationSec <= 0) return []
 
   const maxW = Math.max(8, Math.min(20, Number(opts?.maxLineWidth) || 16))
@@ -511,6 +527,205 @@ export function buildSentenceSubtitles(narration, durationSec, fps = 30, opts = 
   })
 }
 
+const stripSubNorm = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .replace(/[\s，。！？；、,!?;:："'""''·｜|\-—_()（）【】\[\]]+/g, '')
+
+/**
+ * Guarantee displayed subtitles match the actual spoken narration words in sequential order.
+ * Rejects paraphrased slogan chunks that diverge from the audio transcript.
+ */
+export function deriveVerbalSubtitleParts(narration, subChunks = null, subtitleText = '', maxLineWidth = 16) {
+  const cleanNar = sanitizeSpokenNarration(narration)
+  const normNar = stripSubNorm(cleanNar)
+
+  if (Array.isArray(subChunks) && subChunks.length > 0) {
+    const cleanChunks = subChunks.map((c) => sanitizeSpokenNarration(c)).filter(Boolean)
+    if (cleanChunks.length > 0) {
+      if (!normNar) return cleanChunks
+      const normChunks = stripSubNorm(cleanChunks.join(''))
+      // Check sequential overlap: ensure chunks cover at least 75% of spoken characters
+      let matchedChars = 0
+      let pos = 0
+      for (const ch of normChunks) {
+        const hit = normNar.indexOf(ch, pos)
+        if (hit >= 0) {
+          matchedChars++
+          pos = hit + 1
+        }
+      }
+      const coverage = matchedChars / Math.max(1, normNar.length)
+      const ratio = normChunks.length / Math.max(1, normNar.length)
+      if (coverage >= 0.72 && ratio >= 0.72 && ratio <= 1.28) {
+        return cleanChunks
+      }
+    }
+  }
+
+  const fallbackSrc = cleanNar || String(subtitleText || '').trim()
+  if (!fallbackSrc) return []
+  return buildSentenceSubtitles(fallbackSrc, 10, 30, { maxLineWidth }).map((s) => s.text)
+}
+
+/**
+ * Detect acoustic pause midpoints and true speech onset/end inside a speech WAV via FFmpeg silencedetect.
+ */
+export async function detectSpeechPauses(audioPath, totalDurationSec = 0) {
+  const result = {
+    onsetSec: 0,
+    speechEndSec: totalDurationSec,
+    pauseMidpoints: [],
+  }
+  if (!audioPath || !existsSync(audioPath)) return result
+
+  try {
+    const { ffmpeg } = resolveBinaries()
+    const res = await runCommandRedirected(
+      ffmpeg,
+      [
+        '-hide_banner',
+        '-i',
+        audioPath,
+        '-af',
+        'silencedetect=noise=-38dB:d=0.14',
+        '-f',
+        'null',
+        process.platform === 'win32' ? 'NUL' : '/dev/null',
+      ],
+      { timeoutMs: 25_000 },
+    )
+    const log = `${res.stderr || ''}\n${res.stdout || ''}`
+    const intervals = []
+    let curStart = null
+    for (const line of log.split(/\r?\n/)) {
+      const sm = /silence_start:\s*([\d.]+)/i.exec(line)
+      if (sm) curStart = Number(sm[1])
+      const em = /silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)/i.exec(line)
+      if (em) {
+        const end = Number(em[1])
+        const dur = Number(em[2])
+        const start = curStart !== null ? curStart : Math.max(0, end - dur)
+        intervals.push({ start, end, dur, mid: Number(((start + end) / 2).toFixed(3)) })
+        curStart = null
+      }
+    }
+    if (curStart !== null && totalDurationSec > curStart) {
+      intervals.push({
+        start: curStart,
+        end: totalDurationSec,
+        dur: totalDurationSec - curStart,
+        mid: Number(((curStart + totalDurationSec) / 2).toFixed(3)),
+      })
+    }
+
+    if (intervals.length > 0 && intervals[0].start <= 0.08 && intervals[0].end < totalDurationSec * 0.45) {
+      result.onsetSec = Math.max(0, Number((intervals[0].end - 0.04).toFixed(3)))
+    }
+    const last = intervals[intervals.length - 1]
+    if (last && totalDurationSec > 0 && Math.abs(last.end - totalDurationSec) <= 0.18 && last.start > result.onsetSec + 0.35) {
+      result.speechEndSec = Math.max(result.onsetSec + 0.35, Number((last.start + 0.05).toFixed(3)))
+    }
+    result.pauseMidpoints = intervals
+      .filter((iv) => iv.mid > result.onsetSec + 0.25 && iv.mid < (result.speechEndSec || totalDurationSec) - 0.25)
+      .map((iv) => iv.mid)
+  } catch {}
+  return result
+}
+
+/**
+ * Align exact sequential spoken subtitle parts onto acoustic pause midpoints in the actual TTS/mastered WAV.
+ */
+export async function alignSubtitlesToSpeechAudio({
+  audioPath = '',
+  narration = '',
+  subtitleText = '',
+  subChunks = null,
+  leadSec = 0.35,
+  durationSec = 0,
+  fps = 30,
+  maxLineWidth = 16,
+} = {}) {
+  const safeFps = Number(fps) > 0 ? Number(fps) : 30
+  const dur = Math.max(0.2, Number(durationSec) || 0)
+  const parts = deriveVerbalSubtitleParts(narration, subChunks, subtitleText, maxLineWidth)
+  if (parts.length === 0) return []
+
+  const pauses = await detectSpeechPauses(audioPath, dur)
+  const onset = Math.max(0, Math.min(dur * 0.35, Number(pauses.onsetSec || 0)))
+  const finish = Math.max(onset + 0.3, Math.min(dur, Number(pauses.speechEndSec || dur)))
+  const activeDur = Math.max(0.3, finish - onset)
+
+  if (parts.length === 1) {
+    const s0 = Number(leadSec.toFixed(3))
+    const s1 = Number((leadSec + Math.max(finish, onset + 0.4)).toFixed(3))
+    const sf = Math.floor(s0 * safeFps)
+    const ef = Math.max(sf + 1, Math.ceil(s1 * safeFps))
+    return [{ index: 1, text: parts[0], startSec: s0, endSec: s1, startFrame: sf, endFrame: ef }]
+  }
+
+  const weights = parts.map((c) => Math.max(2, c.replace(/[^\w\u4e00-\u9fa5]/g, '').length))
+  const totalW = weights.reduce((a, b) => a + b, 0) || 1
+  const rawBoundaries = [onset]
+  let accW = 0
+  for (let i = 0; i < parts.length - 1; i++) {
+    accW += weights[i]
+    rawBoundaries.push(onset + (activeDur * accW) / totalW)
+  }
+  rawBoundaries.push(finish)
+
+  // Snap internal boundaries onto nearest unclaimed FFmpeg-detected breath pauses with minimum readability floors
+  const snapped = [onset]
+  const usedPauseIdx = new Set()
+  const maxSnapWindow = Math.max(0.45, activeDur * 0.24)
+  const minDurFor = (idx) => Math.min(activeDur / parts.length, Math.max(0.72, weights[idx] * 0.085))
+  for (let i = 1; i < parts.length; i++) {
+    const target = rawBoundaries[i]
+    const prevBound = snapped[i - 1]
+    const prevMinDur = minDurFor(i - 1)
+    let remMin = 0
+    for (let k = i; k < parts.length; k++) remMin += minDurFor(k)
+    const minBound = prevBound + prevMinDur
+    const maxAllowed = Math.max(minBound, finish - remMin)
+    const idealSpan = rawBoundaries[i] - rawBoundaries[i - 1]
+    let bestMid = Math.max(minBound, Math.min(maxAllowed, target))
+    let bestDist = Infinity
+    let bestIdx = -1
+
+    for (let pi = 0; pi < pauses.pauseMidpoints.length; pi++) {
+      if (usedPauseIdx.has(pi)) continue
+      const cand = pauses.pauseMidpoints[pi]
+      if (cand < minBound || cand > maxAllowed) continue
+      const candSpan = cand - prevBound
+      if (candSpan < idealSpan * 0.48) continue
+      const d = Math.abs(cand - target)
+      if (d <= maxSnapWindow && d < bestDist) {
+        bestDist = d
+        bestMid = cand
+        bestIdx = pi
+      }
+    }
+    if (bestIdx >= 0) usedPauseIdx.add(bestIdx)
+    snapped.push(Math.max(minBound, Math.min(maxAllowed, Number(bestMid.toFixed(3)))))
+  }
+  snapped.push(finish)
+
+  return parts.map((text, ci) => {
+    const s0 = Number((leadSec + (ci === 0 ? 0 : snapped[ci])).toFixed(3))
+    const s1 = Number((leadSec + (ci === parts.length - 1 ? dur : snapped[ci + 1])).toFixed(3))
+    const sf = Math.floor(s0 * safeFps)
+    const ef = Math.max(sf + 1, Math.ceil(s1 * safeFps))
+    return {
+      index: ci + 1,
+      text,
+      startSec: s0,
+      endSec: s1,
+      startFrame: sf,
+      endFrame: ef,
+    }
+  })
+}
+
 /**
  * Ensure Windows 11 project guards (`.npmrc` with local cache to prevent sandbox `EPERM`).
  */
@@ -585,12 +800,43 @@ export function writeScriptJson(projectOrFile, scriptData) {
       currentFrame += durationInFrames
       currentSec += durationSec
 
+      const buildChunkedSubtitles = (chunks) => {
+        const cleanChunks = chunks.map((c) => String(c || '').trim()).filter(Boolean)
+        if (cleanChunks.length === 0) return []
+        const weights = cleanChunks.map((c) => Math.max(2, c.replace(/[^\w\u4e00-\u9fa5]/g, '').length))
+        const sumW = weights.reduce((a, b) => a + b, 0) || 1
+        let cSec = 0
+        return cleanChunks.map((text, ci) => {
+          const isLast = ci === cleanChunks.length - 1
+          const seg = isLast ? Math.max(0.1, Number((durationSec - cSec).toFixed(3))) : Number(((durationSec * weights[ci]) / sumW).toFixed(3))
+          const s0 = Number(cSec.toFixed(3))
+          const s1 = Number((isLast ? durationSec : cSec + seg).toFixed(3))
+          cSec = s1
+          return {
+            index: ci + 1,
+            text,
+            startSec: s0,
+            endSec: s1,
+            startFrame: Math.floor(s0 * fps),
+            endFrame: Math.ceil(s1 * fps),
+          }
+        })
+      }
+
+      const resolvedParts = deriveVerbalSubtitleParts(
+        scene.narration ?? scene.text ?? '',
+        scene.subChunks,
+        scene.subtitleText || scene.caption || '',
+        subtitleMaxW,
+      )
       const subtitles =
         Array.isArray(scene.subtitles) && scene.subtitles.length > 0
           ? scene.subtitles
-          : buildSentenceSubtitles(scene.narration || scene.text || '', durationSec, fps, {
-              maxLineWidth: subtitleMaxW,
-            })
+          : resolvedParts.length > 0
+            ? buildChunkedSubtitles(resolvedParts)
+            : buildSentenceSubtitles(scene.narration || scene.text || scene.subtitleText || '', durationSec, fps, {
+                maxLineWidth: subtitleMaxW,
+              })
 
       return {
         id: scene.id || `scene-${String(idx + 1).padStart(2, '0')}`,

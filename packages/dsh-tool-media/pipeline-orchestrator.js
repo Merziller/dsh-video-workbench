@@ -4,9 +4,11 @@ import {
   buildSentenceSubtitles,
   createAbortError,
   loadEnv,
+  probeAudioDuration,
   readScriptJson,
   resolveBinaries,
   runCommandRedirected,
+  sanitizeSpokenNarration,
   writeScriptJson,
 } from '@dsh-video/shared'
 import { executeGenerateSpeech, matchAllScenesInScript } from '@dsh-video/tool-local-tts'
@@ -15,19 +17,41 @@ import {
   executeVideoLint,
   executeVideoRender,
   executeVideoSnapshot,
-  runTypecheckOnProject,
-  scanAiGeneratedCodeSandbox,
 } from '@dsh-video/tool-video-suite'
 import { importAssets, readAssets } from './asset-manager.js'
 import { planVideoFromAssets, syncProjectCodeFromScript } from './ai-director.js'
+import { buildRichHtmlVideo } from './html-generator.js'
+import { authorBatchedRemotionScenes, runCodeAutoRepairLoop } from './ai-coder.js'
 import { executeCurateAndEditAssets } from './media-editor.js'
 import { generateAiCodedBgmTrack, generateAiCodedSfxCues, synthesizeTtsEngineAudioCue } from './audio-coder.js'
-import { ensureProjectAudioAssets, mixVideoAudio } from './audio-synth.js'
+import {
+  analyzeAudioBeatStructure,
+  buildBeatGrid,
+  choreographBeatSfxCues,
+  ensureProjectAudioAssets,
+  mixVideoAudio,
+  quantizeScenesToBeatGrid,
+} from './audio-synth.js'
 import { buildHtmlCoderSkillsPrompt, buildRemotionCoderSkillsPrompt } from './shotcraft-lib.js'
 import { callLlmChat, extractJsonFromLlmText, getSafeLlmConfigSummary } from './llm-client.js'
 import { runSchemaDirectorWithDegradation } from './plan-schema.js'
 import { writeRemotionProjectFiles } from './remotion-generator.js'
 import { taskManager } from './task-manager.js'
+
+/**
+ * Normalize pipeline execution mode (`local-draft` / `draft` / `fast-draft` -> `fast-draft`).
+ */
+export function resolvePipelineMode(rawMode) {
+  const cleaned = String(rawMode || '').trim()
+  const isDraftMode = ['fast-draft', 'local-draft', 'draft'].includes(cleaned.toLowerCase())
+  const effectiveMode = isDraftMode ? 'fast-draft' : 'ai-coded'
+  return {
+    isDraftMode,
+    effectiveMode,
+    mode: isDraftMode ? 'fast-draft' : cleaned || 'ai-coded',
+    modeLabel: isDraftMode ? '极速本地出片' : 'AI 团队协同出片',
+  }
+}
 import { masterVoiceTracks } from './voice-master.js'
 
 function isDoneTask(run, taskId) {
@@ -44,20 +68,46 @@ async function recomputeCumulativeTimeline(absDir) {
 
   for (let i = 0; i < (script.scenes || []).length; i++) {
     const sc = script.scenes[i]
-    const durSec = Math.max(1.5, Number(sc.durationSec) || 4.0)
-    const durFrames = Math.max(15, Number(sc.durationInFrames) || Math.ceil(durSec * fps))
+    const minScDur = script.narrationMode === 'subtitle-mv' || sc.beatCutAligned ? 0.45 : 1.5
+    const durSec = Math.max(minScDur, Number(sc.durationSec) || 4.0)
+    const durFrames = Math.max(12, Number(sc.durationInFrames) || Math.ceil(durSec * fps))
     sc.startFrame = cursorFrame
     sc.durationInFrames = durFrames
     sc.durationSec = Number((durFrames / fps).toFixed(4))
 
-    if (sc.narration) {
-      const startOffsetSec = Number(sc.voiceLeadSec) || 0.3
-      const voiceDur = Math.max(0.8, sc.voiceDurationSec || sc.durationSec - startOffsetSec - 0.35)
-      sc.subtitles = buildSentenceSubtitles(sc.narration, startOffsetSec, voiceDur, fps, cursorFrame).map((sub) => ({
+    if (Array.isArray(sc.subtitles) && sc.subtitles.length > 0) {
+      sc.subtitles = sc.subtitles.map((sub) => ({ ...sub, sceneId: sc.id }))
+    } else if (sc.narration) {
+      const startOffsetSec = Number.isFinite(Number(sc.voiceLeadSec)) ? Number(sc.voiceLeadSec) : 0.35
+      const voiceDur = Math.max(0.8, Number(sc.voiceDurationSec) || sc.durationSec - startOffsetSec - 0.35)
+      const subMaxW = Number(script.width) < Number(script.height) ? 11 : Number(script.width) === Number(script.height) ? 13 : 16
+      sc.subtitles = buildSentenceSubtitles(sc.narration, voiceDur, fps, { maxLineWidth: subMaxW }).map((sub) => ({
         ...sub,
+        startSec: Number((sub.startSec + startOffsetSec).toFixed(3)),
+        endSec: Number((sub.endSec + startOffsetSec).toFixed(3)),
+        startFrame: Math.floor((sub.startSec + startOffsetSec) * fps),
+        endFrame: Math.ceil((sub.endSec + startOffsetSec) * fps),
         sceneId: sc.id,
       }))
-      allSubs.push(...sc.subtitles)
+    }
+    for (const sub of sc.subtitles || []) {
+      const gStartSec = Number((totalSec + Number(sub.startSec || 0)).toFixed(3))
+      const gEndSec = Number((totalSec + Number(sub.endSec || 0)).toFixed(3))
+      const gStartFrame = cursorFrame + Number(sub.startFrame || 0)
+      const gEndFrame = cursorFrame + Number(sub.endFrame || 0)
+      allSubs.push({
+        ...sub,
+        localStartSec: Number(sub.startSec || 0),
+        localEndSec: Number(sub.endSec || 0),
+        startSec: gStartSec,
+        endSec: gEndSec,
+        startFrame: gStartFrame,
+        endFrame: gEndFrame,
+        globalStartSec: gStartSec,
+        globalEndSec: gEndSec,
+        globalStartFrame: gStartFrame,
+        globalEndFrame: gEndFrame,
+      })
     }
 
     cursorFrame += durFrames
@@ -103,7 +153,7 @@ async function executeMultiAgentRunner(run, helpers) {
   const { signal, onChild, waitIfPaused, updateTask, appendLog } = helpers
   const spec = run.spec || {}
   const absDir = resolve(spec.projectDir || run.projectDir)
-  const mode = spec.mode === 'fast-draft' ? 'fast-draft' : 'ai-coded'
+  const { isDraftMode, effectiveMode: mode } = resolvePipelineMode(spec.mode)
   const engine = spec.engine === 'remotion' ? 'remotion' : 'html'
   const style = spec.style || 'tech'
   const aspectRatio = spec.aspectRatio || 'auto'
@@ -132,7 +182,9 @@ async function executeMultiAgentRunner(run, helpers) {
     })
 
     const preserveExisting = Boolean(spec.preserveExistingScript && existsSync(join(absDir, 'script.json')))
-    if (!preserveExisting) {
+    if (preserveExisting) {
+      // Allow re-running director preservation smoothly
+    } else {
       await planVideoFromAssets({
         projectDir: absDir,
         topic: spec.topic || '',
@@ -143,10 +195,50 @@ async function executeMultiAgentRunner(run, helpers) {
         quality,
         width: spec.width,
         height: spec.height,
-        aiBadge: Boolean(spec.aiBadge),
+        aiBadge: spec.aiBadgeEnabled !== undefined ? Boolean(spec.aiBadgeEnabled) : spec.aiBadge !== false,
+        aiBadgeEnabled: spec.aiBadgeEnabled !== undefined ? Boolean(spec.aiBadgeEnabled) : spec.aiBadge !== false,
+        aiBadgePosition: spec.aiBadgePosition || 'top-right',
+        aiBadgeText: spec.aiBadgeText || (typeof spec.aiBadge === 'string' ? spec.aiBadge : ''),
+        pacingMode: spec.pacingMode || 'auto',
         voiceId,
+        narrationMode: spec.narrationMode || '',
         goal: spec.userPrompt || '',
       })
+    }
+
+    // Analyze uploaded BGM beats BEFORE AI director runs so scene rhythm aligns to measured BPM & drops
+    let analyzedBgmMeta = null
+    {
+      const preScript = readScriptJson(absDir).data
+      const preAssets = readAssets(absDir)
+      const upMusic = (preAssets.items || []).filter((it) => it.role === 'music')
+      const upPath = spec.uploadedBgmPath || upMusic[0]?.path || preScript?.bgm?.uploadedPath || ''
+      if (bgmMode === 'uploaded' && upPath) {
+        const absBgmSrc = isAbsolute(upPath) ? upPath : resolve(absDir, upPath)
+        if (existsSync(absBgmSrc)) {
+          try {
+            updateTask('t-director', {
+              status: 'running',
+              progress: 34,
+              message: '正在分析上传 BGM 真实 BPM、重拍相位与能量高潮区间...',
+            })
+            analyzedBgmMeta = await analyzeAudioBeatStructure(absBgmSrc, { signal })
+            preScript.bgm = {
+              ...(preScript.bgm || {}),
+              ...analyzedBgmMeta,
+              mode: 'uploaded',
+              source: 'user-imported',
+              path: upPath,
+              uploadedPath: upPath,
+            }
+            preScript.audioSpec = { ...(preScript.audioSpec || {}), bgmMode: 'uploaded', bpm: analyzedBgmMeta.bpm }
+            writeScriptJson(absDir, preScript)
+            appendLog('director', `已测得上传 BGM 真实节拍: ${analyzedBgmMeta.bpm} BPM · 首拍 ${analyzedBgmMeta.phaseSec}s · ${analyzedBgmMeta.downbeats.length} 个重拍 · ${analyzedBgmMeta.drops.length} 个高潮突降点`)
+          } catch (err) {
+            appendLog('director', `上传 BGM 节拍解析略过 (${err.message})`, 'warn')
+          }
+        }
+      }
     }
 
     if (signal.aborted) throw createAbortError()
@@ -160,6 +252,9 @@ async function executeMultiAgentRunner(run, helpers) {
       })
       try {
         const curScript = readScriptJson(absDir).data
+        if (Number(spec.targetDurationSec) > 0) {
+          curScript.totalDurationSec = Number(spec.targetDurationSec)
+        }
         const assetsManifest = readAssets(absDir)
         const schemaRes = await runSchemaDirectorWithDegradation({
           projectDir: absDir,
@@ -168,25 +263,79 @@ async function executeMultiAgentRunner(run, helpers) {
           targetPlatform,
           scriptData: curScript,
           assetsManifest,
+          bgmMeta: analyzedBgmMeta,
+          narrationMode: spec.narrationMode || curScript.narrationMode || '',
+          pacingMode: spec.pacingMode || curScript.pacingMode || 'auto',
           callLlmChatFn: (p) => callLlmChat({ ...p, signal }),
         })
         if (schemaRes?.resolved?.resolvedShots?.length >= 2) {
-          const updatedScenes = curScript.scenes.map((oldSc, i) => {
-            const shot = schemaRes.resolved.resolvedShots[i]
-            if (!shot) return oldSc
+          const oldScenes = Array.isArray(curScript.scenes) ? curScript.scenes : []
+          const visualPool = (assetsManifest?.items || []).filter((it) => it.type === 'image' || it.type === 'video')
+          const updatedScenes = schemaRes.resolved.resolvedShots.map((shot, i) => {
+            const oldSc = oldScenes[i] || oldScenes[i % Math.max(1, oldScenes.length)] || {}
+            const fallbackAsset = visualPool.length > 0 ? visualPool[i % visualPool.length] : null
+            const mediaList =
+              Array.isArray(shot.media) && shot.media.length > 0
+                ? shot.media.map((m) => {
+                    const hit = visualPool.find((v) => v.path === m.path || v.editedPath === m.path)
+                    return hit ? { ...m, width: Number(m.width || hit.editedWidth || hit.width || 0), height: Number(m.height || hit.editedHeight || hit.height || 0) } : m
+                  })
+                : shot.explicitZeroAsset
+                  ? []
+                  : Array.isArray(oldSc.media) && oldSc.media.length > 0
+                    ? oldSc.media
+                    : fallbackAsset
+                      ? [{ assetId: fallbackAsset.id, path: fallbackAsset.path, webPath: fallbackAsset.webPath || '', type: fallbackAsset.type, width: Number(fallbackAsset.width || 0), height: Number(fallbackAsset.height || 0) }]
+                      : []
+            const nextNarration = sanitizeSpokenNarration(shot.narration || oldSc.narration || shot.title || '') || sanitizeSpokenNarration(shot.title || '') || `镜头 ${i + 1}`
+            const narrationChanged = Boolean(oldSc.narration && nextNarration && nextNarration !== sanitizeSpokenNarration(oldSc.narration))
             return {
               ...oldSc,
-              title: shot.title || oldSc.title,
-              narration: shot.narration || oldSc.narration,
-              transition: shot.transition || oldSc.transition,
-              durationSec: Number(shot.durationSec) || oldSc.durationSec,
+              id: shot.id || oldSc.id || `scene-${String(i + 1).padStart(2, '0')}`,
+              index: i + 1,
+              title: sanitizeSpokenNarration(shot.title || oldSc.title || `镜头 ${i + 1}`) || `镜头 ${i + 1}`,
+              narration: nextNarration,
+              subtitleText: narrationChanged ? nextNarration : sanitizeSpokenNarration(shot.subtitleText || nextNarration),
+              subChunks: Array.isArray(shot.subChunks) && shot.subChunks.length > 0 ? shot.subChunks.map((c) => sanitizeSpokenNarration(c)).filter(Boolean) : (narrationChanged ? undefined : oldSc.subChunks),
+              accentWords: Array.isArray(shot.accentWords) ? shot.accentWords : oldSc.accentWords,
+              stageSpec: shot.stageSpec || oldSc.stageSpec,
+              beatCount: Number.isFinite(Number(shot.beatCount)) ? Number(shot.beatCount) : oldSc.beatCount,
+              visualBlueprint: shot.visualBlueprint || oldSc.visualBlueprint,
+              motionNotes: shot.motionNotes || shot.visualBlueprint || oldSc.motionNotes,
+              emotion: shot.emotion || oldSc.emotion || '平静',
+              layout: shot.layout || oldSc.layout || (visualPool.length === 0 ? 'narrative-diorama' : 'app-focus-shot'),
+              kenBurns: shot.kenBurns || oldSc.kenBurns || 'zoom-in',
+              transition: shot.transition || oldSc.transition || (visualPool.length === 0 ? 'flash-cut' : 'iris-circle'),
+              highlights: Array.isArray(shot.highlights) && shot.highlights.length > 0 ? shot.highlights : oldSc.highlights || [],
+              hudStep: Number.isFinite(Number(shot.hudStep)) ? Number(shot.hudStep) : oldSc.hudStep,
+              cams: Array.isArray(shot.cams) && shot.cams.length > 0 ? shot.cams : oldSc.cams,
+              marks: Array.isArray(shot.marks) && shot.marks.length > 0 ? shot.marks : oldSc.marks,
+              durationSec: Number(shot.durationSec) || oldSc.durationSec || 4.0,
+              durationInFrames: undefined,
+              media: mediaList,
+              assetPaths: mediaList.map((m) => m.path),
             }
           })
           curScript.scenes = updatedScenes
           curScript.title = schemaRes.plan?.title || curScript.title
           curScript.targetPlatform = targetPlatform
+          if (visualPool.length === 0 || spec.narrationMode === 'subtitle-mv') {
+            curScript.subtitleStyle = 'cinematic'
+          }
+          if (spec.narrationMode) {
+            curScript.narrationMode = spec.narrationMode
+          }
+          if (Number(schemaRes.degradationTier || 4) <= 3) {
+            curScript.authoringMode = 'ai-coded'
+          }
+          curScript.directorMeta = {
+            tier: schemaRes.degradationTier || 4,
+            tierLabel: schemaRes.tierLabel || 'Schema Tier',
+            model: llmSummary.model || '',
+            llmUsed: Number(schemaRes.degradationTier || 4) <= 3,
+          }
           writeScriptJson(absDir, curScript)
-          appendLog('director', `大模型导演调度完成 (${schemaRes.tierLabel || 'Schema Tier'})`)
+          appendLog('director', `大模型导演调度完成 (${schemaRes.tierLabel || 'Schema Tier'} · ${updatedScenes.length} 幕${schemaRes.degradationTier > 1 ? ` · Tier1详情: ${schemaRes.trace?.[0]?.reason || 'unknown'}` : ''})`)
         }
       } catch (err) {
         if (err?.name === 'AbortError' || signal.aborted) throw createAbortError()
@@ -196,6 +345,16 @@ async function executeMultiAgentRunner(run, helpers) {
 
     const sAfterDir = readScriptJson(absDir).data
     sAfterDir.targetPlatform = targetPlatform
+    if (spec.aiBadgeEnabled !== undefined) {
+      sAfterDir.aiBadgeEnabled = Boolean(spec.aiBadgeEnabled)
+      sAfterDir.aiBadge = Boolean(spec.aiBadgeEnabled)
+    } else if (spec.aiBadge !== undefined) {
+      sAfterDir.aiBadgeEnabled = Boolean(spec.aiBadge)
+      sAfterDir.aiBadge = spec.aiBadge
+    }
+    if (spec.aiBadgePosition) sAfterDir.aiBadgePosition = String(spec.aiBadgePosition)
+    if (spec.aiBadgeText !== undefined) sAfterDir.aiBadgeText = String(spec.aiBadgeText)
+    if (spec.pacingMode) sAfterDir.pacingMode = String(spec.pacingMode)
     if (spec.avatarLayout) sAfterDir.avatarLayout = spec.avatarLayout
     writeScriptJson(absDir, sAfterDir)
     updateTask('t-director', {
@@ -268,90 +427,149 @@ async function executeMultiAgentRunner(run, helpers) {
       updateTask('t-audio', {
         status: 'running',
         progress: 25,
-        message: '检测到真人出镜原声视频，正在提取 48kHz 干声并绑定配音轨...',
+        message: '检测到真人出镜原声视频，正在提取 48kHz 干声并按分镜口播智能分段对齐...',
       })
       const { ffmpeg } = resolveBinaries()
       const hostAbs = isAbsolute(hostVideoAsset.path) ? hostVideoAsset.path : resolve(absDir, hostVideoAsset.path)
-      const firstSc = scriptNow.scenes?.[0]
-      if (firstSc && existsSync(hostAbs)) {
-        const hostWavRel = `audio/${firstSc.id}-host.wav`
-        const hostWavAbs = join(absDir, hostWavRel)
+      const scenesList = Array.isArray(scriptNow.scenes) ? scriptNow.scenes : []
+      if (scenesList.length > 0 && existsSync(hostAbs)) {
+        const hostFullAbs = join(absDir, 'audio', 'host-full.wav')
         mkdirSync(join(absDir, 'audio'), { recursive: true })
         const extRes = await runCommandRedirected(
           ffmpeg,
-          ['-y', '-i', hostAbs, '-vn', '-af', 'highpass=f=75,aresample=48000', '-c:a', 'pcm_s16le', '-ar', '48000', '-ac', '2', hostWavAbs],
+          ['-y', '-i', hostAbs, '-vn', '-af', 'highpass=f=75,aresample=48000', '-c:a', 'pcm_s16le', '-ar', '48000', '-ac', '2', hostFullAbs],
           { timeoutMs: 45_000, signal, onChild },
         )
-        if (extRes.code === 0 && existsSync(hostWavAbs)) {
-          firstSc.audioFile = hostWavRel
-          writeScriptJson(absDir, scriptNow)
+        if (extRes.code === 0 && existsSync(hostFullAbs)) {
+          const probedHost = await probeAudioDuration(hostFullAbs, fps).catch(() => ({ durationSec: 0 }))
+          const totalHostSec = Number(probedHost.durationSec) || 0
+          // Split full recorded monologue proportionally across ALL scenes if long enough so speaker voice never switches mid-video
+          if (totalHostSec >= 2.2 && scenesList.length > 1) {
+            const weights = scenesList.map((sc) => Math.max(4, String(sc.narration || sc.title || '').length, Number(sc.durationSec || 3) * 4))
+            const sumW = weights.reduce((a, b) => a + b, 0) || 1
+            let cursorSec = 0
+            let assigned = 0
+            for (let si = 0; si < scenesList.length; si++) {
+              const sc = scenesList[si]
+              const segDur = si === scenesList.length - 1
+                ? Math.max(0.8, totalHostSec - cursorSec)
+                : Math.max(0.8, Number(((weights[si] / sumW) * totalHostSec).toFixed(3)))
+              const segRel = `audio/${sc.id}-host.wav`
+              const segAbs = join(absDir, segRel)
+              const sliceRes = await runCommandRedirected(
+                ffmpeg,
+                ['-y', '-ss', cursorSec.toFixed(3), '-t', segDur.toFixed(3), '-i', hostFullAbs, '-c:a', 'pcm_s16le', '-ar', '48000', '-ac', '2', segAbs],
+                { timeoutMs: 30_000, signal, onChild },
+              )
+              cursorSec += segDur
+              if (sliceRes.code === 0 && existsSync(segAbs)) {
+                sc.audioFile = segRel
+                sc.voiceDurationSec = segDur
+                sc.durationSec = Math.max(1.8, Number((segDur + 0.35).toFixed(3)))
+                sc.durationInFrames = Math.ceil(sc.durationSec * fps)
+                assigned++
+              }
+            }
+            writeScriptJson(absDir, scriptNow)
+            appendLog('audio', `已抽取真人出镜原声 (${totalHostSec.toFixed(1)}s) 并按口播节奏切分至全部 ${assigned} 幕`)
+          } else {
+            const firstSc = scenesList[0]
+            const hostWavRel = `audio/${firstSc.id}-host.wav`
+            const hostWavAbs = join(absDir, hostWavRel)
+            const copyRes = await runCommandRedirected(
+              ffmpeg,
+              ['-y', '-i', hostFullAbs, '-c:a', 'pcm_s16le', '-ar', '48000', '-ac', '2', hostWavAbs],
+              { timeoutMs: 25_000, signal, onChild },
+            )
+            if (copyRes.code === 0 && existsSync(hostWavAbs)) {
+              firstSc.audioFile = hostWavRel
+              writeScriptJson(absDir, scriptNow)
+              appendLog('audio', `真人原声较短 (${totalHostSec.toFixed(1)}s)，已作为第 1 幕开场原声挂载`)
+            }
+          }
         }
       }
     }
 
     scriptNow = readScriptJson(absDir).data
-    matchAllScenesInScript(absDir, { voiceId, forceAuto: false })
-    scriptNow = readScriptJson(absDir).data
+    const visualItemsNow = (assetsNow.items || []).filter((it) => it.type === 'image' || it.type === 'video')
+    const effectiveNarrationMode =
+      spec.narrationMode ||
+      scriptNow.narrationMode ||
+      (visualItemsNow.length === 0 && bgmMode === 'uploaded' && !spec.useHostVocal ? 'subtitle-mv' : 'tts')
+    scriptNow.narrationMode = effectiveNarrationMode
 
-    const scenesToTts = (scriptNow.scenes || []).filter((sc) => {
-      const hasExisting = sc.audioFile && existsSync(isAbsolute(sc.audioFile) ? sc.audioFile : resolve(absDir, sc.audioFile))
-      return !hasExisting || !spec.preserveExistingAudio
-    })
-
-    for (let i = 0; i < scenesToTts.length; i++) {
-      if (signal.aborted) throw createAbortError()
-      await waitIfPaused('t-audio')
-      const sc = scenesToTts[i]
-      if (spec.useHostVocal && sc.audioFile && sc.audioFile.includes('-host.wav')) continue
+    if (effectiveNarrationMode === 'subtitle-mv') {
       updateTask('t-audio', {
         status: 'running',
-        progress: Math.round(20 + ((i + 0.5) / Math.max(1, scenesToTts.length)) * 30),
-        message: `正在合成第 ${i + 1}/${scenesToTts.length} 幕配音 (${sc.title || sc.id})...`,
-        log: false,
+        progress: 45,
+        message: '纯音乐卡点动画模式：跳过 TTS 朗读，正在精确绑定镜头切入与字幕至音乐重拍...',
       })
-      await executeGenerateSpeech({
-        text: sc.narration || sc.title || '欢迎来到 AI 视频创作工坊',
-        emotion: sc.emotion || '平静',
-        outputPath: `audio/${sc.id}.wav`,
-        fps,
-        voiceId: sc.voiceId || voiceId || 'auto',
-        engine: spec.ttsEngine || 'indextts25',
-        scriptPath: absDir,
-        sceneId: sc.id,
-        allowPlaceholder,
-      })
-    }
+      writeScriptJson(absDir, scriptNow)
+    } else {
+      matchAllScenesInScript(absDir, { voiceId, forceAuto: false })
+      scriptNow = readScriptJson(absDir).data
 
-    if (signal.aborted) throw createAbortError()
-    await waitIfPaused('t-audio')
-    updateTask('t-audio', {
-      status: 'running',
-      progress: 58,
-      message: `正在执行 AI 修音去静音、响度标准化与语速调整 (${speechTempo.toFixed(2)}x)...`,
-    })
-    try {
-      await masterVoiceTracks({
-        projectDir: absDir,
-        useLlm: mode === 'ai-coded' && llmSummary.configured,
-        speechTempo,
-        trimSilence: true,
-        signal,
-        onChild,
-        onProgress: (msg) => appendLog('audio', msg),
+      const scenesToTts = (scriptNow.scenes || []).filter((sc) => {
+        const hasExisting = sc.audioFile && existsSync(isAbsolute(sc.audioFile) ? sc.audioFile : resolve(absDir, sc.audioFile))
+        return !hasExisting || !spec.preserveExistingAudio
       })
-    } catch (err) {
-      if (err?.name === 'AbortError' || signal.aborted) throw createAbortError()
-      appendLog('audio', `修音阶段跳过未完成音轨: ${err.message}`, 'warn')
-    }
 
-    scriptNow = await recomputeCumulativeTimeline(absDir)
+      for (let i = 0; i < scenesToTts.length; i++) {
+        if (signal.aborted) throw createAbortError()
+        await waitIfPaused('t-audio')
+        const sc = scenesToTts[i]
+        if (spec.useHostVocal && sc.audioFile && sc.audioFile.includes('-host.wav')) continue
+        updateTask('t-audio', {
+          status: 'running',
+          progress: Math.round(20 + ((i + 0.5) / Math.max(1, scenesToTts.length)) * 30),
+          message: `正在合成第 ${i + 1}/${scenesToTts.length} 幕配音 (${sc.title || sc.id})...`,
+          log: false,
+        })
+        await executeGenerateSpeech({
+          text: sc.narration || sc.title || '欢迎来到 AI 视频创作工坊',
+          emotion: sc.emotion || '平静',
+          outputPath: `audio/${sc.id}.wav`,
+          fps,
+          voiceId: sc.voiceId || voiceId || 'auto',
+          engine: spec.ttsEngine || 'indextts25',
+          scriptPath: absDir,
+          sceneId: sc.id,
+          allowPlaceholder,
+        })
+      }
+
+      if (signal.aborted) throw createAbortError()
+      await waitIfPaused('t-audio')
+      updateTask('t-audio', {
+        status: 'running',
+        progress: 58,
+        message: `正在执行 AI 修音去静音、响度标准化与语速调整 (${speechTempo.toFixed(2)}x)...`,
+      })
+      try {
+        await masterVoiceTracks({
+          projectDir: absDir,
+          useLlm: mode === 'ai-coded' && llmSummary.configured,
+          speechTempo,
+          trimSilence: true,
+          signal,
+          onChild,
+          onProgress: (msg) => appendLog('audio', msg),
+        })
+      } catch (err) {
+        if (err?.name === 'AbortError' || signal.aborted) throw createAbortError()
+        appendLog('audio', `修音阶段跳过未完成音轨: ${err.message}`, 'warn')
+      }
+
+      scriptNow = await recomputeCumulativeTimeline(absDir)
+    }
 
     if (signal.aborted) throw createAbortError()
     await waitIfPaused('t-audio')
     updateTask('t-audio', {
       status: 'running',
       progress: 75,
-      message: '正在生成转场 SFX 音效与背景配乐，并执行人声闪避侧链混音...',
+      message: '正在生成转场 SFX 音效与背景配乐，并执行节拍踩点混音...',
     })
 
     if (mode === 'ai-coded' && llmSummary.configured) {
@@ -364,25 +582,53 @@ async function executeMultiAgentRunner(run, helpers) {
     scriptNow.audioSpec = { ...(scriptNow.audioSpec || {}), bgmMode }
 
     if (bgmMode === 'uploaded' && chosenUploadPath) {
+      const absBgmFile = isAbsolute(chosenUploadPath) ? chosenUploadPath : resolve(absDir, chosenUploadPath)
+      let beatMeta = scriptNow.bgm?.analyzed ? scriptNow.bgm : null
+      if (!beatMeta && existsSync(absBgmFile)) {
+        try {
+          beatMeta = await analyzeAudioBeatStructure(absBgmFile, { signal })
+        } catch {}
+      }
       scriptNow.bgm = {
         ...(scriptNow.bgm || {}),
+        ...(beatMeta || {}),
         mode: 'uploaded',
         source: 'user-imported',
         path: chosenUploadPath,
         uploadedPath: chosenUploadPath,
       }
+      if (beatMeta?.analyzed && (effectiveNarrationMode === 'subtitle-mv' || effectiveNarrationMode === 'tts-beat-sync' || spec.beatSync)) {
+        const qMode = effectiveNarrationMode === 'subtitle-mv' ? 'subtitle-mv' : 'tts-beat-sync'
+        scriptNow.scenes = quantizeScenesToBeatGrid(scriptNow.scenes || [], beatMeta, {
+          mode: qMode,
+          fps,
+          targetDurationSec: Number(spec.targetDurationSec) || 0,
+        })
+        scriptNow.scenes = choreographBeatSfxCues(scriptNow.scenes, beatMeta)
+        scriptNow.subtitles = scriptNow.scenes.flatMap((sc) => sc.subtitles || [])
+        const lastSc = scriptNow.scenes[scriptNow.scenes.length - 1]
+        scriptNow.totalDurationInFrames = lastSc ? Number(lastSc.startFrame || 0) + Number(lastSc.durationInFrames || 0) : scriptNow.totalDurationInFrames
+        scriptNow.totalDurationSec = Number(((scriptNow.totalDurationInFrames || 30) / fps).toFixed(4))
+        appendLog('audio', `已完成真实音乐节拍踩点对齐：${scriptNow.scenes.length} 幕锁定 ${beatMeta.bpm} BPM (${scriptNow.totalDurationSec.toFixed(1)}s)`)
+      }
       writeScriptJson(absDir, scriptNow)
-    } else if (bgmMode === 'llm-coded' && llmSummary.configured) {
+    } else if (bgmMode === 'llm-coded' && mode === 'ai-coded' && llmSummary.configured) {
       try {
+        const bgmScriptInput = {
+          ...scriptNow,
+          title: spec.topic || scriptNow.title || scriptNow.topic,
+          style,
+          totalDurationSec: totalSec + 1.0,
+          audioSpec: { ...(scriptNow.audioSpec || {}), mood: style, bpm: scriptNow.bgm?.bpm || 118 },
+        }
         const bgmRes = await generateAiCodedBgmTrack({
           projectDir: absDir,
-          topic: spec.topic || scriptNow.topic,
-          mood: style,
-          bpm: scriptNow.bgm?.bpm || 118,
-          durationSec: totalSec + 1.0,
+          script: bgmScriptInput,
+          callLlmChatFn: (p) => callLlmChat({ timeoutMs: 240_000, ...p, signal }),
         })
         scriptNow.bgm = { ...(scriptNow.bgm || {}), mode: 'llm-coded', source: 'llm-coded', path: bgmRes.relWavPath }
         writeScriptJson(absDir, scriptNow)
+        appendLog('audio', `AI 大模型编写 BGM 合成代码完成: ${bgmRes.relWavPath}`)
       } catch (err) {
         appendLog('audio', `大模型编曲配乐回退本地合成引擎: ${err.message}`, 'warn')
       }
@@ -399,6 +645,39 @@ async function executeMultiAgentRunner(run, helpers) {
       } catch (err) {
         appendLog('audio', `配音引擎氛围配乐回退本地合成: ${err.message}`, 'warn')
       }
+    }
+
+    const postBgmScript = readScriptJson(absDir).data
+    const wantsBeatSync =
+      effectiveNarrationMode === 'subtitle-mv' ||
+      effectiveNarrationMode === 'tts-beat-sync' ||
+      Boolean(spec.beatSync)
+    if (wantsBeatSync && !(postBgmScript.scenes || []).some((s) => s.beatCutAligned)) {
+      const bgmWavRel = postBgmScript.bgm?.path || ''
+      const bgmWavAbs = bgmWavRel ? (isAbsolute(bgmWavRel) ? bgmWavRel : resolve(absDir, bgmWavRel)) : ''
+      let analyzedSynth = null
+      if (bgmWavAbs && existsSync(bgmWavAbs)) {
+        try {
+          analyzedSynth = await analyzeAudioBeatStructure(bgmWavAbs, { signal })
+        } catch {}
+      }
+      const grid = analyzedSynth?.analyzed
+        ? analyzedSynth
+        : buildBeatGrid((Number(postBgmScript.totalDurationSec) || totalSec) + 2, Number(postBgmScript.bgm?.bpm) || 120)
+      postBgmScript.bgm = { ...(postBgmScript.bgm || {}), ...grid, beats: grid.beats }
+      const qMode = effectiveNarrationMode === 'subtitle-mv' ? 'subtitle-mv' : 'tts-beat-sync'
+      postBgmScript.scenes = quantizeScenesToBeatGrid(postBgmScript.scenes || [], grid, {
+        mode: qMode,
+        fps,
+        targetDurationSec: Number(spec.targetDurationSec) || 0,
+      })
+      postBgmScript.scenes = choreographBeatSfxCues(postBgmScript.scenes, grid)
+      postBgmScript.subtitles = postBgmScript.scenes.flatMap((sc) => sc.subtitles || [])
+      const lastSc = postBgmScript.scenes[postBgmScript.scenes.length - 1]
+      postBgmScript.totalDurationInFrames = lastSc ? Number(lastSc.startFrame || 0) + Number(lastSc.durationInFrames || 0) : postBgmScript.totalDurationInFrames
+      postBgmScript.totalDurationSec = Number(((postBgmScript.totalDurationInFrames || 30) / fps).toFixed(4))
+      writeScriptJson(absDir, postBgmScript)
+      appendLog('audio', `已对 AI 配乐/节拍轨执行音画踩点绑定 (${qMode} · ${postBgmScript.bgm?.bpm || 120} BPM · ${postBgmScript.scenes.length} 幕)`)
     }
 
     await ensureProjectAudioAssets(absDir, readScriptJson(absDir).data, assetsNow)
@@ -437,13 +716,14 @@ async function executeMultiAgentRunner(run, helpers) {
     const drivingWav = await buildCombinedDryVoiceWav(absDir, scriptForAvatar, signal, onChild)
 
     const isImgBase = avatarBase && /\.(jpg|jpeg|png|webp|bmp)$/i.test(avatarBase)
-    await executeGenerateAvatar({
+    const avResult = await executeGenerateAvatar({
       projectDir: absDir,
       avatarMode: spec.avatarMode || (avatarBase ? 'cloned-human' : 'ai-human'),
       sourceVideoPath: !isImgBase ? avatarBase : '',
       sourceImagePath: isImgBase ? avatarBase : '',
       voiceId,
       voiceSamplePath: spec.voiceSamplePath || voiceCloneItem?.path || '',
+      voiceGender: spec.voiceGender || 'neutral',
       narrationText: (scriptForAvatar.scenes || []).map((s) => s.narration).filter(Boolean).join('。'),
       audioPath: drivingWav,
       avatarLayout: spec.avatarLayout || scriptForAvatar.avatarLayout || 'pip-br',
@@ -465,7 +745,7 @@ async function executeMultiAgentRunner(run, helpers) {
     updateTask('t-avatar', {
       status: 'completed',
       progress: 100,
-      message: '透明通道数字人叠层 (yuva420p WebM) 已挂载到视频时间轴',
+      message: avResult?.visualNotice || '透明通道数字人叠层 (yuva420p WebM) 已挂载到视频时间轴',
     })
   }
 
@@ -481,67 +761,133 @@ async function executeMultiAgentRunner(run, helpers) {
     })
 
     const curScript = readScriptJson(absDir).data
+    const enableAiCode = spec.aiAuthorCode !== undefined ? Boolean(spec.aiAuthorCode) : mode === 'ai-coded'
+    if (enableAiCode && llmSummary.configured) {
+      curScript.authoringMode = 'ai-coded'
+    }
     syncProjectCodeFromScript(absDir, curScript, { forceOverwrite: true })
 
-    if (mode === 'ai-coded' && llmSummary.configured && spec.aiAuthorCode) {
+    if (mode === 'ai-coded' && llmSummary.configured && enableAiCode) {
       try {
         updateTask('t-motion', {
           status: 'running',
-          progress: 40,
-          message: `动效质检 Agent 正在调用大模型 (${llmSummary.model}) 定制动效特效代码...`,
+          progress: 35,
+          message: `动效质检 Agent 正在分批召唤大模型 (${llmSummary.model}) 手写定制 ${engine === 'remotion' ? 'Remotion TSX' : 'HyperFrames HTML'} 动效模块...`,
         })
-        const promptPkg =
-          engine === 'remotion'
-            ? buildRemotionCoderSkillsPrompt({
-                plan: curScript,
-                timingContract: curScript,
-                width: curScript.width,
-                height: curScript.height,
-                aspectRatio: curScript.aspectRatio,
-              })
-            : buildHtmlCoderSkillsPrompt({
-                plan: curScript,
-                timingContract: curScript,
-                width: curScript.width,
-                height: curScript.height,
-                aspectRatio: curScript.aspectRatio,
-              })
 
-        const aiReply = await callLlmChat({
-          system: promptPkg.system,
-          messages: [{ role: 'user', content: promptPkg.user }],
-          temperature: 0.3,
-          maxTokens: 12000,
-          signal,
-        })
-        const parsedFiles = extractJsonFromLlmText(aiReply.text)?.files
-        if (parsedFiles && typeof parsedFiles === 'object') {
-          const check = scanAiGeneratedCodeSandbox(parsedFiles, engine)
-          if (check.safe) {
-            for (const [rel, body] of Object.entries(parsedFiles)) {
-              let finalBody = String(body || '')
-              if (rel === 'index.html') {
-                finalBody = finalBody.replace(
-                  /(<script\s+id=["']dsh-script-data["'][^>]*>)[\s\S]*?(<\/script>)/i,
-                  `$1${JSON.stringify(curScript)}$2`,
-                )
-              }
-              const cleanRel = rel.replace(/^\/+/, '').replace(/\.\.+/g, '.')
-              writeFileSync(join(absDir, cleanRel), finalBody, 'utf8')
-            }
-            if (engine === 'remotion') {
-              const tc = await runTypecheckOnProject(absDir)
-              if (!tc.ok) throw new Error(tc.output || 'TypeScript check failed')
-            }
-            curScript.authoringMode = 'ai-coded'
-            writeScriptJson(absDir, curScript)
-            appendLog('motion_qa', '大模型定制动效代码已通过安全沙箱与编译检查')
-          } else {
-            appendLog('motion_qa', `AI 动效沙箱检查未通过，自动使用内置 .motion 模板: ${check.violations.join('; ')}`, 'warn')
+        let repairRes = null
+        if (engine === 'remotion') {
+          repairRes = await authorBatchedRemotionScenes({
+            absDir,
+            lockedScript: curScript,
+            llmConfig: spec.llmOverride || {},
+            batchSize: 3,
+            concurrency: 1,
+            maxRepairRounds: Math.max(1, Math.min(3, Number(llmSummary.maxRepairRounds) || 2)),
+            signal,
+            onProgress: (_stage, pct, msg) => {
+              updateTask('t-motion', {
+                status: 'running',
+                progress: Math.max(38, Math.min(68, Number(pct) || 55)),
+                message: msg || '大模型正在逐镜手写并自检 TSX 代码...',
+                log: false,
+              })
+            },
+          })
+        } else {
+          const promptPkg = buildHtmlCoderSkillsPrompt({
+            plan: curScript,
+            timingContract: curScript,
+            width: curScript.width,
+            height: curScript.height,
+            aspectRatio: curScript.aspectRatio,
+          })
+          const aiReply = await callLlmChat({
+            system: promptPkg.system,
+            messages: [{ role: 'user', content: promptPkg.user }],
+            temperature: 0.3,
+            maxTokens: 12000,
+            signal,
+          })
+          const parsedFiles = extractJsonFromLlmText(aiReply.text)?.files
+          if (parsedFiles && typeof parsedFiles === 'object') {
+            repairRes = await runCodeAutoRepairLoop({
+              absDir,
+              engine,
+              systemPrompt: promptPkg.system,
+              initialFiles: parsedFiles,
+              lockedScript: curScript,
+              maxRepairRounds: Math.max(1, Math.min(3, Number(llmSummary.maxRepairRounds) || 2)),
+              signal,
+              onProgress: (_stage, pct, msg) => {
+                updateTask('t-motion', {
+                  status: 'running',
+                  progress: Math.max(45, Math.min(68, Number(pct) || 55)),
+                  message: msg || 'AI 代码自检与自动修复中...',
+                  log: false,
+                })
+              },
+            })
           }
+        }
+
+        if (repairRes?.ok && Number(repairRes.authoredBatchCount || 0) > 0) {
+          curScript.authoringMode = 'ai-coded'
+          curScript.aiMeta = {
+            ...(curScript.aiMeta || {}),
+            model: llmSummary.model,
+            protocol: llmSummary.protocol,
+            authoredBatchCount: Number(repairRes.authoredBatchCount || 0),
+            totalBatches: Number(repairRes.totalBatches || 1),
+            isolatedBatches: repairRes.isolatedBatches || [],
+            batchErrors: repairRes.batchErrors || [],
+            generatedFiles: Object.keys(repairRes.files || {}),
+            builtAt: new Date().toISOString(),
+          }
+          writeScriptJson(absDir, curScript)
+          try {
+            writeFileSync(join(absDir, 'index.html'), buildRichHtmlVideo(curScript), 'utf8')
+          } catch {}
+          mkdirSync(join(absDir, 'output'), { recursive: true })
+          writeFileSync(
+            join(absDir, 'output', 'ai_build_log.json'),
+            JSON.stringify(
+              {
+                ok: true,
+                engine,
+                model: llmSummary.model,
+                protocol: llmSummary.protocol,
+                authoredBatchCount: Number(repairRes.authoredBatchCount || 0),
+                totalBatches: Number(repairRes.totalBatches || 1),
+                isolatedBatches: repairRes.isolatedBatches || [],
+                batchErrors: repairRes.batchErrors || [],
+                repairHistory: repairRes.repairHistory || [],
+                generatedFiles: Object.keys(repairRes.files || {}),
+                builtAt: new Date().toISOString(),
+              },
+              null,
+              2,
+            ) + '\n',
+            'utf8',
+          )
+          appendLog(
+            'motion_qa',
+            `大模型 (${llmSummary.model}) 定制 TSX 动效代码通过沙箱、Lint 与 tsc 编译质检（成功模块: ${Number(repairRes.authoredBatchCount || 0)}/${Number(repairRes.totalBatches || 1)} 批，修复轮次: ${Math.max(0, (repairRes.repairHistory?.length || 1) - 1)}${repairRes.batchErrors?.length ? `，异常批次: ${repairRes.batchErrors.join('; ')}` : ''}）`,
+          )
+        } else {
+          curScript.authoringMode = 'schema-plan'
+          writeScriptJson(absDir, curScript)
+          appendLog(
+            'motion_qa',
+            `AI 动效代码自动修复后仍未通过质检，自动回退高稳内置模板: ${(repairRes?.errors || []).slice(0, 3).join('; ')}`,
+            'warn',
+          )
+          syncProjectCodeFromScript(absDir, readScriptJson(absDir).data, { forceOverwrite: true })
         }
       } catch (err) {
         if (err?.name === 'AbortError' || signal.aborted) throw createAbortError()
+        curScript.authoringMode = 'schema-plan'
+        writeScriptJson(absDir, curScript)
         appendLog('motion_qa', `大模型动效定制已回退高稳内置模板: ${err.message}`, 'warn')
         syncProjectCodeFromScript(absDir, readScriptJson(absDir).data, { forceOverwrite: true })
       }
@@ -586,9 +932,10 @@ async function executeMultiAgentRunner(run, helpers) {
       engine,
       signal,
       onProgress: (p) => {
+        const rawPct = p && typeof p === 'object' ? (p.progress ?? p.pct) : undefined
         updateTask('t-render', {
           status: 'running',
-          progress: Math.max(8, Math.min(97, Number(p?.progress) || 50)),
+          progress: Math.max(8, Math.min(97, Number(rawPct) || 50)),
           message: p?.message || '全帧率编码渲染中...',
           log: false,
         })
@@ -609,7 +956,7 @@ async function executeMultiAgentRunner(run, helpers) {
     mode,
     outputPath: finalRender?.outputPath || join(absDir, 'output', 'final.mp4'),
     snapshotPath: finalRender?.snapshotPath || join(absDir, 'output', 'snapshot-3x3.png'),
-    qa: finalRender?.qa || null,
+    qa: finalRender?.qaReport || finalRender?.qa || null,
   }
 }
 
@@ -619,16 +966,20 @@ taskManager.setDefaultRunnerFactory(() => executeMultiAgentRunner)
 /**
  * Start a 4-Agent pipeline in the background (returns immediately with runId + initial status).
  */
-export async function startPipelineBackground(spec = {}) {
+function createNormalizedPipelineRun(spec = {}) {
   if (!spec.projectDir) throw new Error('projectDir is required')
-  const modeLabel = spec.mode === 'fast-draft' ? '极速本地出片' : 'AI 团队协同出片'
-  const run = taskManager.createRun({
+  const { modeLabel, mode } = resolvePipelineMode(spec.mode)
+  return taskManager.createRun({
     projectDir: spec.projectDir,
     title: spec.title || `${modeLabel} · ${spec.topic || '视觉作品'}`,
     topic: spec.topic || '',
-    mode: spec.mode || 'ai-coded',
+    mode,
     spec,
   })
+}
+
+export async function startPipelineBackground(spec = {}) {
+  const run = createNormalizedPipelineRun(spec)
   const started = await taskManager.startRun(run.id, executeMultiAgentRunner)
   started.promise.catch(() => {})
   return started.run
@@ -638,15 +989,7 @@ export async function startPipelineBackground(spec = {}) {
  * Synchronous pipeline entrypoint for MCP/Cordis tool call `run_agent_pipeline`.
  */
 export async function runMultiAgentPipeline(spec = {}) {
-  if (!spec.projectDir) throw new Error('projectDir is required')
-  const modeLabel = spec.mode === 'fast-draft' ? '极速本地出片' : 'AI 团队协同出片'
-  const run = taskManager.createRun({
-    projectDir: spec.projectDir,
-    title: spec.title || `${modeLabel} · ${spec.topic || '视觉作品'}`,
-    topic: spec.topic || '',
-    mode: spec.mode || 'ai-coded',
-    spec,
-  })
+  const run = createNormalizedPipelineRun(spec)
   const started = await taskManager.startRun(run.id, executeMultiAgentRunner)
   return await started.promise
 }

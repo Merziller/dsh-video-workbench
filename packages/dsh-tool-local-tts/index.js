@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
+  alignSubtitlesToSpeechAudio,
   buildSentenceSubtitles,
   loadEnv,
   probeAudioDuration,
@@ -12,6 +13,7 @@ import {
 } from '@dsh-video/shared'
 import {
   cloneRecordedVoice,
+  findBestAvailableWavVoice,
   getVoiceCatalog,
   importVoicePack,
   matchAllScenesInScript,
@@ -113,13 +115,29 @@ export async function executeGenerateSpeech(args = {}) {
     } catch {}
   }
 
-  // IndexTTS-2 zero-shot needs a WAV reference; `.pt` speaker tensors fall back to DEFAULT_REF_AUDIO
+  // IndexTTS-2.5 zero-shot requires WAV/audio reference; upgrade `.pt`-only legacy tensors to matching catalog WAVs
+  let effectiveVoice = selectedVoice
   let refAudio = selectedVoice.resolvedRefPath || ''
   const fallbackRef = resolveEnvPath('DEFAULT_REF_AUDIO', '')
-  if (refAudio.toLowerCase().endsWith('.pt')) {
-    const siblingWav = refAudio.replace(/\.pt$/i, '.wav')
-    refAudio = existsSync(siblingWav) ? siblingWav : fallbackRef || refAudio
+  if (!refAudio || !existsSync(refAudio) || refAudio.toLowerCase().endsWith('.pt')) {
+    const siblingWav = ['.wav', '.mp3', '.flac']
+      .map((audioExt) => (refAudio ? refAudio.replace(/\.pt$/i, audioExt) : ''))
+      .find((cand) => cand && existsSync(cand))
+    if (siblingWav) {
+      refAudio = siblingWav
+    } else {
+      const wavMatch = findBestAvailableWavVoice(voices, selectedVoice)
+      if (wavMatch?.resolvedRefPath) {
+        effectiveVoice = wavMatch
+        refAudio = wavMatch.resolvedRefPath
+      } else {
+        refAudio = fallbackRef || refAudio
+      }
+    }
   }
+
+  const resolvedPromptText =
+    effectiveVoice.promptText || (fallbackRef && refAudio === fallbackRef ? process.env.DEFAULT_REF_TEXT || '' : '')
 
   const bridgeArgs = [
     bridgeScript,
@@ -129,10 +147,10 @@ export async function executeGenerateSpeech(args = {}) {
     '--emotion', emotion,
     '--lang', String(lang || ''),
     '--duration-factor', String(durationFactor || 1.0),
-    '--voice-id', selectedVoice.id,
+    '--voice-id', effectiveVoice.id,
     '--ref-audio', refAudio,
     '--emo-audio', matched.emotionAudio || '',
-    '--prompt-text', selectedVoice.promptText || '',
+    '--prompt-text', resolvedPromptText,
     '--endpoint', endpoint,
     '--engine-root', engineRoot,
     '--fallback-ref', fallbackRef || '',
@@ -170,41 +188,67 @@ export async function executeGenerateSpeech(args = {}) {
     const relAudio = relative(projectDir, absOutputPath).replace(/\\/g, '/')
     if (Array.isArray(data.scenes)) {
       let updatedAny = false
-      data.scenes = data.scenes.map((scene) => {
-        const isTarget =
-          (sceneId && (scene.id === sceneId || String(scene.index) === String(sceneId))) ||
-          (!sceneId && scene.audioFile && resolve(projectDir, scene.audioFile) === absOutputPath)
-        if (!isTarget) return scene
-        updatedAny = true
-        // Scene length = lead-in + MEASURED voice duration + tail (never guessed)
-        const leadSec = Number.isFinite(Number(scene.voiceLeadSec)) ? Number(scene.voiceLeadSec) : 0.35
-        const tailSec = Number.isFinite(Number(scene.tailSec)) ? Number(scene.tailSec) : 0.65
-        const sceneDurationSec = Number((leadSec + probe.durationSec + tailSec).toFixed(4))
-        const subs = buildSentenceSubtitles(text, probe.durationSec, safeFps).map((s) => ({
-          ...s,
-          startSec: Number((s.startSec + leadSec).toFixed(3)),
-          endSec: Number((s.endSec + leadSec).toFixed(3)),
-          startFrame: Math.floor((s.startSec + leadSec) * safeFps),
-          endFrame: Math.ceil((s.endSec + leadSec) * safeFps),
-        }))
-        return {
-          ...scene,
-          narration: String(text).trim(),
-          emotion,
-          voiceId: selectedVoice.id,
-          voiceName: selectedVoice.name,
-          voiceMatchReason: matched.reason,
-          audioFile: relAudio,
-          voiceLeadSec: leadSec,
-          tailSec,
-          voiceDurationSec: probe.durationSec,
-          voiceProvider: providerInfo.provider || engine,
-          voicePlaceholder: Boolean(providerInfo.placeholder),
-          durationSec: sceneDurationSec,
-          durationInFrames: Math.max(1, Math.ceil(sceneDurationSec * safeFps)),
-          subtitles: subs,
-        }
-      })
+      const subtitleMaxW =
+        Number(data.width) < Number(data.height) ? 11 : Number(data.width) === Number(data.height) ? 13 : 16
+      data.scenes = await Promise.all(
+        data.scenes.map(async (scene) => {
+          const isTarget =
+            (sceneId && (scene.id === sceneId || String(scene.index) === String(sceneId))) ||
+            (!sceneId && scene.audioFile && resolve(projectDir, scene.audioFile) === absOutputPath)
+          if (!isTarget) return scene
+          updatedAny = true
+          // Scene length = lead-in + MEASURED voice duration + tail (never guessed)
+          const leadSec = Number.isFinite(Number(scene.voiceLeadSec)) ? Number(scene.voiceLeadSec) : 0.35
+          const tailSec = Number.isFinite(Number(scene.tailSec)) ? Number(scene.tailSec) : 0.65
+          const sceneDurationSec = Number((leadSec + probe.durationSec + tailSec).toFixed(4))
+          const cleanNarration = String(text).trim()
+          const subs = await alignSubtitlesToSpeechAudio({
+            audioPath: absOutputPath,
+            narration: cleanNarration,
+            subtitleText: scene.subtitleText,
+            subChunks: scene.subChunks,
+            leadSec,
+            durationSec: probe.durationSec,
+            fps: safeFps,
+            maxLineWidth: subtitleMaxW,
+          })
+          const finalSubs =
+            subs.length > 0
+              ? subs
+              : buildSentenceSubtitles(cleanNarration, probe.durationSec, safeFps, {
+                  maxLineWidth: subtitleMaxW,
+                }).map((s) => ({
+                  ...s,
+                  startSec: Number((s.startSec + leadSec).toFixed(3)),
+                  endSec: Number((s.endSec + leadSec).toFixed(3)),
+                  startFrame: Math.floor((s.startSec + leadSec) * safeFps),
+                  endFrame: Math.ceil((s.endSec + leadSec) * safeFps),
+                }))
+          return {
+            ...scene,
+            narration: cleanNarration,
+            subtitleText: finalSubs.map((s) => s.text).join(' '),
+            subChunks: finalSubs.map((s) => s.text),
+            emotion,
+            voiceId: effectiveVoice.id,
+            voiceName: effectiveVoice.name,
+            voiceRefAudio: refAudio,
+            voiceMatchReason:
+              effectiveVoice.id !== selectedVoice.id
+                ? `${matched.reason} -> 实际合成音色: [${effectiveVoice.category}] ${effectiveVoice.name}`
+                : matched.reason,
+            audioFile: relAudio,
+            voiceLeadSec: leadSec,
+            tailSec,
+            voiceDurationSec: probe.durationSec,
+            voiceProvider: providerInfo.provider || engine,
+            voicePlaceholder: Boolean(providerInfo.placeholder),
+            durationSec: sceneDurationSec,
+            durationInFrames: Math.max(1, Math.ceil(sceneDurationSec * safeFps)),
+            subtitles: finalSubs,
+          }
+        }),
+      )
       if (updatedAny) {
         writeScriptJson(resolvedScriptPath, data)
         scriptUpdated = true
@@ -221,10 +265,14 @@ export async function executeGenerateSpeech(args = {}) {
     durationSec: probe.durationSec,
     durationInFrames: probe.durationInFrames,
     fps: safeFps,
-    voiceId: selectedVoice.id,
-    voiceName: selectedVoice.name,
+    voiceId: effectiveVoice.id,
+    voiceName: effectiveVoice.name,
+    voiceRefAudio: refAudio,
     voiceMatchMode: matched.mode,
-    voiceMatchReason: matched.reason,
+    voiceMatchReason:
+      effectiveVoice.id !== selectedVoice.id
+        ? `${matched.reason} -> 实际合成音色: [${effectiveVoice.category}] ${effectiveVoice.name}`
+        : matched.reason,
     scriptUpdated,
     scriptPath: resolvedScriptPath || null,
   }

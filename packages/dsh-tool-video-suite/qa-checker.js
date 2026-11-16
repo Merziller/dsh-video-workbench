@@ -290,7 +290,7 @@ export async function runPostRenderQa({ projectDir, mp4Path, script, expectedWid
       passed:
         (exactSizeMatch || proportionalDraftMatch) &&
         vStream.codec_name === 'h264' &&
-        vStream.pix_fmt === 'yuv420p',
+        (vStream.pix_fmt === 'yuv420p' || vStream.pix_fmt === 'yuvj420p'),
       value: exactSizeMatch
         ? `${actualW}×${actualH} · ${vStream.codec_name || '?'}/${vStream.pix_fmt || '?'} (完全匹配)`
         : `${actualW}×${actualH} · ${vStream.codec_name || '?'}/${vStream.pix_fmt || '?'} (${proportionalDraftMatch ? '同比例缩放渲染' : `期望 ${expectedW}×${expectedH}`})`,

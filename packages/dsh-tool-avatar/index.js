@@ -5,6 +5,7 @@ import {
   getAvatarProviderSummary,
   probeVideoStream,
   resolveSafeAvatarLayout,
+  saveAvatarConfig,
 } from './avatar-engine.js'
 
 export {
@@ -14,6 +15,7 @@ export {
   getAvatarProviderSummary,
   probeVideoStream,
   resolveSafeAvatarLayout,
+  saveAvatarConfig,
 }
 
 export const name = 'dsh-tool-avatar'

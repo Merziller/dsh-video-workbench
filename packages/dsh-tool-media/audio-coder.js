@@ -58,8 +58,6 @@ export function executeAiAudioSynthScript({
 
   const safeDur = Math.max(1, Math.min(180, Number(durationSec) || 10))
   const totalSamples = Math.max(sampleRate, Math.ceil(safeDur * sampleRate))
-  const left = new Float32Array(totalSamples)
-  const right = new Float32Array(totalSamples)
 
   // Strip optional `export ` modifiers so LLM ESM snippets execute inside isolated VM context
   const sanitizedBody = String(code)
@@ -74,27 +72,45 @@ export function executeAiAudioSynthScript({
     Int16Array,
     String,
     Boolean,
-    __dshCtx: {
+    __dshInit: {
       sampleRate,
       durationSec: safeDur,
       totalSamples,
       bpm: Number(bpm) || 112,
       beats: Array.isArray(beats) ? beats : [],
       mood: String(mood || 'tech'),
-      left,
-      right,
-      midiToHz: (midi) => 440 * Math.pow(2, (Number(midi) - 69) / 12),
-      clamp: (x, a = -1, b = 1) => (x < a ? a : x > b ? b : x),
-      tanh: (x) => Math.tanh(x),
     },
   }
 
-  const wrappedScript = `${sanitizedBody}\n;if (typeof synthesizeBgm !== 'function') { throw new Error('Missing synthesizeBgm(ctx)'); }\n__dshResult = synthesizeBgm(__dshCtx);`
+  // Instantiate left/right buffers and DSP helpers INSIDE the VM realm to avoid V8 cross-context boundary overhead
+  const wrappedScript = `
+var __dshLeft = new Float32Array(__dshInit.totalSamples);
+var __dshRight = new Float32Array(__dshInit.totalSamples);
+var __dshCtx = {
+  sampleRate: __dshInit.sampleRate,
+  durationSec: __dshInit.durationSec,
+  totalSamples: __dshInit.totalSamples,
+  bpm: __dshInit.bpm,
+  beats: __dshInit.beats,
+  mood: __dshInit.mood,
+  left: __dshLeft,
+  right: __dshRight,
+  midiToHz: function(midi) { return 440 * Math.pow(2, (Number(midi) - 69) / 12); },
+  clamp: function(x, a, b) { if (a === void 0) a = -1; if (b === void 0) b = 1; return x < a ? a : (x > b ? b : x); },
+  tanh: function(x) { return Math.tanh(x); },
+};
+${sanitizedBody}
+;if (typeof synthesizeBgm !== 'function') { throw new Error('Missing synthesizeBgm(ctx)'); }
+var __dshResult = synthesizeBgm(__dshCtx);
+`
   const context = vm.createContext(sandbox)
-  vm.runInContext(wrappedScript, context, { timeout: 3500 })
+  const vmTimeoutMs = Math.max(20000, Math.min(90000, Math.round(safeDur * 900)))
+  vm.runInContext(wrappedScript, context, { timeout: vmTimeoutMs })
 
-  const outL = sandbox.__dshResult?.left?.length >= totalSamples ? sandbox.__dshResult.left : left
-  const outR = sandbox.__dshResult?.right?.length >= totalSamples ? sandbox.__dshResult.right : right
+  const vmOutL = sandbox.__dshResult?.left?.length >= totalSamples ? sandbox.__dshResult.left : sandbox.__dshLeft
+  const vmOutR = sandbox.__dshResult?.right?.length >= totalSamples ? sandbox.__dshResult.right : sandbox.__dshRight
+  const outL = Float32Array.from(vmOutL)
+  const outR = Float32Array.from(vmOutR)
 
   // Peak normalize + fade-in/out safety envelope
   let peak = 0
@@ -159,7 +175,8 @@ export function buildAudioCoderPromptPackage({
    - \`bpm\`, \`beats\`, \`mood\`, \`left\` (Float32Array), \`right\` (Float32Array)
    - \`midiToHz(midi)\`, \`clamp(x, a, b)\`, \`tanh(x)\`
 4. 沙箱禁止：严禁 require/import/fs/fetch/process/eval/Function/globalThis/while(true)。仅允许纯数学数组运算直接写入 \`ctx.left[i]\` 和 \`ctx.right[i]\`！
-5. 音色与编曲质感：请结合柔和正弦/FM 合成垫音和弦 (Chords/Pad)、深沉次低音 (Sub Bassline)、卡点底鼓脉冲 (Kick envelope aligned to beatSec)、清脆闭镲或立体声琶音，做到宽声场（左右声道微相移/反相声像）且不刺耳、无破音。`
+5. 音色与编曲质感：请结合柔和正弦/FM 合成垫音和弦 (Chords/Pad)、深沉次低音 (Sub Bassline)、卡点底鼓脉冲 (Kick envelope aligned to beatSec)、清脆闭镲或立体声琶音，做到宽声场（左右声道微相移/反相声像）且不刺耳、无破音。
+6. 性能注意：请先在最外层预计算好各音符的 Hz / 相位增量与分段起止索引，保持内层逐采样循环轻量高效，避免百万级样本运算超时。`
 
   const user = JSON.stringify(
     {

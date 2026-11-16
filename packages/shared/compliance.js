@@ -64,6 +64,84 @@ export const PRIMARY_SERIF_STACK =
 export const PRIMARY_MONO_STACK =
   "'JetBrains Mono', 'Cascadia Mono', 'Liberation Mono', ui-monospace, monospace"
 
+export const VIDEO_STYLES = {
+  tech: {
+    id: 'tech',
+    label: '科技前沿',
+    desc: '深邃几何 · 精密脉冲',
+    swatch: '#38BDF8',
+    emotion: '平静',
+    mood: 'tech',
+    bpm: 118,
+    role: 'host',
+    colorGrade: 'eq=contrast=1.06:saturation=1.12:brightness=0.01',
+  },
+  cinematic: {
+    id: 'cinematic',
+    label: '电影大片',
+    desc: '黑金质感 · 史诗运镜',
+    swatch: '#E5A93C',
+    emotion: '激昂',
+    mood: 'cinematic',
+    bpm: 104,
+    role: 'storyteller',
+    colorGrade: 'eq=contrast=1.10:saturation=1.06:brightness=-0.01',
+  },
+  documentary: {
+    id: 'documentary',
+    label: '纪实叙事',
+    desc: '沉稳叙事 · 克制考究',
+    swatch: '#10B981',
+    emotion: '深沉',
+    mood: 'cinematic',
+    bpm: 98,
+    role: 'narrator',
+    colorGrade: 'eq=contrast=1.04:saturation=0.94:brightness=0.015',
+  },
+  energetic: {
+    id: 'energetic',
+    label: '高燃快剪',
+    desc: '节拍冲击 · 视觉撞色',
+    swatch: '#F43F5E',
+    emotion: '高兴',
+    mood: 'energetic',
+    bpm: 124,
+    role: 'host',
+    colorGrade: 'eq=contrast=1.09:saturation=1.22:brightness=0.02',
+  },
+  warm: {
+    id: 'warm',
+    label: '温暖治愈',
+    desc: '柔光漫射 · 细腻故事',
+    swatch: '#FB923C',
+    emotion: '温柔',
+    mood: 'warm',
+    bpm: 96,
+    role: 'storyteller',
+    colorGrade: 'eq=contrast=1.03:saturation=1.08:brightness=0.025',
+  },
+  emerald: {
+    id: 'emerald',
+    label: '墨翠轻奢',
+    desc: '深翠墨底 · 柔金光影',
+    swatch: '#45D1B2',
+    emotion: '自信',
+    mood: 'emerald',
+    bpm: 100,
+    role: 'host',
+    colorGrade: 'eq=contrast=1.06:saturation=1.10:brightness=0.01',
+  },
+}
+
+export function normalizeVideoStyle(rawStyle) {
+  const key = String(rawStyle || 'tech').trim().toLowerCase()
+  if (key === 'minimal-editorial') return 'documentary'
+  if (key === 'vibrant-brand') return 'energetic'
+  if (key === 'cinema') return 'cinematic'
+  if (key === 'mint' || key === 'emerald-trench') return 'emerald'
+  return VIDEO_STYLES[key] ? key : 'tech'
+}
+
 /**
  * Copy bundled SIL OFL 1.1 commercial fonts into `<projectDir>/fonts/`
  * (and `<projectDir>/public/fonts/` if `src/` or `public/` exists for Remotion staticFile()).
@@ -400,18 +478,20 @@ export function computeSafeZonePreflight(scriptData, options = {}) {
 export function buildComplianceNoticeText(scriptData = {}) {
   const bgmMode = scriptData?.audioSpec?.bgmMode || scriptData?.bgmMode || 'llm-coded'
   const creationMode = scriptData?.creationMode || 'ai-coded'
+  const narrationMode = scriptData?.narrationMode || 'tts'
   const engineName = scriptData?.ttsEngine || 'IndexTTS-2.5'
   const visualPart = creationMode === 'schema-plan' ? 'AI 结构化分镜调度生成' : 'AI 大模型编码驱动视觉合成'
   const audioPart =
     bgmMode === 'uploaded'
-      ? '用户授权背景音乐 + '
+      ? '用户授权背景音乐'
       : bgmMode === 'tts-engine'
-        ? 'AI 配音引擎氛围声景 + '
-        : 'AI 编程合成配乐 + '
+        ? 'AI 配音引擎氛围声景'
+        : 'AI 编程合成配乐'
+  const voicePart = narrationMode === 'subtitle-mv' ? ' · 纯音乐节拍卡点' : ` + ${engineName} 语音合成`
 
   return {
     badgeText: 'AI 辅助创作',
     endNoticeTitle: '内容生成合规声明 · AI Synthesis Disclosure',
-    endNoticeBody: `本视频由 DeepSeek Harness 创作：${visualPart} · ${audioPart}${engineName} 语音合成`,
+    endNoticeBody: `本视频由 DeepSeek Harness 创作：${visualPart} · ${audioPart}${voicePart}`,
   }
 }

@@ -34,7 +34,7 @@ import {
   taskManager,
 } from '../packages/dsh-tool-media/index.js'
 import { scaffoldVideoProject } from '../packages/dsh-preset-video/index.js'
-import { handleWorkbenchApiRequest } from '../packages/dsh-web-video-workbench/lib/index.js'
+import { handleWorkbenchApiRequest, polishTopicPrompt } from '../packages/dsh-web-video-workbench/lib/index.js'
 import { verifyCordisPluginMounting } from './dsh-runner.mjs'
 
 /**
@@ -479,19 +479,21 @@ async function runSelfTest() {
       return new Response(JSON.stringify({ model: 'mock-opus', content: [{ type: 'text', text: vmReply }] }), { status: 200 })
     }
 
-    // Initial Codegen call: deliberately emit invalid TSX (CSS transition + TypeScript error) to trigger auto-repair!
-    if ((userPrompt.includes('生成定制 Remotion TSX') || userPrompt.includes('生成定制 HTML')) && !brokenCodeEmitted) {
+    // Initial Codegen call: deliberately emit invalid Batch01 TSX (CSS transition + TypeScript error) to trigger targeted batch auto-repair!
+    if ((userPrompt.includes('请编写模块 src/scenes/Batch') || userPrompt.includes('生成定制 Remotion TSX') || userPrompt.includes('生成定制 HTML')) && !brokenCodeEmitted) {
       brokenCodeEmitted = true
-      const brokenTsx = `import React from 'react';
-import { AbsoluteFill, Audio, staticFile } from 'remotion';
-export const VideoComposition: React.FC = () => {
+      const brokenBatchTsx = `import React from 'react';
+import { AbsoluteFill, useCurrentFrame } from 'remotion';
+export interface CustomSceneProps { scene: any; idx: number; total: number; beats: any[]; }
+const Scene01: React.FC<CustomSceneProps> = () => {
+  const f = useCurrentFrame();
   const broken: number = "bad_type_string";
-  return <AbsoluteFill style={{ transition: 'all 0.3s' }}><Audio src={staticFile('master-audio.wav')} />{broken}</AbsoluteFill>;
-};`
+  return <AbsoluteFill style={{ transition: 'all 0.3s' }}>{f}{broken}</AbsoluteFill>;
+};
+export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = { 'scene-01': Scene01 };`
       const brokenReply = JSON.stringify({
         files: {
-          'src/theme.ts': `export const THEME = { accent: '#E5A93C' };`,
-          'src/VideoComposition.tsx': brokenTsx,
+          'src/scenes/Batch01.tsx': brokenBatchTsx,
         },
       })
       return new Response(JSON.stringify({ model: 'mock-opus', content: [{ type: 'text', text: brokenReply }] }), { status: 200 })
@@ -543,41 +545,31 @@ export const VideoComposition: React.FC = () => {
       return new Response(JSON.stringify({ model: 'mock-opus', content: [{ type: 'text', text: directorReply }] }), { status: 200 })
     }
 
-    // Auto-repair call: receive exact tsc + lint diagnostics -> emit valid fixed TSX using shotcraft primitives!
+    // Auto-repair call: receive exact tsc + lint diagnostics -> emit valid fixed Batch01 TSX using shotcraft primitives!
     if (!userPrompt.includes('transition') && !userPrompt.includes('TS2322') && !userPrompt.includes('number')) {
       throw new Error(`Auto-repair prompt missing compiler/lint diagnostics: ${userPrompt.slice(0, 200)}`)
     }
-    const fixedTsx = `import React from 'react';
-import { AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame } from 'remotion';
-import scriptData from '../script.json';
-import { AIBadge, ClipCard, DigitRoll, PageCam, ShotCaption } from './lib/shotcraft';
-import { THEME } from './theme';
-
-export const VideoComposition: React.FC = () => {
-  const frame = useCurrentFrame();
-  const sData: any = scriptData;
-  const scenes: any[] = Array.isArray(sData.scenes) ? sData.scenes : [];
+    const fixedBatchTsx = `import React from 'react';
+import { AbsoluteFill, useCurrentFrame } from 'remotion';
+import { ClipCard, DigitRoll, PageCam } from '../lib/shotcraft';
+export interface CustomSceneProps { scene: any; idx: number; total: number; beats: any[]; }
+const Scene01: React.FC<CustomSceneProps> = ({ scene }) => {
+  const f = useCurrentFrame();
   return (
     <AbsoluteFill style={{ backgroundColor: '#090B10', color: '#F8FAFC' }}>
-      {scenes.map((sc: any) => (
-        <Sequence key={sc.id} from={sc.startFrame} durationInFrames={sc.durationInFrames}>
-          <PageCam startFrame={0} durationFrames={sc.durationInFrames}>
-            <ClipCard delay={4} accentColor={THEME.accent}>
-              <DigitRoll to={98} suffix="%" />
-            </ClipCard>
-          </PageCam>
-        </Sequence>
-      ))}
-      <ShotCaption subtitles={sData.subtitles || []} accentColor={THEME.accent} isPortrait={true} />
-      <AIBadge visible={Boolean(sData.aiBadge)} accentColor={THEME.accent} />
-      <Audio src={staticFile('master-audio.wav')} />
+      <PageCam startFrame={0} durationFrames={Math.max(12, Number(scene?.durationInFrames) || 60)}>
+        <ClipCard delay={4} accentColor="#E5A93C">
+          <DigitRoll to={98 + (f % 1)} suffix="%" />
+        </ClipCard>
+      </PageCam>
     </AbsoluteFill>
   );
-};`
+};
+export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = { 'scene-01': Scene01 };`
     return new Response(
       JSON.stringify({
         model: 'mock-opus',
-        content: [{ type: 'text', text: JSON.stringify({ files: { 'src/VideoComposition.tsx': fixedTsx } }) }],
+        content: [{ type: 'text', text: JSON.stringify({ files: { 'src/scenes/Batch01.tsx': fixedBatchTsx } }) }],
       }),
       { status: 200 },
     )
@@ -1174,6 +1166,94 @@ export const VideoComposition: React.FC = () => {
     `[12/13] v5 AI Agent Command Deck OK (Alpha Avatar WebM [${avVStream.pix_fmt}] -> HTML5 & Remotion + Curate/Edit [${curateRes.editedCount}] + TaskManager Pause/Resume/Kill/Retry + Webcam Recording + Teleprompter + Skin)!`,
   )
 
+  // 12b. Phase 1 v6 P0/P1 regression assertions (raw binary upload, starter pack, style normalize, offline testLlmConnection, local-draft mode map)
+  const { normalizeVideoStyle, sanitizeSpokenNarration } = await import('../packages/shared/index.js')
+  const dirtyNar = sanitizeSpokenNarration('你二十四岁起兵 ([ctext.org](https://ctext.org/shiji?utm_source=openai)) 破釜沉舟 https://example.com/a')
+  if (dirtyNar !== '你二十四岁起兵 破釜沉舟' || dirtyNar.includes('http') || dirtyNar.includes('utm_source')) {
+    throw new Error(`sanitizeSpokenNarration regression failed: "${dirtyNar}"`)
+  }
+  if (
+    normalizeVideoStyle('minimal-editorial') !== 'documentary' ||
+    normalizeVideoStyle('vibrant-brand') !== 'energetic' ||
+    normalizeVideoStyle('cinema') !== 'cinematic' ||
+    normalizeVideoStyle('warm') !== 'warm' ||
+    normalizeVideoStyle('unknown-style-fallback') !== 'tech'
+  ) {
+    throw new Error('normalizeVideoStyle regression check failed')
+  }
+
+  const { testLlmConnection } = await import('../packages/dsh-tool-media/index.js')
+  const { resolvePipelineMode } = await import('../packages/dsh-tool-media/pipeline-orchestrator.js')
+  const localDraftResolved = resolvePipelineMode('local-draft')
+  if (!localDraftResolved.isDraftMode || localDraftResolved.effectiveMode !== 'fast-draft') {
+    throw new Error(`resolvePipelineMode('local-draft') regression failed: ${JSON.stringify(localDraftResolved)}`)
+  }
+  const fastDraftResolved = resolvePipelineMode('fast-draft')
+  const aiCodedResolved = resolvePipelineMode('ai-coded')
+  if (!fastDraftResolved.isDraftMode || aiCodedResolved.isDraftMode || aiCodedResolved.effectiveMode !== 'ai-coded') {
+    throw new Error('resolvePipelineMode fast-draft / ai-coded mismatch')
+  }
+
+  let offlineConnErr = null
+  try {
+    await testLlmConnection(
+      { apiKey: 'dummy-test-key', baseUrl: 'http://127.0.0.1:9', model: 'test-model' },
+      () => Promise.reject(new Error('offline-simulated')),
+    )
+  } catch (err) {
+    offlineConnErr = err
+  }
+  if (!offlineConnErr || offlineConnErr instanceof ReferenceError) {
+    throw new Error(`testLlmConnection offline regression failed: ${offlineConnErr?.stack || offlineConnErr}`)
+  }
+
+  const rawPngBytes = Buffer.from(png1x1, 'base64')
+  const rawAssetUpRes = await handleWorkbenchApiRequest(
+    new Request(
+      `http://127.0.0.1:4399/api/video-workbench/assets/upload?projectDir=${encodeURIComponent(tmpHtmlProj)}&role=visual&fileName=raw-bin-smoke.png`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: rawPngBytes,
+      },
+    ),
+  )
+  const rawAssetUpJson = await rawAssetUpRes.json()
+  if (rawAssetUpRes.status !== 200 || !rawAssetUpJson.ok) {
+    throw new Error(`Raw binary /assets/upload failed: status=${rawAssetUpRes.status} body=${JSON.stringify(rawAssetUpJson)}`)
+  }
+
+  const rawBgmBytes = readFileSync(testBgmSrc)
+  const rawBgmUpRes = await handleWorkbenchApiRequest(
+    new Request(
+      `http://127.0.0.1:4399/api/video-workbench/bgm/upload?projectDir=${encodeURIComponent(tmpHtmlProj)}&fileName=raw-bgm-smoke.wav`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: rawBgmBytes,
+      },
+    ),
+  )
+  const rawBgmUpJson = await rawBgmUpRes.json()
+  if (rawBgmUpRes.status !== 200 || !rawBgmUpJson.ok) {
+    throw new Error(`Raw binary /bgm/upload failed: status=${rawBgmUpRes.status} body=${JSON.stringify(rawBgmUpJson)}`)
+  }
+
+  const starterPackRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1:4399/api/video-workbench/assets/starter-pack', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir: tmpHtmlProj }),
+    }),
+  )
+  const starterPackJson = await starterPackRes.json()
+  if (starterPackRes.status !== 200 || !starterPackJson.ok || (starterPackJson.addedCount || 0) < 4) {
+    throw new Error(`POST /assets/starter-pack failed: status=${starterPackRes.status} body=${JSON.stringify(starterPackJson)}`)
+  }
+  console.log(
+    `[12b/13] v6 P0/P1 regression checks OK (raw binary upload, starter-pack +${starterPackJson.addedCount}, normalizeVideoStyle, resolvePipelineMode, offline testLlmConnection)!`,
+  )
+
   // 13. Re-scaffold clean starter demos & validate Lint + Open-Source Hygiene Scan
   const demoDir = join(REPO_ROOT, 'examples', 'demo-html-project')
   const demoRemotionDir = join(REPO_ROOT, 'examples', 'demo-remotion-project')
@@ -1200,7 +1280,436 @@ export const VideoComposition: React.FC = () => {
     throw new Error(`Hardcoded machine paths found in tracked files: ${violations.join(', ')}`)
   }
   console.log(
-    `[13/13] Starter Demos lint-verified & 0 hardcoded personal paths/keys across all tracked files!`,
+    `[13/14] Starter Demos lint-verified & 0 hardcoded personal paths/keys across all tracked files!`,
+  )
+
+  // 14. Real BGM Beat Analyzer + Zero-Asset Narrative Diorama + Subtitle-MV Quantization Verification
+  const {
+    analyzeAudioBeatStructure,
+    authorBatchedRemotionScenes,
+    choreographBeatSfxCues,
+    ensureProjectAudioAssets,
+    normalizeTransitionKind,
+    quantizeScenesToBeatGrid,
+  } = await import('../packages/dsh-tool-media/index.js')
+  const { syncProjectCodeFromScript: syncNarrativeProjectCode } = await import('../packages/dsh-tool-media/ai-director.js')
+  const pulseWav = join(REPO_ROOT, '.tmp', 'pulse-100bpm-test.wav')
+  // Generate 12s rhythmic 100 BPM pulse (0.600s period) starting at 0.300s
+  await runCommandRedirected(
+    bins.ffmpeg,
+    [
+      '-y',
+      '-f', 'lavfi',
+      '-i', "aevalsrc='0.7*sin(2*PI*90*(mod(t+0.3,0.6)))*exp(-mod(t+0.3,0.6)*32)':s=16000:d=12",
+      pulseWav,
+    ],
+    { timeoutMs: 15_000 },
+  )
+  const beatRes = await analyzeAudioBeatStructure(pulseWav)
+  try { rmSync(pulseWav, { force: true }) } catch {}
+  if (!beatRes.ok || beatRes.bpm < 97 || beatRes.bpm > 103 || (beatRes.downbeats || []).length < 3) {
+    throw new Error(`Real BGM beat analyzer failed on 100 BPM test pulse: ${JSON.stringify({ bpm: beatRes.bpm, phase: beatRes.phaseSec, downbeats: beatRes.downbeats?.length })}`)
+  }
+
+  const tmpNarrativeProj = join(REPO_ROOT, '.tmp', 'e2e-narrative-mv')
+  rmSync(tmpNarrativeProj, { recursive: true, force: true })
+  scaffoldVideoProject(tmpNarrativeProj, {
+    title: 'Zero-Asset Narrative Beat MV Test',
+    engine: 'remotion',
+    style: 'cinematic',
+  })
+  const rawNv = readScriptJson(tmpNarrativeProj).data
+  rawNv.narrationMode = 'subtitle-mv'
+  rawNv.subtitleStyle = 'cinematic'
+  rawNv.bgmMode = 'uploaded'
+  rawNv.bgm = { ...beatRes, enabled: true, mode: 'uploaded', path: testBgmSrc, source: 'user-imported' }
+  rawNv.scenes = [
+    {
+      id: 'scene-01',
+      title: '崛起',
+      narration: '你握紧手中剑，迎接黎明',
+      subChunks: ['你握紧手中剑', '迎接黎明'],
+      accentWords: ['剑', '黎明'],
+      layout: 'narrative-diorama',
+      beatCount: 4,
+      transition: 'flash-cut',
+      stageSpec: { mood: 'dawn-amber', setting: 'palace-stairs', archetype: 'hero-numeral', heroNum: '18', heroUnit: '岁' },
+    },
+    {
+      id: 'scene-02',
+      title: '破敌',
+      narration: '一战定乾坤，战旗指天',
+      subChunks: ['一战定乾坤'],
+      accentWords: ['乾坤'],
+      layout: 'narrative-diorama',
+      beatCount: 4,
+      transition: 'flash-cut',
+      stageSpec: { mood: 'crimson-war', setting: 'city-siege', archetype: 'strategic-map', bannerChar: '楚', stamps: [{ label: '胜', x: 1000, y: 500, triggerPct: 0.3 }] },
+    },
+  ]
+  rawNv.scenes = quantizeScenesToBeatGrid(rawNv.scenes, beatRes, { mode: 'subtitle-mv', fps: 30 })
+  rawNv.scenes = choreographBeatSfxCues(rawNv.scenes, beatRes)
+  rawNv.subtitles = rawNv.scenes.flatMap((s) => s.subtitles || [])
+  const lastNv = rawNv.scenes[rawNv.scenes.length - 1]
+  rawNv.totalDurationInFrames = lastNv.startFrame + lastNv.durationInFrames
+  rawNv.totalDurationSec = Number((rawNv.totalDurationInFrames / 30).toFixed(4))
+  writeScriptJson(tmpNarrativeProj, rawNv)
+  syncNarrativeProjectCode(tmpNarrativeProj, rawNv, { forceOverwrite: true })
+  const nvLint = await executeVideoLint({ projectDir: tmpNarrativeProj, engine: 'remotion' })
+  const nvTsc = await runTypecheckOnProject(tmpNarrativeProj)
+  if (!nvLint.ok || !nvTsc.ok) {
+    throw new Error(`Narrative Diorama lint/tsc failed: lint=${JSON.stringify(nvLint.errors)} tsc=${JSON.stringify(nvTsc.errors)}`)
+  }
+  console.log(
+    `[14/15] Real Beat Analyzer (100 BPM measured=${beatRes.bpm} BPM, phase=${beatRes.phaseSec}s) + Zero-Asset Narrative Diorama (Remotion tsc 0 errors + lint PASS)!`,
+  )
+
+  // 15. Universal Root-Cause Verification: Transition Normalization + Overlay Mount + Half-Beat Blitz + SFX Sidechain Mix + Batched Custom TSX Coder
+  if (
+    normalizeTransitionKind('pan_across', 2, true) !== 'slash-wipe' ||
+    normalizeTransitionKind('wipe-right', 1, false) !== 'light-wipe' ||
+    normalizeTransitionKind('pull_out', 3, true) !== 'zoom-punch'
+  ) {
+    throw new Error('normalizeTransitionKind failed to sanitize recipe aliases cleanly')
+  }
+  const nvCompCode = readFileSync(join(tmpNarrativeProj, 'src', 'VideoComposition.tsx'), 'utf8')
+  if (!nvCompCode.includes('<SceneTransitionOverlay')) {
+    throw new Error('SceneStage narrative-diorama branch still bypassed SceneTransitionOverlay!')
+  }
+  if (!nvCompCode.includes('publicAssetFiles')) {
+    throw new Error('VideoComposition SceneStage failed to inject publicAssetFiles into CustomSceneComp!')
+  }
+  const { repairPromoPlanRules, validatePromoPlan } = await import('../packages/dsh-tool-media/plan-schema.js')
+  const promoBeatPlan = repairPromoPlanRules(
+    {
+      mode: 'promo-ui',
+      shots: Array.from({ length: 12 }, (_, idx) => ({
+        title: `Beat Shot ${idx + 1}`,
+        narration: `镜头 ${idx + 1} 节奏切换。`,
+        durationSec: 2.5,
+        transition: idx === 0 ? 'cut' : 'slash-wipe',
+        assetRefs: idx % 2 === 0 ? ['assets/images/ui.png'] : [],
+      })),
+    },
+    { topic: 'Beat Promo Test', narrationMode: 'tts-beat-sync', assetsManifest: { items: [{ role: 'image', path: 'assets/images/ui.png' }] } },
+  )
+  const promoBeatNonCuts = promoBeatPlan.shots.filter((s, idx) => idx > 0 && s.transition !== 'cut').length
+  if (promoBeatNonCuts < 10 || !validatePromoPlan(promoBeatPlan).ok) {
+    throw new Error(`tts-beat-sync plan choked transitions or failed validation: nonCuts=${promoBeatNonCuts}`)
+  }
+
+  const blitzScenes = [
+    { id: 'scene-01', title: 'Half-Beat Hit', narration: '第一击', beatCount: 0.5, transition: 'cut', stageSpec: { mood: 'crimson-war', archetype: 'slash-climax' } },
+    { id: 'scene-02', title: 'Tech Diagram', narration: '架构演进', beatCount: 2, transition: 'slash-wipe', visualBlueprint: 'Animated dataflow rings' },
+    { id: 'scene-03', title: 'Map Sweep', narration: '疆域跃迁', beatCount: 4, transition: 'zoom-punch', stageSpec: { mood: 'dawn-amber', archetype: 'strategic-map' } },
+  ]
+  const qBlitz = quantizeScenesToBeatGrid(blitzScenes, beatRes, { mode: 'subtitle-mv', fps: 30 })
+  if (qBlitz[0].durationInFrames < 8 || qBlitz[0].durationInFrames > 14) {
+    throw new Error(`Half-beat blitz scene duration expected 8..14 frames, got ${qBlitz[0].durationInFrames}`)
+  }
+
+  const blitzSfx = choreographBeatSfxCues(qBlitz, beatRes)
+  const tmpBatchProj = join(REPO_ROOT, '.tmp', 'e2e-batched-tsx')
+  rmSync(tmpBatchProj, { recursive: true, force: true })
+  scaffoldVideoProject(tmpBatchProj, {
+    title: 'Universal Batched TSX Coder Self-Test',
+    engine: 'remotion',
+    style: 'tech',
+  })
+  const batchScript = readScriptJson(tmpBatchProj).data
+  batchScript.narrationMode = 'subtitle-mv'
+  batchScript.bgmMode = 'uploaded'
+  batchScript.bgm = { ...beatRes, enabled: true, mode: 'uploaded', path: testBgmSrc, source: 'user-imported' }
+  batchScript.scenes = blitzSfx
+  batchScript.subtitles = blitzSfx.flatMap((s) => s.subtitles || [])
+  batchScript.totalDurationInFrames = blitzSfx[blitzSfx.length - 1].endFrame
+  batchScript.totalDurationSec = Number((batchScript.totalDurationInFrames / 30).toFixed(4))
+  writeScriptJson(tmpBatchProj, batchScript)
+  await ensureProjectAudioAssets(tmpBatchProj, batchScript, { items: [] })
+  const batchMixRes = await mixVideoAudio({
+    projectDir: tmpBatchProj,
+    script: batchScript,
+    assetsManifest: { items: [] },
+    outputPath: join(tmpBatchProj, 'output', 'master-audio.wav'),
+  })
+  if (!batchMixRes.ok || !existsSync(batchMixRes.outputPath) || (batchMixRes.sfxCount || 0) < 3) {
+    throw new Error(`SFX sidechain audio mix failed: ${JSON.stringify(batchMixRes)}`)
+  }
+
+  const batchAuthRes = await authorBatchedRemotionScenes({
+    absDir: tmpBatchProj,
+    lockedScript: batchScript,
+    batchSize: 6,
+    maxRepairRounds: 1,
+    callLlmChatFn: async () => ({
+      text: JSON.stringify({
+        files: {
+          'src/scenes/Batch01.tsx': `import React from 'react';
+import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
+import { CameraRig, ParallaxHorizon, computeBeatPulse, FONT_SANS } from '../lib/shotcraft';
+export interface CustomSceneProps { scene: any; idx: number; total: number; beats: any[]; }
+const RenderScene: React.FC<CustomSceneProps> = ({ scene, idx, beats }) => {
+  const frame = useCurrentFrame();
+  const { fps, durationInFrames } = useVideoConfig();
+  const progress = Math.min(1, frame / Math.max(1, durationInFrames - 1));
+  const { pulse } = computeBeatPulse((Number(scene.startSec) || 0) + frame / Math.max(1, fps), beats);
+  return (
+    <CameraRig zoomFrom={1.0} zoomTo={1.08} beatPulse={pulse} cutKickPx={1.2}>
+      <ParallaxHorizon />
+      <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+        <div style={{ fontFamily: FONT_SANS, fontSize: 64, fontWeight: 900, color: '#F8FAFC', opacity: interpolate(progress, [0, 0.2], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }) }}>
+          {scene.title} #{idx + 1}
+        </div>
+      </AbsoluteFill>
+    </CameraRig>
+  );
+};
+export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = {
+  'scene-01': RenderScene,
+  'scene-02': RenderScene,
+  'scene-03': RenderScene,
+};`,
+        },
+      }),
+    }),
+  })
+  if (
+    !batchAuthRes.ok ||
+    !existsSync(join(tmpBatchProj, 'src', 'scenes', 'Batch01.tsx')) ||
+    !existsSync(join(tmpBatchProj, 'src', 'scenes', 'index.ts')) ||
+    !readFileSync(join(tmpBatchProj, 'src', 'VideoComposition.tsx'), 'utf8').includes('CUSTOM_SCENE_MAP')
+  ) {
+    throw new Error(`Batched custom TSX coder verification failed: ${JSON.stringify(batchAuthRes)}`)
+  }
+  rmSync(tmpNarrativeProj, { recursive: true, force: true })
+  rmSync(tmpBatchProj, { recursive: true, force: true })
+  console.log(
+    `[15/16] Universal Engine Upgrades OK (Recipe->Transition sanitizer, TransitionOverlay unified, 0.5-beat blitz, SFX sidechain mix, Batched Custom TSX Coder)!`,
+  )
+
+  // 16. v7 User-Feedback Fixes: Topic Polish, Configurable AI Badge, Adaptive Pacing, Avatar Config Masking, DSH Slot Contract
+  const vmModule = await import('node:vm')
+  const { resolvePacingProfile } = await import('../packages/dsh-tool-media/plan-schema.js')
+
+  // 16a. /api/video-workbench/polish-topic route + helper
+  const emptyPolishRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1/api/video-workbench/polish-topic', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ rawPrompt: '   ' }),
+    }),
+  )
+  if (emptyPolishRes.status !== 400) {
+    throw new Error(`Expected 400 on empty polish-topic prompt, got ${emptyPolishRes.status}`)
+  }
+  const polishedRes = await polishTopicPrompt(
+    {
+      rawPrompt: '介绍我的开源视频插件，开源地址 https://github.com/Merziller/dsh-video-workbench',
+      style: 'tech',
+      pacingMode: 'balanced',
+      llmOverride: {
+        provider: 'openai',
+        format: 'openai-completions',
+        baseUrl: 'https://mock-polish.invalid/v1',
+        apiKey: 'mock-polish-key',
+        model: 'mock-director-v1',
+      },
+    },
+    {
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content:
+                    '```\n开场3秒以工作台痛点切入，中段分段展示素材分析、IndexTTS-2.5配音与双引擎渲染，收尾锁定开源仓库 https://github.com/Merziller/dsh-video-workbench 并号召Star。\n```',
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    },
+  )
+  if (
+    !polishedRes.ok ||
+    polishedRes.polishedTopic.includes('```') ||
+    !polishedRes.polishedTopic.includes('https://github.com/Merziller/dsh-video-workbench')
+  ) {
+    throw new Error(`Topic polish output invalid: ${JSON.stringify(polishedRes)}`)
+  }
+
+  // 16b. Avatar config secret masking + persistence (restore afterwards)
+  const origAvatarGet = await handleWorkbenchApiRequest(new Request('http://127.0.0.1/api/video-workbench/avatar/config'))
+  const origAvatarCfg = (await origAvatarGet.json()).avatarProvider || {}
+  const saveAvRes = await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1/api/video-workbench/avatar/config', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'external',
+        endpoint: 'http://127.0.0.1:9911/avatar',
+        apiKey: 'secret-test-key-9988',
+      }),
+    }),
+  )
+  const saveAvJson = await saveAvRes.json()
+  const readAvJson = await (await handleWorkbenchApiRequest(new Request('http://127.0.0.1/api/video-workbench/avatar/config'))).json()
+  await handleWorkbenchApiRequest(
+    new Request('http://127.0.0.1/api/video-workbench/avatar/config', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: origAvatarCfg.mode === 'external' ? 'external' : 'builtin',
+        endpoint: origAvatarCfg.endpoint || '',
+        apiKey: '',
+      }),
+    }),
+  )
+  if (
+    !saveAvJson.ok ||
+    !readAvJson.avatarProvider?.hasApiKey ||
+    JSON.stringify(readAvJson).includes('secret-test-key-9988')
+  ) {
+    throw new Error(`Avatar config masking check failed: ${JSON.stringify(readAvJson)}`)
+  }
+
+  // 16c. AI Badge configurable visibility & 4-corner placement across Remotion + HTML5
+  const tmpV7Proj = join(REPO_ROOT, '.tmp', 'v7-regression-badge')
+  rmSync(tmpV7Proj, { recursive: true, force: true })
+  scaffoldVideoProject(tmpV7Proj, {
+    title: 'AI Badge & Adaptive Pacing Test',
+    engine: 'remotion',
+    style: 'tech',
+  })
+  const badgeScript = readScriptJson(tmpV7Proj).data
+  badgeScript.aiBadge = false
+  badgeScript.aiBadgeEnabled = false
+  badgeScript.aiBadgePosition = 'bottom-left'
+  badgeScript.aiBadgeText = 'AI 辅助创作测试'
+  writeScriptJson(tmpV7Proj, badgeScript)
+  syncProjectCodeFromScript(tmpV7Proj, badgeScript)
+  const remotionCompOff = readFileSync(join(tmpV7Proj, 'src', 'VideoComposition.tsx'), 'utf8')
+  const shotcraftSrc = readFileSync(join(tmpV7Proj, 'src', 'lib', 'shotcraft.tsx'), 'utf8')
+  const pubOff = JSON.parse(readFileSync(join(tmpV7Proj, 'script.json'), 'utf8'))
+  const htmlOff = readFileSync(join(tmpV7Proj, 'index.html'), 'utf8')
+  badgeScript.aiBadge = true
+  badgeScript.aiBadgeEnabled = true
+  badgeScript.aiBadgePosition = 'top-right'
+  writeScriptJson(tmpV7Proj, badgeScript)
+  syncProjectCodeFromScript(tmpV7Proj, badgeScript)
+  const pubOn = JSON.parse(readFileSync(join(tmpV7Proj, 'script.json'), 'utf8'))
+  const htmlTopRight = readFileSync(join(tmpV7Proj, 'index.html'), 'utf8')
+  if (
+    !remotionCompOff.includes("import scriptData from '../script.json'") ||
+    !remotionCompOff.includes('sData.aiBadgeEnabled') ||
+    !remotionCompOff.includes('sData.aiBadgePosition') ||
+    !shotcraftSrc.includes("'bottom-left'") ||
+    !shotcraftSrc.includes("'top-right'") ||
+    pubOff.aiBadgeEnabled !== false ||
+    pubOn.aiBadgeEnabled !== true ||
+    pubOn.aiBadgePosition !== 'top-right' ||
+    !/#ai-badge\s*\{[^}]*display:\s*none/.test(htmlOff) ||
+    !/#ai-badge\s*\{[^}]*position:\s*absolute;\s*top:[^}]*right:/.test(htmlTopRight) ||
+    !htmlTopRight.includes('AI 辅助创作测试')
+  ) {
+    throw new Error('AI Badge toggle or 4-corner position assertion failed across Remotion/HTML5')
+  }
+  rmSync(tmpV7Proj, { recursive: true, force: true })
+
+  // 16d. Topic/genre adaptive pacing rules (calm vs balanced vs dynamic)
+  const pCalm = resolvePacingProfile({ topic: '品牌温情故事访谈与十年成长历程', style: 'warm', pacingMode: 'auto' })
+  const pBal = resolvePacingProfile({ topic: '开源桌面视频工作台功能介绍与使用教程', style: 'tech', hasAssets: true, pacingMode: 'auto' })
+  const pDyn = resolvePacingProfile({ topic: '西楚霸王项羽历史高燃卡点MV', narrationMode: 'subtitle-mv', pacingMode: 'auto' })
+  const calmRepaired = repairPromoPlanRules(
+    { shots: [{ title: '开篇', narration: '十年历程慢慢讲述。', durationSec: 0.4 }] },
+    { topic: '品牌故事访谈', style: 'warm', pacingMode: 'calm' },
+  )
+  if (
+    pCalm.id !== 'calm' ||
+    pCalm.allowHalfBeatBlitz ||
+    pBal.id !== 'balanced' ||
+    pDyn.id !== 'dynamic' ||
+    !pDyn.allowHalfBeatBlitz ||
+    calmRepaired.shots[0].durationSec < 2.4
+  ) {
+    throw new Error(`Adaptive pacing check failed: calm=${pCalm.id}, bal=${pBal.id}, dyn=${pDyn.id}, dur=${calmRepaired.shots[0].durationSec}`)
+  }
+
+  // 16e. DSH desktop manifest + synchronous client module slot registration + Warroom interactive controls
+  const wbPkg = JSON.parse(readFileSync(join(REPO_ROOT, 'packages', 'dsh-web-video-workbench', 'package.json'), 'utf8'))
+  const wbPatchRaw = readFileSync(join(REPO_ROOT, 'packages', 'dsh-web-video-workbench', 'cordis.patch.yml'), 'utf8')
+  const wbClientSrc = readFileSync(join(REPO_ROOT, 'packages', 'dsh-web-video-workbench', 'lib', 'client.js'), 'utf8')
+  if (
+    wbPkg.exports?.['./client'] !== './lib/client.js' ||
+    wbPkg.dsh?.client?.platform !== 'web' ||
+    !wbPatchRaw.includes('@dsh-video/preset-video') ||
+    !wbPatchRaw.includes('@dsh-video/web-video-workbench')
+  ) {
+    throw new Error('dsh-web-video-workbench DSH desktop bundle manifest incomplete')
+  }
+  let capturedLoaderDef = null
+  const mockReact = {
+    createElement: (type, props, ...children) => ({ type, props, children }),
+    Component: class {},
+    useState: (v) => [typeof v === 'function' ? v() : v, () => {}],
+    useEffect: () => {},
+    useRef: (v) => ({ current: v }),
+    useMemo: (fn) => fn(),
+    useCallback: (fn) => fn,
+  }
+  const clientSandbox = {
+    window: {
+      __ModuleLoader__: { load: (def) => { capturedLoaderDef = def } },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => {},
+      localStorage: { getItem: () => null, setItem: () => {} },
+      innerWidth: 1440,
+    },
+    document: { querySelector: () => null, createElement: () => ({ style: {} }), head: { appendChild: () => {} } },
+    localStorage: { getItem: () => null, setItem: () => {} },
+    navigator: { clipboard: {} },
+    CustomEvent: class {},
+    URL,
+    console,
+    setTimeout,
+    clearTimeout,
+  }
+  vmModule.runInNewContext(wbClientSrc, clientSandbox, { filename: 'client.js' })
+  if (!capturedLoaderDef || capturedLoaderDef.factory.constructor.name === 'AsyncFunction') {
+    throw new Error('DSH client factory must be synchronous for desktop __ModuleLoader__')
+  }
+  const registeredSlots = []
+  const clientPlugin = capturedLoaderDef.factory((m) => (m === 'react' ? mockReact : {}))
+  clientPlugin.apply({
+    slots: {
+      inject: (_name, fn) => fn(),
+      register: (opts, Comp) => {
+        registeredSlots.push({ opts, Comp })
+        return () => {}
+      },
+    },
+  })
+  const hasMainSlot = registeredSlots.some((s) => s.opts?.name === 'main' && s.opts?.key === 'video-workbench')
+  const sidebarEntry = registeredSlots.find((s) => s.opts?.name === 'sidebar.panellist' && s.opts?.id === 'video-workbench')
+  const toolViewCount = registeredSlots.filter((s) => s.opts?.name === 'tool.call.toolview' && typeof s.opts?.key === 'string').length
+  const sidebarSvg = sidebarEntry?.Comp?.({ size: 20, active: true })
+  if (
+    !hasMainSlot ||
+    !sidebarEntry ||
+    sidebarSvg?.type !== 'svg' ||
+    toolViewCount < 5 ||
+    !wbClientSrc.includes('AI 一键润色提示词') ||
+    !wbClientSrc.includes('上一幕') ||
+    !wbClientSrc.includes('下一幕')
+  ) {
+    throw new Error(`DSH client slot / UI check failed: main=${hasMainSlot}, toolViews=${toolViewCount}, svg=${sidebarSvg?.type}`)
+  }
+
+  console.log(
+    `[16/16] v7 Fixes Verified (Topic Polish API, Avatar Secret Masking, 4-Corner AI Badge, Adaptive Pacing, Sync DSH Client Slots [${registeredSlots.length}] & Warroom Preview Controls)!`,
   )
   console.log('======================================================================')
 }

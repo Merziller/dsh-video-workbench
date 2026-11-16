@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { resolveSafeZoneSpec } from '@dsh-video/shared'
+import { deriveVerbalSubtitleParts, normalizeVideoStyle, resolveSafeZoneSpec, sanitizeSpokenNarration, VIDEO_STYLES } from '@dsh-video/shared'
 
 export const PROMO_PLAN_VERSION = 'promo-plan/1'
 
@@ -30,7 +30,7 @@ export const PROMO_SHOT_RECIPES = {
     kenBurns: 'zoom-out',
     fromScale: 1.24,
     toScale: 1.0,
-    transition: 'wipe-right',
+    transition: 'light-wipe',
   },
   pan_down: {
     id: 'pan_down',
@@ -39,7 +39,7 @@ export const PROMO_SHOT_RECIPES = {
     kenBurns: 'pan-down',
     fromScale: 1.12,
     toScale: 1.15,
-    transition: 'wipe-right',
+    transition: 'slash-wipe',
   },
   pan_across: {
     id: 'pan_across',
@@ -80,7 +80,74 @@ export const PROMO_SHOT_RECIPES = {
 }
 
 const VALID_SHOT_KINDS = Object.keys(PROMO_SHOT_RECIPES)
-const VALID_STYLES = ['tech', 'cinematic', 'documentary', 'energetic']
+const VALID_SHOWCASE_LAYOUTS = new Set([
+  'card-fan-opener',
+  'app-focus-shot',
+  'workflow-steps',
+  'split-wipe-compare',
+  'metric-dashboard',
+  'multi-window-trio',
+  '3d-stage-opener',
+  'media-split-motion',
+  'mosaic-pulse-wall',
+  'compare-dual',
+  'kinetic-impact',
+  'radial-climax',
+  'narrative-diorama',
+])
+
+const VALID_STAGE_ARCHETYPES = [
+  'hero-numeral',
+  'hero-stand',
+  'oath-break',
+  'cavalry-rush',
+  'slash-climax',
+  'duel-confront',
+  'farewell-tent',
+  'strategic-map',
+  'scroll-calligraphy',
+  'plaque-summary',
+  'channel-end',
+]
+
+export const VALID_TRANSITIONS = [
+  'cut',
+  'flash-cut',
+  'slash-wipe',
+  'iris-circle',
+  'block-wipe',
+  'glitch-cut',
+  'zoom-punch',
+  'light-wipe',
+]
+
+const TRANSITION_ALIASES = {
+  'wipe-right': 'light-wipe',
+  'wipe-left': 'slash-wipe',
+  wipe: 'slash-wipe',
+  slide: 'light-wipe',
+  fade: 'flash-cut',
+  dissolve: 'flash-cut',
+  pull_out: 'zoom-punch',
+  push_in: 'zoom-punch',
+  pan_across: 'slash-wipe',
+  pan_down: 'light-wipe',
+  face_focus: 'iris-circle',
+  impact: 'flash-cut',
+  hold: 'cut',
+  freeze_end: 'cut',
+}
+
+export function normalizeTransitionKind(raw, idx = 0, isBeatNarrative = false) {
+  if (idx === 0) return 'cut'
+  const key = String(raw || '').trim().toLowerCase()
+  if (VALID_TRANSITIONS.includes(key)) return key
+  if (TRANSITION_ALIASES[key]) return TRANSITION_ALIASES[key]
+  const pool = isBeatNarrative
+    ? ['flash-cut', 'slash-wipe', 'zoom-punch', 'glitch-cut', 'iris-circle', 'light-wipe']
+    : ['iris-circle', 'light-wipe', 'block-wipe', 'slash-wipe', 'zoom-punch']
+  return pool[idx % pool.length]
+}
 
 function isRelativeAssetPath(p) {
   if (!p) return true
@@ -92,11 +159,70 @@ function isRelativeAssetPath(p) {
 
 /**
  * Strictly validate a `promo-plan/1` JSON structure against hard safety invariants:
- * - max 8 non-cut transitions
- * - min 1.5s per shot
- * - zoom bounded within [1.0, 1.25]
+ * - max 8 non-cut transitions (up to 64 in rhythmic MV mode)
+ * - min 1.5s per shot (0.26s half-beat flash cut in beat-synced narrative MV)
+ * - zoom bounded within [0.95, 1.25]
  * - strictly relative asset references
  */
+export const VALID_PACING_MODES = ['auto', 'calm', 'balanced', 'dynamic']
+
+export const PACING_PROFILES = {
+  calm: {
+    id: 'calm',
+    label: '舒缓叙事（故事/品牌/教学）',
+    minDurSec: 3.8,
+    maxDurSec: 7.5,
+    shotsPerMin: 10,
+    minShots: 6,
+    maxShots: 14,
+    allowHalfBeatBlitz: false,
+    ruleHint: '每镜保持 4.2~7.5 秒从容留白与自然呼吸，让观众充分理解故事情绪与画面细节，切忌急促闪切。',
+  },
+  balanced: {
+    id: 'balanced',
+    label: '稳健解说（产品功能/教程/评测）',
+    minDurSec: 2.8,
+    maxDurSec: 5.5,
+    shotsPerMin: 15,
+    minShots: 10,
+    maxShots: 18,
+    allowHalfBeatBlitz: false,
+    ruleHint: '以产品功能清晰传达为先：开场与高潮结尾可轻快收束（2.2~3.0s），功能讲解与界面实拍保持 3.2~5.5s 舒适节奏，字数适中易读、不赶语速。',
+  },
+  dynamic: {
+    id: 'dynamic',
+    label: '高燃快节奏（历史史诗/卡点 MV/快闪预告）',
+    minDurSec: 0.26,
+    maxDurSec: 3.6,
+    shotsPerMin: 24,
+    minShots: 18,
+    maxShots: 36,
+    allowHalfBeatBlitz: true,
+    ruleHint: '高密度快节奏拆镜：常规叙事设 1.3~3.0s（2~4 拍），高潮冲击/鼓点突降(drops)/转折闪切可设 0.5 拍(0.33s) 或 1 拍(0.67s)，紧密踩准音乐节拍。',
+  },
+}
+
+/**
+ * Resolve concrete pacing profile from explicit `pacingMode` or intelligent topic/style classification.
+ */
+export function resolvePacingProfile({ topic = '', style = 'tech', narrationMode = '', hasAssets = false, pacingMode = 'auto' } = {}) {
+  const req = String(pacingMode || 'auto').trim().toLowerCase()
+  if (req === 'calm' || req === 'balanced' || req === 'dynamic') {
+    return PACING_PROFILES[req]
+  }
+  const text = `${topic || ''} ${style || ''}`.trim()
+  if (narrationMode === 'subtitle-mv' || /历史|霸王|史诗|演义|战役|征战|卡点|快闪|混剪|高燃|电音|\bMV\b/i.test(text)) {
+    return PACING_PROFILES.dynamic
+  }
+  if (style === 'documentary' || style === 'warm' || /故事|品牌|温情|人物|访谈|文化|纪实|心路|成长|随笔|传记/i.test(text)) {
+    return PACING_PROFILES.calm
+  }
+  if (hasAssets || /功能|教程|操作|演示|步骤|介绍|说明书|评测|指南|客户端|软件|工作台|开源/i.test(text)) {
+    return PACING_PROFILES.balanced
+  }
+  return PACING_PROFILES.balanced
+}
+
 export function validatePromoPlan(plan) {
   const errors = []
   if (!plan || typeof plan !== 'object') {
@@ -107,12 +233,20 @@ export function validatePromoPlan(plan) {
     errors.push('shots 数组不能为空')
   }
 
+  const isBeatNarrative =
+    plan.mode === 'narrative-mv' ||
+    Boolean(plan.beatSync) ||
+    plan.narrationMode === 'tts-beat-sync' ||
+    plan.narrationMode === 'subtitle-mv'
+  const minDur = isBeatNarrative ? 0.26 : 1.5
+  const maxTransitions = isBeatNarrative ? 64 : 8
+
   let nonCutTransitions = 0
   for (let i = 0; i < shots.length; i++) {
     const s = shots[i] || {}
     const dur = Number(s.durationSec)
-    if (!Number.isFinite(dur) || dur < 1.5) {
-      errors.push(`shot[${i}] durationSec=${s.durationSec} 低于最小安全驻留时长 1.5s`)
+    if (!Number.isFinite(dur) || dur < minDur) {
+      errors.push(`shot[${i}] durationSec=${s.durationSec} 低于最小安全驻留时长 ${minDur}s`)
     }
     const maxScale = Math.max(Number(s.fromScale || 1), Number(s.toScale || 1))
     const minScale = Math.min(Number(s.fromScale || 1), Number(s.toScale || 1))
@@ -130,8 +264,8 @@ export function validatePromoPlan(plan) {
       }
     }
   }
-  if (nonCutTransitions > 8) {
-    errors.push(`转场次数 (${nonCutTransitions}) 超过最大上限 8 次`)
+  if (nonCutTransitions > maxTransitions) {
+    errors.push(`转场次数 (${nonCutTransitions}) 超过最大上限 ${maxTransitions} 次`)
   }
 
   return { ok: errors.length === 0, errors }
@@ -140,9 +274,33 @@ export function validatePromoPlan(plan) {
 /**
  * Deterministic rule sanitizer clamping bounds and enriching missing fields into clean `promo-plan/1`.
  */
-export function repairPromoPlanRules(rawPlan = {}, { topic = '', style = 'tech', assetsManifest = null, existingScript = null } = {}) {
+export function repairPromoPlanRules(
+  rawPlan = {},
+  { topic = '', style = 'tech', assetsManifest = null, existingScript = null, bgmMeta = null, narrationMode = '', pacingMode = '' } = {},
+) {
   const existingScenes = Array.isArray(existingScript?.scenes) ? existingScript.scenes : []
-  const mediaItems = (assetsManifest?.items || []).filter((it) => it.role !== 'music' && it.role !== 'sfx' && it.role !== 'note')
+  const mediaItems = (assetsManifest?.items || []).filter((it) => it.role !== 'music' && it.role !== 'sfx' && it.role !== 'note' && it.type !== 'audio')
+  const explicitPacing = String(pacingMode || rawPlan?.pacingMode || existingScript?.pacingMode || '').trim().toLowerCase()
+  const resolvedPacing = resolvePacingProfile({
+    topic: topic || rawPlan?.title || existingScript?.title || '',
+    style: style || rawPlan?.style || 'tech',
+    narrationMode: narrationMode || existingScript?.narrationMode || '',
+    hasAssets: mediaItems.length > 0,
+    pacingMode: explicitPacing || (rawPlan?.mode === 'narrative-mv' ? 'dynamic' : 'auto'),
+  })
+  const isBeatMode =
+    rawPlan?.mode === 'narrative-mv' ||
+    Boolean(rawPlan?.beatSync || existingScript?.beatSync) ||
+    Boolean(bgmMeta?.analyzed) ||
+    narrationMode === 'subtitle-mv' ||
+    narrationMode === 'tts-beat-sync' ||
+    existingScript?.narrationMode === 'subtitle-mv' ||
+    existingScript?.narrationMode === 'tts-beat-sync'
+  const explicitSlowPacing = (explicitPacing === 'calm' || explicitPacing === 'balanced') && !isBeatMode
+  const isNarrativeMv = (!explicitSlowPacing && mediaItems.length === 0 && resolvedPacing.id === 'dynamic') || isBeatMode || resolvedPacing.id === 'dynamic'
+  const minDurClamp = isNarrativeMv ? 0.26 : resolvedPacing.id === 'calm' ? 2.4 : 1.5
+  const defaultShotDur = resolvedPacing.id === 'calm' ? 5.2 : resolvedPacing.id === 'balanced' ? 3.8 : 2.6
+  const maxTransitionsLimit = isNarrativeMv ? 64 : 8
   const rawShots = Array.isArray(rawPlan?.shots) && rawPlan.shots.length > 0
     ? rawPlan.shots
     : existingScenes.length > 0
@@ -151,17 +309,18 @@ export function repairPromoPlanRules(rawPlan = {}, { topic = '', style = 'tech',
           title: sc.title,
           narration: sc.narration,
           durationSec: sc.durationSec,
+          stageSpec: sc.stageSpec,
+          beatCount: sc.beatCount,
+          accentWords: sc.accentWords,
           recipe: i === 0 ? 'pull_out' : i === existingScenes.length - 1 ? 'freeze_end' : VALID_SHOT_KINDS[(i % 5) + 1],
         }))
       : [
-          { title: topic || '开场核心亮点', narration: `${topic || '项目核心价值'}，从构想到成片全面加速。`, recipe: 'pull_out', durationSec: 4.5 },
-          { title: '精准帧级呈现', narration: '智能编排运镜与安全区字幕，每一帧清晰可控。', recipe: 'push_in', durationSec: 4.5 },
-          { title: '立即高效交付', narration: '声画同步成片导出，直接面向全平台上线发布。', recipe: 'freeze_end', durationSec: 4.0 },
+          { title: topic || '开场核心亮点', narration: `${topic || '项目核心价值'}，从构想到成片全面加速。`, recipe: 'pull_out', durationSec: defaultShotDur + 0.4 },
+          { title: '精准帧级呈现', narration: '智能编排运镜与安全区字幕，每一帧清晰可控。', recipe: 'push_in', durationSec: defaultShotDur + 0.4 },
+          { title: '立即高效交付', narration: '声画同步成片导出，直接面向全平台上线发布。', recipe: 'freeze_end', durationSec: defaultShotDur },
         ]
 
-  const cleanStyle = VALID_STYLES.includes(String(rawPlan?.style || style).toLowerCase())
-    ? String(rawPlan?.style || style).toLowerCase()
-    : 'tech'
+  const cleanStyle = normalizeVideoStyle(rawPlan?.style || style || 'tech')
 
   let transitionCount = 0
   const repairedShots = rawShots.map((s, idx) => {
@@ -174,37 +333,74 @@ export function repairPromoPlanRules(rawPlan = {}, { topic = '', style = 'tech',
           : VALID_SHOT_KINDS[(idx % 6) + 1]
     const spec = PROMO_SHOT_RECIPES[recipeKey]
 
-    const durRaw = Number(s?.durationSec || existingScenes[idx]?.durationSec || 4.2)
-    const durationSec = Math.max(1.5, Math.min(30, Number.isFinite(durRaw) ? durRaw : 4.2))
+    const durRaw = Number(s?.durationSec || existingScenes[idx]?.durationSec || defaultShotDur)
+    const durationSec = Math.max(minDurClamp, Math.min(30, Number.isFinite(durRaw) ? durRaw : defaultShotDur))
     const fromScale = Math.max(0.95, Math.min(1.25, Number(s?.fromScale || spec.fromScale)))
     const toScale = Math.max(0.95, Math.min(1.25, Number(s?.toScale || spec.toScale)))
 
-    let transition = s?.transition || spec.transition || 'iris-circle'
+    let transition = normalizeTransitionKind(s?.transition || spec.transition || 'iris-circle', idx, isNarrativeMv)
     if (idx === 0) {
       transition = 'cut'
     } else if (transition !== 'cut') {
-      if (transitionCount >= 8) transition = 'cut'
+      if (transitionCount >= maxTransitionsLimit) transition = 'cut'
       else transitionCount++
     }
 
     const rawRefs = Array.isArray(s?.assetRefs)
       ? s.assetRefs.filter(isRelativeAssetPath)
-      : mediaItems.length > 0
-        ? [mediaItems[idx % mediaItems.length].path]
-        : []
+      : existingScenes[idx]?.media?.length > 0
+        ? existingScenes[idx].media.map((m) => m.path).filter(Boolean)
+        : mediaItems.length > 0
+          ? [mediaItems[idx % mediaItems.length].path]
+          : []
+
+    const chosenLayout = VALID_SHOWCASE_LAYOUTS.has(s?.layout)
+      ? s.layout
+      : mediaItems.length === 0 && (s?.stageSpec || isNarrativeMv)
+        ? 'narrative-diorama'
+        : VALID_SHOWCASE_LAYOUTS.has(existingScenes[idx]?.layout)
+          ? existingScenes[idx].layout
+          : spec.layout
+
+    const rawSubChunks = Array.isArray(s?.subChunks) && s.subChunks.length > 0
+      ? s.subChunks.map((c) => sanitizeSpokenNarration(c)).filter(Boolean)
+      : []
+    const nextNarration = sanitizeSpokenNarration(s?.narration || existingScenes[idx]?.narration || s?.title || '') || sanitizeSpokenNarration(s?.title || '') || `第 ${idx + 1} 幕`
+    const oldNarration = sanitizeSpokenNarration(existingScenes[idx]?.narration || '')
+    const narrChanged = Boolean(nextNarration && oldNarration && nextNarration !== oldNarration)
+    const cleanSubChunks =
+      rawSubChunks.length > 0
+        ? rawSubChunks
+        : narrChanged || !existingScenes[idx]?.subChunks
+          ? deriveVerbalSubtitleParts(nextNarration, null, '', 16)
+          : existingScenes[idx]?.subChunks
 
     return {
-      id: s?.id || `scene-${String(idx + 1).padStart(2, '0')}`,
-      title: String(s?.title || existingScenes[idx]?.title || `镜头 ${idx + 1}`).slice(0, 32),
-      narration: String(s?.narration || existingScenes[idx]?.narration || s?.title || '').trim(),
+      id: s?.id || existingScenes[idx]?.id || `scene-${String(idx + 1).padStart(2, '0')}`,
+      title: (sanitizeSpokenNarration(s?.title || existingScenes[idx]?.title || `镜头 ${idx + 1}`) || `镜头 ${idx + 1}`).slice(0, 32),
+      narration: nextNarration,
+      subChunks: cleanSubChunks,
+      accentWords: Array.isArray(s?.accentWords) && s.accentWords.length > 0 ? s.accentWords : existingScenes[idx]?.accentWords,
+      stageSpec: s?.stageSpec || existingScenes[idx]?.stageSpec,
+      beatCount: Number.isFinite(Number(s?.beatCount)) ? Number(s.beatCount) : existingScenes[idx]?.beatCount,
+      visualBlueprint: String(s?.visualBlueprint || existingScenes[idx]?.visualBlueprint || '').trim() || undefined,
+      motionNotes: String(s?.motionNotes || s?.visualBlueprint || existingScenes[idx]?.motionNotes || '').trim() || undefined,
       emotion: String(s?.emotion || existingScenes[idx]?.emotion || (idx === rawShots.length - 1 ? '激昂' : '平静')),
       recipe: recipeKey,
-      layout: spec.layout,
+      layout: chosenLayout,
       kenBurns: spec.kenBurns,
       fromScale: Number(fromScale.toFixed(2)),
       toScale: Number(toScale.toFixed(2)),
       transition,
-      highlights: Array.isArray(s?.highlights) ? s.highlights.filter(Boolean).slice(0, 3) : [],
+      highlights: Array.isArray(s?.highlights) && s.highlights.length > 0
+        ? s.highlights.filter(Boolean).slice(0, 6)
+        : existingScenes[idx]?.highlights || [],
+      cams: Array.isArray(s?.cams) && s.cams.length > 0 ? s.cams : existingScenes[idx]?.cams,
+      marks: Array.isArray(s?.marks) && s.marks.length > 0 ? s.marks : existingScenes[idx]?.marks,
+      loupe: s?.loupe || existingScenes[idx]?.loupe,
+      windowLayout: s?.windowLayout || existingScenes[idx]?.windowLayout,
+      windowTheme: s?.windowTheme || existingScenes[idx]?.windowTheme,
+      windowTitle: s?.windowTitle || existingScenes[idx]?.windowTitle,
       durationSec: Number(durationSec.toFixed(3)),
       assetRefs: rawRefs,
     }
@@ -212,10 +408,13 @@ export function repairPromoPlanRules(rawPlan = {}, { topic = '', style = 'tech',
 
   return {
     version: PROMO_PLAN_VERSION,
+    mode: isNarrativeMv ? 'narrative-mv' : 'promo-ui',
+    pacingMode: resolvedPacing.id,
+    beatSync: Boolean(bgmMeta?.analyzed || isNarrativeMv),
     title: String(rawPlan?.title || existingScript?.title || topic || 'Schema 创作短片').trim(),
     style: cleanStyle,
     targetPlatform: rawPlan?.targetPlatform || existingScript?.targetPlatform || 'universal',
-    bpm: Math.max(70, Math.min(165, Number(rawPlan?.bpm || 112))),
+    bpm: Math.max(70, Math.min(165, Number(bgmMeta?.bpm || rawPlan?.bpm || 112))),
     shots: repairedShots,
   }
 }
@@ -229,11 +428,12 @@ export function resolvePlanSchedule(plan, baseScript = {}) {
   const height = Number(baseScript?.height) || 1080
   const safeZone = resolveSafeZoneSpec(width, height, plan?.targetPlatform || baseScript?.targetPlatform || 'universal')
 
+  const minResolveDur = plan?.mode === 'narrative-mv' || plan?.beatSync ? 0.26 : 1.5
   let cursorFrame = 0
   let cursorSec = 0
   const resolvedShots = (plan?.shots || []).map((shot, idx) => {
-    const durSec = Math.max(1.5, Number(shot.durationSec || 4))
-    const durFrames = Math.max(Math.ceil(1.5 * fps), Math.round(durSec * fps))
+    const durSec = Math.max(minResolveDur, Number(shot.durationSec || 4))
+    const durFrames = Math.max(Math.ceil(minResolveDur * fps), Math.round(durSec * fps))
     const startFrame = cursorFrame
     const startSec = Number(cursorSec.toFixed(3))
     cursorFrame += durFrames
@@ -246,21 +446,41 @@ export function resolvePlanSchedule(plan, baseScript = {}) {
       index: idx + 1,
       title: shot.title,
       narration: shot.narration || baseScene.narration || shot.title,
+      subChunks: Array.isArray(shot.subChunks) ? shot.subChunks : baseScene.subChunks,
+      accentWords: Array.isArray(shot.accentWords) ? shot.accentWords : baseScene.accentWords,
+      stageSpec: shot.stageSpec || baseScene.stageSpec,
+      beatCount: Number.isFinite(Number(shot.beatCount)) ? Number(shot.beatCount) : baseScene.beatCount,
+      visualBlueprint: shot.visualBlueprint || baseScene.visualBlueprint,
+      motionNotes: shot.motionNotes || shot.visualBlueprint || baseScene.motionNotes,
       emotion: shot.emotion || baseScene.emotion || '平静',
       layout: shot.layout || 'media-split-motion',
       kenBurns: shot.kenBurns || 'zoom-in',
-      transition: shot.transition || 'iris-circle',
+      transition: normalizeTransitionKind(shot.transition || 'iris-circle', idx, plan?.mode === 'narrative-mv' || Boolean(plan?.beatSync)),
       highlights: shot.highlights?.length ? shot.highlights : baseScene.highlights || [PROMO_SHOT_RECIPES[shot.recipe]?.label || shot.recipe],
       recipe: shot.recipe,
       fromScale: shot.fromScale,
       toScale: shot.toScale,
+      cams: Array.isArray(shot.cams) && shot.cams.length > 0 ? shot.cams : baseScene.cams,
+      marks: Array.isArray(shot.marks) && shot.marks.length > 0 ? shot.marks : baseScene.marks,
+      loupe: shot.loupe || baseScene.loupe,
+      windowLayout: shot.windowLayout || baseScene.windowLayout,
+      windowTheme: shot.windowTheme || baseScene.windowTheme,
+      windowTitle: shot.windowTitle || baseScene.windowTitle,
+      explicitZeroAsset: Array.isArray(shot.assetRefs) && shot.assetRefs.length === 0,
       media:
-        Array.isArray(shot.assetRefs) && shot.assetRefs.length > 0
-          ? shot.assetRefs.map((p) => ({
-              path: p,
-              type: /\.(mp4|mov|webm|mkv)$/i.test(p) ? 'video' : 'image',
-              motion: shot.kenBurns || 'zoom-in',
-            }))
+        Array.isArray(shot.assetRefs)
+          ? shot.assetRefs.map((p) => {
+              const existingM = (baseScene.media || []).find((m) => m.path === p || m.originalPath === p)
+              const dims = shot._mediaDimMap?.get?.(p) || {}
+              return {
+                ...existingM,
+                path: p,
+                width: Number(existingM?.width || dims.width || 0),
+                height: Number(existingM?.height || dims.height || 0),
+                type: /\.(mp4|mov|webm|mkv)$/i.test(p) ? 'video' : 'image',
+                motion: shot.kenBurns || 'zoom-in',
+              }
+            })
           : baseScene.media || [],
       durationSec: Number((durFrames / fps).toFixed(4)),
       durationInFrames: durFrames,
@@ -299,7 +519,25 @@ function safeExtractJson(text) {
   } catch {
     const a = raw.indexOf('{')
     const b = raw.lastIndexOf('}')
-    if (a >= 0 && b > a) return JSON.parse(raw.slice(a, b + 1))
+    if (a >= 0 && b > a) {
+      try {
+        return JSON.parse(raw.slice(a, b + 1))
+      } catch {
+        // Recover partial truncated shots array cleanly if relay clipped tail
+        const slice = raw.slice(a)
+        const shotsIdx = slice.indexOf('"shots"')
+        if (shotsIdx >= 0) {
+          const lastObjEnd = slice.lastIndexOf('}')
+          if (lastObjEnd > shotsIdx) {
+            for (let cut = lastObjEnd; cut > shotsIdx; cut = slice.lastIndexOf('}', cut - 1)) {
+              try {
+                return JSON.parse(slice.slice(0, cut + 1) + ']}')
+              } catch {}
+            }
+          }
+        }
+      }
+    }
     return null
   }
 }
@@ -318,38 +556,117 @@ export async function runSchemaDirectorWithDegradation({
   targetPlatform = 'universal',
   scriptData = {},
   assetsManifest = null,
+  bgmMeta = null,
+  narrationMode = '',
+  pacingMode = '',
   callLlmChatFn = null,
   forceTierForTest = null,
 }) {
   const trace = []
   let chosenPlan = null
   let degradationTier = 4
+  const mediaCheck = (assetsManifest?.items || []).filter(
+    (it) => it.role !== 'music' && it.role !== 'sfx' && it.role !== 'note' && it.role !== 'brand_mark' && it.type !== 'audio',
+  )
+  const effectivePacingMode = pacingMode || scriptData?.pacingMode || 'auto'
+  const pacingProfile = resolvePacingProfile({
+    topic: topic || scriptData?.title || '',
+    style,
+    narrationMode: narrationMode || scriptData?.narrationMode || '',
+    hasAssets: mediaCheck.length > 0,
+    pacingMode: effectivePacingMode,
+  })
 
   // Tier 1: Full JSON Schema generation
   if (!forceTierForTest || forceTierForTest === 1) {
     if (typeof callLlmChatFn === 'function') {
       try {
+        const mediaDimMap = new Map()
+        for (const it of assetsManifest?.items || []) {
+          if (it.path) mediaDimMap.set(it.path, { width: Number(it.width || 0), height: Number(it.height || 0) })
+          if (it.editedPath) mediaDimMap.set(it.editedPath, { width: Number(it.editedWidth || it.width || 0), height: Number(it.editedHeight || it.height || 0) })
+        }
         const mediaNames = (assetsManifest?.items || [])
-          .filter((it) => it.role !== 'music' && it.role !== 'sfx')
+          .filter((it) => it.role !== 'music' && it.role !== 'sfx' && it.role !== 'note' && it.role !== 'brand_mark' && it.type !== 'audio')
           .map((it) => it.path)
+        const zeroVisualAssets = mediaNames.length === 0
+        const noteSummaries = (assetsManifest?.notes || [])
+          .filter((n) => n?.text)
+          .map((n) => String(n.text).slice(0, 2200))
+          .join('\n')
+        const effectiveBgm = bgmMeta?.analyzed ? bgmMeta : scriptData?.bgm?.analyzed ? scriptData.bgm : null
         const prompt = {
           task: `生成 ${PROMO_PLAN_VERSION} 分镜配方 JSON`,
           topic: topic || scriptData?.title || '主题短片',
+          goal: scriptData?.goal || '',
+          productBrief: noteSummaries || undefined,
           targetPlatform,
+          zeroVisualAssets,
+          narrationMode: narrationMode || scriptData?.narrationMode || 'tts',
+          bgmBeatAnalysis: effectiveBgm
+            ? {
+                bpm: effectiveBgm.bpm,
+                phaseSec: effectiveBgm.phaseSec,
+                beatSec: effectiveBgm.beatSec || Number((60 / (effectiveBgm.bpm || 112)).toFixed(4)),
+                durationSec: effectiveBgm.durationSec,
+                downbeatsSample: (effectiveBgm.downbeats || []).slice(0, 24),
+                drops: effectiveBgm.drops || [],
+              }
+            : undefined,
           allowedRecipes: VALID_SHOT_KINDS,
+          allowedLayouts: Array.from(VALID_SHOWCASE_LAYOUTS),
+          ...(zeroVisualAssets ? { allowedStageArchetypes: VALID_STAGE_ARCHETYPES, allowedStageMoods: ['dawn-amber', 'crimson-war', 'indigo-night', 'ash-twilight', 'bronze-hall', 'jade-river', 'void-gold'], allowedStageSettings: ['palace-stairs', 'mountain-camp', 'city-siege', 'river-gorge', 'vast-plain'] } : {}),
           relativeAssets: mediaNames,
-          scenesHint: (scriptData?.scenes || []).map((s) => ({ title: s.title, narration: s.narration })),
+          scenesHint: zeroVisualAssets && scriptData?.authoringMode === 'local-draft'
+            ? undefined
+            : (scriptData?.scenes || []).map((s) => ({
+                id: s.id,
+                title: s.title,
+                layout: s.layout,
+                narration: s.narration,
+                highlights: s.highlights,
+              })),
         }
+        const targetSpanSec = Number(scriptData?.totalDurationSec) || Number(effectiveBgm?.durationSec) || 60
+        const approxShots = Math.round((targetSpanSec / 60) * pacingProfile.shotsPerMin)
+        const desiredZeroShotsMin = Math.max(pacingProfile.minShots, Math.min(pacingProfile.maxShots - 2, approxShots - 2))
+        const desiredZeroShotsMax = Math.min(pacingProfile.maxShots, desiredZeroShotsMin + (pacingProfile.id === 'dynamic' ? 6 : 4))
+        const desiredUiShotsMin = Math.max(pacingProfile.minShots, Math.min(pacingProfile.maxShots - 2, approxShots - 2))
+        const desiredUiShotsMax = Math.min(pacingProfile.maxShots, desiredUiShotsMin + 4)
+        const pacingLabelHint = `当前选用节奏方案【${pacingProfile.label}】：${pacingProfile.ruleHint}`
+        const systemPrompt = zeroVisualAssets
+          ? `你是顶级音画动态导演 (AI Visual & Motion Director)，擅长所有题材创作（人物传记/历史史诗、软件原理/代码架构科普、产品发布/品牌故事/深度解析）。
+当前没有任何图片/视频素材 (zeroVisualAssets=true)，全部画面由 AI Remotion TSX 代码逐镜编写与内置矢量舞台共同演绎！
+${pacingLabelHint}
+输出严格紧凑 JSON：{ "version": "promo-plan/1", "mode": "${pacingProfile.id === 'dynamic' ? 'narrative-mv' : 'promo-ui'}", "beatSync": ${pacingProfile.id === 'dynamic' || narrationMode === 'subtitle-mv' || narrationMode === 'tts-beat-sync'}, "title": "...", "style": "cinematic|tech|emerald|energetic|documentary", "bpm": ${effectiveBgm?.bpm || (pacingProfile.id === 'calm' ? 88 : 110)}, "shots": [{ "id": "scene-01", "title": "...", "narration": "...", "accentWords": ["核心关键词"], "layout": "narrative-diorama", "beatCount": ${pacingProfile.id === 'dynamic' ? 2 : 4}, "durationSec": ${pacingProfile.id === 'calm' ? 5.0 : pacingProfile.id === 'balanced' ? 3.8 : 2.0}, "transition": "${pacingProfile.id === 'calm' ? 'light-wipe' : 'slash-wipe'}", "visualBlueprint": "主视觉元素、前景中景动势与中段变化", "stageSpec": { "mood": "dawn-amber|crimson-war|indigo-night|ash-twilight|bronze-hall|jade-river|void-gold", "setting": "palace-stairs|mountain-camp|city-siege|river-gorge|vast-plain", "archetype": "hero-numeral|hero-stand|oath-break|cavalry-rush|slash-climax|duel-confront|farewell-tent|strategic-map|scroll-calligraphy|plaque-summary|channel-end", "heroNum": "24", "heroUnit": "岁", "bannerChar": "楚", "plaques": ["要点1","要点2"], "headline": "结尾主标题", "subheadline": "副标题" } }] }。
+核心硬性要求：
+1. **贴合题材的拆镜与节奏**：拆分为 **${desiredZeroShotsMin}~${desiredZeroShotsMax} 个镜头**，${pacingProfile.ruleHint}（单镜口播长度与时长严格匹配，避免字多时长短）。
+2. **每个镜头写出 \`visualBlueprint\`（下游 TSX 代码生成员直读！）**：具体写清画面构图、矢量主主体动作与镜内变化，保持 JSON 精简紧凑，只填写该镜必需字段。
+3. **绝对禁止输出任何网址 URL、参考来源标注或 Markdown 链接**（严禁 \`utm_source\` 等；除非用户明确要求展示项目仓库网址）：所有旁白与字幕纯正中文短句，若用户指定人称须全程统一，\`accentWords\` 标出 1~2 个核心高亮词。
+4. \`transition\` 仅允许 \`${VALID_TRANSITIONS.join(' | ')}\` 中的合法值（首镜用 \`cut\`）。`
+          : `你是顶级商业与开源技术宣传片/产品介绍导演，擅长依据题材调整叙事节奏。
+${pacingLabelHint}
+输出严格紧凑 JSON：{ "version": "promo-plan/1", "beatSync": ${narrationMode === 'subtitle-mv' || narrationMode === 'tts-beat-sync' || pacingProfile.id === 'dynamic'}, "title": "...", "style": "tech|energetic|emerald|cinematic|documentary", "bpm": ${effectiveBgm?.bpm || (pacingProfile.id === 'calm' ? 92 : 114)}, "shots": [{ "id": "scene-01", "title": "...", "narration": "...", "subChunks": ["短句1","短句2"], "accentWords": ["亮点"], "visualBlueprint": "具体描述镜头动态构图：无截图时画动态SVG架构拓扑/数据卡片；有截图时用AppWindow+cams局部聚焦推镜", "recipe": "push_in", "layout": "app-focus-shot", "windowTitle": "模块名称", "highlights": ["标签1","标签2"], "cams": [{ "t": 0, "fx": 0.5, "fy": 0.5, "z": 1.0 }, { "t": 0.55, "fx": 0.5, "fy": 0.48, "z": 1.15 }], "durationSec": ${pacingProfile.id === 'calm' ? 5.0 : pacingProfile.id === 'balanced' ? 3.8 : 2.5}, "transition": "${pacingProfile.id === 'calm' ? 'light-wipe' : 'slash-wipe'}", "assetRefs": [] }] }。
+核心硬性要求：
+1. **依应用场景适配节奏**：拆分为 **${desiredUiShotsMin}~${desiredUiShotsMax} 个镜头**，${pacingProfile.ruleHint} 口播文案口语自然、句式清晰。
+2. **虚实交替混剪**：软件截图/实拍场景填入 exact \`relativeAssets\` 路径并配 \`app-focus-shot / split-wipe-compare / workflow-steps / multi-window-trio\`；开篇痛点钩子、架构原理或结尾卡片置 \`assetRefs: []\`（并写清 \`visualBlueprint\` 由 AI 主程编写动态 SVG 视觉）。
+3. **严禁网页参考来源注释**（\`utm_source\` 等），如主题要求展示项目自身开源 GitHub 地址请完整准确保留。\`transition\` 仅允许 ${VALID_TRANSITIONS.join('/')}。`
         const res = await callLlmChatFn({
-          system: `输出严格 JSON：{ "version": "promo-plan/1", "title": "...", "style": "tech|cinematic|documentary|energetic", "bpm": 112, "shots": [{ "title": "...", "narration": "...", "recipe": "push_in", "durationSec": 4.5, "transition": "iris-circle", "assetRefs": [] }] }。注意：每镜头 durationSec >= 1.5，转场<=8，仅使用提供的 relativeAssets 相对路径。`,
+          system: systemPrompt,
           messages: [{ role: 'user', content: JSON.stringify(prompt) }],
-          temperature: 0.25,
-          maxTokens: 2000,
+          temperature: zeroVisualAssets ? 0.4 : 0.28,
+          maxTokens: zeroVisualAssets ? 12500 : 6500,
+          timeoutMs: zeroVisualAssets ? 260_000 : 180_000,
           responseFormat: 'json',
         })
         const candidate = safeExtractJson(res?.text)
-        const repaired = candidate ? repairPromoPlanRules(candidate, { topic, style, assetsManifest, existingScript: scriptData }) : null
+        const repaired = candidate
+          ? repairPromoPlanRules(candidate, { topic, style, assetsManifest, existingScript: scriptData, bgmMeta: effectiveBgm, narrationMode, pacingMode: effectivePacingMode })
+          : null
         if (repaired && validatePromoPlan(repaired).ok) {
+          for (const sh of repaired.shots) {
+            sh._mediaDimMap = mediaDimMap
+          }
           chosenPlan = repaired
           degradationTier = 1
           trace.push({ tier: 1, name: 'Full JSON Schema', ok: true })
@@ -364,31 +681,63 @@ export async function runSchemaDirectorWithDegradation({
     }
   }
 
-  // Tier 2: Sectioned simple prompt (titles + recipes list)
+  // Tier 2: Sectioned lightweight list
   if (!chosenPlan && (!forceTierForTest || forceTierForTest <= 2) && typeof callLlmChatFn === 'function') {
     try {
+      const zeroVisT2 = (assetsManifest?.items || []).filter((it) => it.role !== 'music' && it.role !== 'sfx' && it.role !== 'note' && it.type !== 'audio').length === 0
+      const t2CountRange = pacingProfile.id === 'calm' ? '6~12' : pacingProfile.id === 'balanced' ? '10~16' : '22~30'
       const res = await callLlmChatFn({
-        system: `用极简 3 行列出分镜方案，每行格式：镜头标题 | 配方(${VALID_SHOT_KINDS.join('/')}) | 旁白一句话`,
-        messages: [{ role: 'user', content: `主题: ${topic || scriptData?.title || 'AI短片'}` }],
-        temperature: 0.3,
-        maxTokens: 500,
+        system: zeroVisT2
+          ? `用 ${t2CountRange} 行紧凑列出完整叙事分镜表，节奏方案【${pacingProfile.label}】：${pacingProfile.ruleHint}。严禁附带任何网址 URL、引用来源或 Markdown 链接。每行格式：镜头标题 | 舞台类型(${VALID_STAGE_ARCHETYPES.join('/')}) | 纯中文旁白金句(含关键要点) | 镜内视觉动作(visualBlueprint)`
+          : `用 ${t2CountRange} 行紧凑列出高能分镜方案，节奏方案【${pacingProfile.label}】：${pacingProfile.ruleHint}。严禁附带任何网址 URL、引用来源或 Markdown 链接。每行格式：镜头标题 | 配方(${VALID_SHOT_KINDS.join('/')}) | 旁白一句话 | 镜内视觉动作`,
+        messages: [{ role: 'user', content: `主题: ${topic || scriptData?.title || 'AI短片'}\n要求: ${scriptData?.goal || ''}` }],
+        temperature: 0.35,
+        maxTokens: 3600,
       })
       const lines = String(res?.text || '')
         .split(/\r?\n/)
         .map((l) => l.trim())
         .filter((l) => l.includes('|'))
       if (lines.length >= 2) {
-        const shots = lines.slice(0, 6).map((l, idx) => {
-          const [rawTitle, rawRecipe, rawNarr] = l.split('|').map((x) => x.trim())
-          const recipe = VALID_SHOT_KINDS.find((k) => rawRecipe?.includes(k)) || VALID_SHOT_KINDS[(idx % 6) + 1]
+        const shots = lines.slice(0, 36).map((l, idx) => {
+          const [rawTitle, rawType, rawNarr, rawVisual] = l.split('|').map((x) => sanitizeSpokenNarration(x || ''))
+          const recipe = VALID_SHOT_KINDS.find((k) => rawType?.includes(k)) || VALID_SHOT_KINDS[(idx % 6) + 1]
+          const arch = VALID_STAGE_ARCHETYPES.find((a) => rawType?.includes(a)) || VALID_STAGE_ARCHETYPES[idx % VALID_STAGE_ARCHETYPES.length]
+          const beatPattern = zeroVisT2 && pacingProfile.id === 'dynamic'
+            ? (idx === 0 || idx === lines.length - 1 ? 4 : idx % 5 === 3 ? 1 : idx % 2 === 1 ? 2 : 3)
+            : pacingProfile.id === 'calm'
+              ? 6
+              : 4
+          const txPool = pacingProfile.id === 'calm'
+            ? ['light-wipe', 'iris-circle', 'light-wipe']
+            : ['flash-cut', 'slash-wipe', 'zoom-punch', 'glitch-cut', 'iris-circle', 'light-wipe']
           return {
             title: rawTitle || `镜头 ${idx + 1}`,
             narration: rawNarr || rawTitle || '',
+            visualBlueprint: rawVisual || `${rawTitle || '核心视觉'}：推镜景深推进配合主题切换`,
             recipe,
-            durationSec: 4.2,
+            transition: idx === 0 ? 'cut' : txPool[idx % txPool.length],
+            layout: zeroVisT2 ? 'narrative-diorama' : undefined,
+            stageSpec: zeroVisT2
+              ? {
+                  mood: idx === 0 ? 'dawn-amber' : idx >= lines.length - 3 ? 'ash-twilight' : idx % 3 === 1 ? 'crimson-war' : 'indigo-night',
+                  setting: idx === 0 ? 'palace-stairs' : idx >= lines.length - 3 ? 'river-gorge' : idx % 2 === 0 ? 'city-siege' : 'mountain-camp',
+                  archetype: arch,
+                }
+              : undefined,
+            beatCount: beatPattern,
+            durationSec: pacingProfile.id === 'calm'
+              ? 5.0
+              : pacingProfile.id === 'balanced'
+                ? 3.8
+                : Number((beatPattern * (60 / (bgmMeta?.bpm || 90))).toFixed(2)),
           }
         })
-        chosenPlan = repairPromoPlanRules({ shots, targetPlatform }, { topic, style, assetsManifest, existingScript: scriptData })
+        const effectiveBgmT2 = bgmMeta?.analyzed ? bgmMeta : scriptData?.bgm?.analyzed ? scriptData.bgm : null
+        chosenPlan = repairPromoPlanRules(
+          { shots, targetPlatform, pacingMode: pacingProfile.id, mode: pacingProfile.id === 'dynamic' || zeroVisT2 ? 'narrative-mv' : 'promo-ui' },
+          { topic, style, assetsManifest, existingScript: scriptData, bgmMeta: effectiveBgmT2, narrationMode, pacingMode: effectivePacingMode },
+        )
         degradationTier = 2
         trace.push({ tier: 2, name: 'Sectioned Prompt', ok: true })
       } else {
@@ -422,11 +771,11 @@ export async function runSchemaDirectorWithDegradation({
           title: baseScenes ? item.title : `${topic || '重点展示'} ${idx + 1}`,
           narration: baseScenes ? item.narration : `${topic || '项目特性'} 核心解读第 ${idx + 1} 幕。`,
           recipe: recipeSeq[idx % recipeSeq.length],
-          durationSec: baseScenes ? item.durationSec : 4.2,
+          durationSec: baseScenes ? item.durationSec : pacingProfile.id === 'calm' ? 5.0 : 4.2,
         }))
         chosenPlan = repairPromoPlanRules(
-          { style: presetStyle, targetPlatform, shots },
-          { topic, style: presetStyle, assetsManifest, existingScript: scriptData },
+          { style: presetStyle, targetPlatform, pacingMode: pacingProfile.id, shots },
+          { topic, style: presetStyle, assetsManifest, existingScript: scriptData, narrationMode, pacingMode: effectivePacingMode },
         )
         degradationTier = 3
         trace.push({ tier: 3, name: `MCQ Choice (${ch})`, ok: true })
@@ -441,8 +790,8 @@ export async function runSchemaDirectorWithDegradation({
   // Tier 4: Deterministic Code Rules Fallback (zero failure guarantee)
   if (!chosenPlan) {
     chosenPlan = repairPromoPlanRules(
-      { targetPlatform, style },
-      { topic, style, assetsManifest, existingScript: scriptData },
+      { targetPlatform, style, pacingMode: pacingProfile.id },
+      { topic, style, assetsManifest, existingScript: scriptData, narrationMode, pacingMode: effectivePacingMode },
     )
     degradationTier = 4
     trace.push({ tier: 4, name: 'Deterministic Rule Engine Fallback', ok: true })

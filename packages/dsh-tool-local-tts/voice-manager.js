@@ -358,20 +358,29 @@ function scanDirectoryRecursive(dir, registerEntry, depth = 0, maxDepth = 4) {
 
     // 2. Audio / Speaker Tensor files (`.wav`, `.mp3`, `.flac`, `.pt`) — ignore `.url`, `.txt`, etc.
     if (['.pt', '.wav', '.mp3', '.flac'].includes(ext)) {
+      let effectivePath = fullPath
+      if (ext === '.pt') {
+        const siblingAudio = ['.wav', '.mp3', '.flac']
+          .map((audioExt) => fullPath.replace(/\.pt$/i, audioExt))
+          .find((cand) => existsSync(cand))
+        if (siblingAudio) effectivePath = siblingAudio
+      }
+      const effExt = extname(effectivePath).toLowerCase()
       const preset = VOICE_FILENAME_PRESETS[stem]
       if (preset) {
         registerEntry({
           ...preset,
-          engine: 'indextts2',
-          refPath: fullPath,
+          engine: effExt === '.pt' ? 'indextts2' : 'indextts25',
+          refPath: effectivePath,
+          durationSec: effExt === '.wav' ? fastReadWavDurationSec(effectivePath) : preset.durationSec ?? null,
           source: 'discovered-local',
         })
       } else {
-        const inferred = inferVoiceMetadataFromPath(fullPath, dirBaseName)
+        const inferred = inferVoiceMetadataFromPath(effectivePath, dirBaseName)
         registerEntry({
           ...inferred,
-          engine: 'indextts2',
-          refPath: fullPath,
+          engine: effExt === '.pt' ? 'indextts2' : 'indextts25',
+          refPath: effectivePath,
           source: 'discovered-voice-pack',
         })
       }
@@ -388,24 +397,37 @@ export function getVoiceCatalog() {
   const packsDir = getVoicePacksDir()
   const catalogPath = join(packsDir, 'catalog.json')
   const examplePath = join(packsDir, 'catalog.example.json')
+  const idxRoot = resolveEnvPath('INDEXTTS_ROOT', '')
+  const hasInferV25 = Boolean(idxRoot && existsSync(join(idxRoot, 'indextts', 'infer_v2_5.py')))
+  const supportsLegacyPt =
+    String(process.env.DEFAULT_TTS_ENGINE || 'indextts25').trim().toLowerCase() === 'indextts2' && !hasInferV25
 
   const byId = new Map()
 
   const registerEntry = (raw) => {
     if (!raw || !raw.id) return
     const expandedRef = expandEnvPlaceholders(raw.refPath || raw.refAudio || '')
-    const resolvedRef = expandedRef
+    let resolvedRef = expandedRef
       ? isAbsolute(expandedRef)
         ? expandedRef
         : resolve(REPO_ROOT, expandedRef)
       : ''
+    if (resolvedRef && resolvedRef.toLowerCase().endsWith('.pt')) {
+      const siblingAudio = ['.wav', '.mp3', '.flac']
+        .map((audioExt) => resolvedRef.replace(/\.pt$/i, audioExt))
+        .find((cand) => existsSync(cand))
+      if (siblingAudio) resolvedRef = siblingAudio
+    }
+    const resolvedExt = extname(resolvedRef || '').toLowerCase()
+    const isLegacyPt = resolvedExt === '.pt'
+    const isAudioSample = ['.wav', '.mp3', '.flac'].includes(resolvedExt)
     const fileExists = Boolean(resolvedRef && existsSync(resolvedRef))
     byId.set(raw.id, {
       id: raw.id,
       name: raw.name || raw.id,
       category: raw.category || '默认分类',
       ageGroup: raw.ageGroup || 'adult',
-      engine: raw.engine || 'indextts2',
+      engine: raw.engine || (isLegacyPt ? 'indextts2' : 'indextts25'),
       gender: raw.gender || 'neutral',
       language: raw.language || 'zh-CN',
       tags: Array.isArray(raw.tags) ? raw.tags : [],
@@ -414,8 +436,11 @@ export function getVoiceCatalog() {
       promptText: raw.promptText || '',
       refPath: raw.refPath || raw.refAudio || '',
       resolvedRefPath: resolvedRef,
-      available: fileExists,
-      durationSec: raw.durationSec ?? null,
+      available: fileExists && (!isLegacyPt || supportsLegacyPt),
+      isLegacyPt,
+      isAudioSample,
+      requiresWav: isLegacyPt && !supportsLegacyPt,
+      durationSec: raw.durationSec ?? (resolvedExt === '.wav' && fileExists ? fastReadWavDurationSec(resolvedRef) : null),
       source: raw.source || 'catalog',
     })
   }
@@ -437,7 +462,6 @@ export function getVoiceCatalog() {
   }
 
   const scanDirs = new Set()
-  const idxRoot = resolveEnvPath('INDEXTTS_ROOT', '')
   if (idxRoot && existsSync(join(idxRoot, 'voices'))) {
     scanDirs.add(join(idxRoot, 'voices'))
   }
@@ -731,7 +755,19 @@ export function matchVoiceForScene(scene = {}, projectMeta = {}, catalogVoices =
     let score = 45
     const reasons = []
 
-    if (v.available) score += 12
+    if (v.available) {
+      score += 15
+    } else {
+      // Never pick `.pt`-only legacy tensors or missing files over verified zero-shot WAVs
+      score -= v.requiresWav ? 75 : 55
+    }
+    if (v.isAudioSample && v.durationSec >= 3.5 && v.durationSec <= 12.5) {
+      score += 12
+      reasons.push(`黄金参考时长(${v.durationSec}s)`)
+    }
+    if (v.source === 'env-default' && voices.some((x) => x.available && x.isAudioSample && x.source !== 'env-default')) {
+      score -= 22
+    }
 
     // Age group alignment (crucial when child/elderly voices are in catalog!)
     if (wantsChild) {
@@ -792,9 +828,13 @@ export function matchVoiceForScene(scene = {}, projectMeta = {}, catalogVoices =
       reasons.push(`标签命中(${matchedTags.slice(0, 3).join('/')})`)
     }
 
-    if (isTechOrBiz && v.tags?.some((t) => ['女主播', '科技', '无底噪', '商业', '专业感', '解说'].includes(t))) {
+    if (isTechOrBiz && v.tags?.some((t) => ['女主播', '科技', '无底噪', '商业', '专业感', '专业解说', '解说', '宣传片'].includes(t))) {
       score += 15
       reasons.push('科技/专业解说语境')
+    }
+    if (/(专业解说|纪录片宣传片|广播|旁白|宣传|广告感)/.test(v.name)) {
+      score += 14
+      reasons.push('广播级解说音色')
     }
     if (isEpicOrDoc && v.tags?.some((t) => ['纪录片', '评书', '历史', '沉稳', '浑厚', '宣传片', '专题'].includes(t))) {
       score += 18
@@ -825,6 +865,36 @@ export function matchVoiceForScene(scene = {}, projectMeta = {}, catalogVoices =
     score: best.score,
     reason: `AI 自动匹配: [${best.voice.category}] ${best.voice.name} [匹配度 ${best.score}% — ${reasonSummary}]`,
   }
+}
+
+/**
+ * Find the closest real WAV/audio voice matching a requested (possibly legacy `.pt`) voice profile.
+ */
+export function findBestAvailableWavVoice(voices = [], hintVoice = {}) {
+  const wavPool = (voices || []).filter(
+    (v) => v && v.available && v.isAudioSample && existsSync(v.resolvedRefPath || ''),
+  )
+  if (wavPool.length === 0) return null
+  const wantGender = hintVoice?.gender || ''
+  const wantTags = new Set((hintVoice?.tags || []).map((t) => String(t).toLowerCase()))
+  const scored = wavPool
+    .filter((v) => v.source !== 'env-default' || wavPool.length === 1)
+    .map((v) => {
+      let s = 30
+      if (wantGender && wantGender !== 'neutral') {
+        if (v.gender === wantGender) s += 30
+        else if (v.gender !== 'neutral') s -= 20
+      }
+      if (v.ageGroup !== 'child' && v.ageGroup !== 'elderly') s += 10
+      if (v.durationSec >= 4.0 && v.durationSec <= 12.0) s += 12
+      if (/(专业解说|纪录片宣传片|旁白|故事|解说|沉稳|温柔)/.test(v.name)) s += 14
+      for (const t of v.tags || []) {
+        if (wantTags.has(String(t).toLowerCase())) s += 10
+      }
+      return { voice: v, score: s }
+    })
+  scored.sort((a, b) => b.score - a.score)
+  return scored[0]?.voice || wavPool[0]
 }
 
 /**

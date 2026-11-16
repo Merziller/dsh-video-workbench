@@ -83,6 +83,19 @@ const PALETTES = {
     titleGrad: 'linear-gradient(180deg,#FFFBF5 0%,#FFEDD5 55%,#FDBA74 100%)',
     accentGrad: 'linear-gradient(180deg,#FEF08A 0%,#FB923C 55%,#EA580C 100%)',
   },
+  emerald: {
+    background: '#081312',
+    surface: '#0F1F1D',
+    textPrimary: '#ECF7F4',
+    textSecondary: '#9AC0B8',
+    accent: '#45D1B2',
+    accent2: '#7BE4CE',
+    gold: '#F6BA6F',
+    rgbAccent: '69,209,178',
+    rgbGold: '246,186,111',
+    titleGrad: 'linear-gradient(180deg,#F5FFFC 0%,#CCF7EE 55%,#7BE4CE 100%)',
+    accentGrad: 'linear-gradient(180deg,#FFE2B8 0%,#F6BA6F 55%,#45D1B2 100%)',
+  },
 }
 
 export function resolvePalette(script) {
@@ -308,6 +321,225 @@ function renderSceneTemplateHtml(scene, idx, total, theme) {
         <div class="k-glow-bar"></div>
         <div class="k-stamp-seal">${escapeHtml(highlights[0] || theme.label || 'PRESENTED')}</div>
       </div>`
+  } else if (layout === 'card-fan-opener') {
+    const fanList = (Array.isArray(scene.fanMedia) && scene.fanMedia.length > 0 ? scene.fanMedia : poolList).slice(0, 7)
+    const brandLogo = scene.brandMark || theme?.brandMark || ''
+    const fanCardsHtml = fanList
+      .map((fm, fi) => {
+        const pathStr = typeof fm === 'string' ? fm : fm?.path || ''
+        const mObj = { path: pathStr, type: 'image' }
+        return `<div class="k-fan-card" data-fi="${fi}" data-total="${fanList.length}">${buildMediaTag(mObj, fi, false)}</div>`
+      })
+      .join('')
+    contentHtml = `
+      <div class="k-app-stage k-fan-stage">
+        <div class="k-fan-arc">${fanCardsHtml}</div>
+        <div class="k-fan-badge">
+          ${brandLogo ? `<img class="k-brand-mini" src="${escapeHtml(brandLogo.replace(/^\.?[\\/]+/, './').replace(/\\/g, '/'))}" alt="" />` : '<span class="k-dot"></span>'}
+          <span>${escapeHtml(scene.kicker || tagText)}</span>
+        </div>
+        <div class="k-headline k-headline-lg">${buildCharSpansHtml(safeTitleLines)}</div>
+        <div class="k-pills-row">${highlights.map((h) => `<div class="k-pill"><span>◆</span>${escapeHtml(h)}</div>`).join('')}</div>
+      </div>`
+  } else if (layout === 'app-focus-shot') {
+    const splitMode = scene.windowLayout === 'split'
+    const brandLogo = scene.brandMark || theme?.brandMark || ''
+    const marksHtml = (Array.isArray(scene.marks) ? scene.marks : [])
+      .map((mk, mi) => {
+        const wPct = Math.max(3, Number(mk.fw ?? mk.w ?? 0.18) * 100)
+        const hPct = Math.max(3, Number(mk.fh ?? mk.h ?? 0.12) * 100)
+        const rawL = mk.fx == null && mk.x != null ? Number(mk.x) * 100 : Number(mk.fx ?? 0.5) * 100 - wPct / 2
+        const rawT = mk.fy == null && mk.y != null ? Number(mk.y) * 100 : Number(mk.fy ?? 0.5) * 100 - hPct / 2
+        const lPct = Math.max(0, Math.min(100 - wPct, rawL))
+        const tPct = Math.max(0, Math.min(100 - hPct, rawT))
+        const below = tPct < 14 ? 'k-mark-below' : ''
+        const cls = `${mk.shape === 'ring' ? 'k-mark-ring' : ''} ${mk.tone === 'gold' ? 'k-mark-gold' : ''}`
+        return `<div class="k-mark-box ${cls}" data-start="${Number(mk.startFrame || 6)}" style="left:${lPct.toFixed(2)}%;top:${tPct.toFixed(2)}%;width:${wPct.toFixed(2)}%;height:${hPct.toFixed(2)}%">${
+          mk.label ? `<div class="k-mark-chip ${below}">${escapeHtml(mk.label)}</div>` : ''
+        }</div>`
+      })
+      .join('')
+    const loupe = scene.loupe || null
+    const loupeHtml = loupe && primary
+      ? `<div class="k-loupe-ring ${loupe.side === 'left' ? 'k-loupe-left' : ''}"><div class="k-loupe-cam">${buildMediaTag(primary, 99, false)}</div>${
+          loupe.label ? `<div class="k-loupe-tag">${escapeHtml(loupe.label)}</div>` : ''
+        }</div>`
+      : ''
+    const winBody = `
+      <div class="k-app-win ${scene.windowTheme === 'light' ? 'k-win-light' : ''}">
+        <div class="k-app-bar">
+          <div class="k-app-dots"><i></i><i></i><i></i></div>
+          ${brandLogo ? `<img class="k-brand-mini" src="${escapeHtml(brandLogo.replace(/^\.?[\\/]+/, './').replace(/\\/g, '/'))}" alt="" />` : ''}
+          <span class="k-app-title">${escapeHtml(scene.windowTitle || scene.title || '')}</span>
+          <span class="k-app-kicker">${escapeHtml(scene.windowBadge || scene.kicker || tagText)}</span>
+        </div>
+        <div class="k-app-view">
+          <div class="k-cam-stage" data-nw="${Number(primary?.width || 0)}" data-nh="${Number(primary?.height || 0)}">${primary ? buildMediaTag(primary, 0, true) : ''}${marksHtml}</div>
+        </div>
+      </div>
+      ${loupeHtml}`
+    if (splitMode) {
+      contentHtml = `
+        <div class="k-app-stage k-app-split">
+          <div class="k-split-copy">
+            <div class="k-eyebrow"><span class="k-dot"></span><span>${escapeHtml(scene.kicker || tagText)}</span></div>
+            <div class="k-headline k-headline-sm k-headline-left">${buildCharSpansHtml(safeTitleLines)}</div>
+            <div class="k-accent-rule"></div>
+            <div class="k-pills-row k-pills-left">${highlights.map((h) => `<div class="k-pill"><span>◆</span>${escapeHtml(h)}</div>`).join('')}</div>
+          </div>
+          <div class="k-app-win-wrap">${winBody}</div>
+        </div>`
+    } else {
+      contentHtml = `
+        <div class="k-app-stage k-app-wide">
+          <div class="k-app-head">
+            <div class="k-app-head-l">
+              <span class="k-tag-chip">${escapeHtml(scene.kicker || tagText)}</span>
+              <span class="k-app-head-title">${escapeHtml(scene.title || '')}</span>
+            </div>
+            ${highlights.length ? `<span class="k-app-head-sub">${escapeHtml(highlights.join(' · '))}</span>` : ''}
+          </div>
+          <div class="k-app-win-wrap">${winBody}</div>
+        </div>`
+    }
+  } else if (layout === 'workflow-steps') {
+    const steps = Array.isArray(scene.steps) && scene.steps.length > 0
+      ? scene.steps
+      : (highlights.length ? highlights : ['导入素材', 'AI 编排', '渲染出片']).map((t, si) => ({
+          num: `0${si + 1}`,
+          title: t,
+          desc: `Step ${si + 1}`,
+          img: poolList[si % Math.max(1, poolList.length)]?.path || '',
+        }))
+    const cardsHtml = steps.slice(0, 5).map((st, si) => `
+      <div class="k-wf-card" data-wi="${si}">
+        <div class="k-wf-top"><span>${escapeHtml(st.num || `0${si + 1}`)}</span><i class="k-wf-dot"></i></div>
+        <div class="k-wf-media">${st.img ? buildMediaTag({ path: st.img, type: 'image' }, si, false) : ''}</div>
+        <div class="k-wf-info">
+          <div class="k-wf-title">${escapeHtml(st.title || '')}</div>
+          ${st.desc ? `<div class="k-wf-desc">${escapeHtml(st.desc)}</div>` : ''}
+        </div>
+      </div>`).join('')
+    contentHtml = `
+      <div class="k-app-stage k-wf-stage">
+        <div class="k-wf-head">
+          <div class="k-eyebrow"><span class="k-dot"></span><span>${escapeHtml(scene.kicker || tagText)}</span></div>
+          <div class="k-headline k-headline-sm">${buildCharSpansHtml(safeTitleLines)}</div>
+        </div>
+        <div class="k-wf-row">${cardsHtml}</div>
+      </div>`
+  } else if (layout === 'split-wipe-compare') {
+    const brandLogo = scene.brandMark || theme?.brandMark || ''
+    const labelA = scene.compareLeft?.label || highlights[0] || 'MODE A'
+    const labelB = scene.compareRight?.label || highlights[1] || 'MODE B'
+    contentHtml = `
+      <div class="k-app-stage k-app-wide">
+        <div class="k-app-head">
+          <div class="k-app-head-l">
+            <span class="k-tag-chip k-tag-gold">${escapeHtml(scene.kicker || 'A / B COMPARE')}</span>
+            <span class="k-app-head-title">${escapeHtml(scene.title || '')}</span>
+          </div>
+          ${highlights.length ? `<span class="k-app-head-sub">${escapeHtml(highlights.join(' · '))}</span>` : ''}
+        </div>
+        <div class="k-app-win-wrap">
+          <div class="k-app-win">
+            <div class="k-app-bar">
+              <div class="k-app-dots"><i></i><i></i><i></i></div>
+              ${brandLogo ? `<img class="k-brand-mini" src="${escapeHtml(brandLogo.replace(/^\.?[\\/]+/, './').replace(/\\/g, '/'))}" alt="" />` : ''}
+              <span class="k-app-title">${escapeHtml(scene.windowTitle || scene.title || '')}</span>
+              <span class="k-app-kicker">${escapeHtml(scene.kicker || 'WIPE')}</span>
+            </div>
+            <div class="k-app-view k-wipe-wrap">
+              <div class="k-wipe-a">${primary ? buildMediaTag(primary, 0, true) : ''}</div>
+              <div class="k-wipe-b">${secondary ? buildMediaTag(secondary, 1, false) : primary ? buildMediaTag(primary, 1, false) : ''}</div>
+              <div class="k-wipe-line"><div class="k-wipe-knob">⇆</div></div>
+              <div class="k-wipe-tag k-wipe-tag-l">${escapeHtml(labelA)}</div>
+              <div class="k-wipe-tag k-wipe-tag-r">${escapeHtml(labelB)}</div>
+            </div>
+          </div>
+        </div>
+      </div>`
+  } else if (layout === 'metric-dashboard') {
+    const brandLogo = scene.brandMark || theme?.brandMark || ''
+    const metric = Array.isArray(scene.metrics) && scene.metrics[0]
+      ? scene.metrics[0]
+      : { label: highlights[0] || '并发效率', value: Number(scene.counterTarget) || 100, suffix: '+' }
+    const mVal = Number(metric.value) || Number(scene.counterTarget) || 100
+    const mSfx = metric.suffix || '+'
+    const cellsHtml = Array.from({ length: 20 }, (_, ci) => `<span class="k-dash-cell" data-ci="${ci}"></span>`).join('')
+    contentHtml = `
+      <div class="k-app-stage k-dash-grid">
+        <div class="k-dash-left">
+          <div class="k-eyebrow"><span class="k-dot"></span><span>${escapeHtml(scene.kicker || tagText)}</span></div>
+          <div class="k-headline k-headline-sm k-headline-left">${buildCharSpansHtml(safeTitleLines)}</div>
+          <div class="k-dash-panel">
+            <div class="k-dash-panel-top">
+              <span>${escapeHtml(metric.label || scene.title || '')}</span>
+              <em>${escapeHtml(highlights[1] || 'REALTIME')}</em>
+            </div>
+            <div class="k-dash-num" data-target="${mVal}" data-suffix="${escapeHtml(mSfx)}">0${escapeHtml(mSfx)}</div>
+            <div class="k-dash-bar"><div class="k-dash-bar-fill"></div></div>
+            <div class="k-dash-cells">${cellsHtml}</div>
+          </div>
+        </div>
+        <div class="k-app-win-wrap k-dash-right">
+          <div class="k-app-win">
+            <div class="k-app-bar">
+              <div class="k-app-dots"><i></i><i></i><i></i></div>
+              ${brandLogo ? `<img class="k-brand-mini" src="${escapeHtml(brandLogo.replace(/^\.?[\\/]+/, './').replace(/\\/g, '/'))}" alt="" />` : ''}
+              <span class="k-app-title">${escapeHtml(scene.windowTitle || scene.title || '')}</span>
+              <span class="k-app-kicker">${escapeHtml(scene.windowBadge || 'ENGINE')}</span>
+            </div>
+            <div class="k-app-view">
+              <div class="k-cam-stage" data-nw="${Number(primary?.width || 0)}" data-nh="${Number(primary?.height || 0)}">${primary ? buildMediaTag(primary, 0, true) : ''}</div>
+            </div>
+          </div>
+        </div>
+      </div>`
+  } else if (layout === 'multi-window-trio') {
+    const cards = poolList.slice(0, 3)
+    const labels = Array.isArray(scene.trioLabels) && scene.trioLabels.length ? scene.trioLabels : highlights
+    const winsHtml = cards
+      .map((m, wi) => {
+        const lbl = labels[wi] || `VIEW 0${wi + 1}`
+        const isLight = /明|白|light/i.test(String(lbl))
+        return `
+          <div class="k-trio-win ${isLight ? 'k-win-light' : ''}" data-ti="${wi}">
+            <div class="k-app-bar">
+              <div class="k-app-dots"><i></i><i></i><i></i></div>
+              <span class="k-app-title">${escapeHtml(lbl)}</span>
+              <span class="k-app-kicker k-trio-badge">VIEW</span>
+            </div>
+            <div class="k-app-view">${m ? buildMediaTag(m, wi, false) : ''}</div>
+          </div>`
+      })
+      .join('')
+    contentHtml = `
+      <div class="k-app-stage k-trio-stage">
+        <div class="k-wf-head">
+          <div class="k-headline k-headline-sm">${buildCharSpansHtml(safeTitleLines)}</div>
+        </div>
+        <div class="k-trio-row">${winsHtml}</div>
+      </div>`
+  } else if (layout === 'narrative-diorama') {
+    const spec = scene.stageSpec || {}
+    const heroNum = spec.heroNum ? `<div style="position:absolute;top:16%;left:50%;transform:translateX(-50%);font:900 220px/1 ${escapeHtml(spec.heroFont || "'Source Han Serif SC Heavy', serif")};color:rgba(253,243,220,0.9);letter-spacing:-8px;pointer-events:none;">${escapeHtml(spec.heroNum)}${spec.heroUnit ? `<span style="font-size:60px">${escapeHtml(spec.heroUnit)}</span>` : ''}</div>` : ''
+    const calCols = Array.isArray(spec.calligraphy) && spec.calligraphy.length > 0
+      ? `<div style="position:absolute;top:84px;right:96px;display:flex;flex-direction:row-reverse;gap:20px;">${spec.calligraphy.slice(0, 3).map((c) => `<div style="writing-mode:vertical-rl;font:900 42px/1.2 'Source Han Serif SC Heavy', serif;letter-spacing:6px;color:#F8E7B9;">${escapeHtml(c)}</div>`).join('')}</div>`
+      : ''
+    contentHtml = `
+      <div style="position:absolute;inset:0;background:radial-gradient(circle at 50% 48%, rgba(245,158,11,0.38), rgba(110,20,16,0.55) 45%, #070406 90%);"></div>
+      <svg viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.9;">
+        <circle cx="960" cy="520" r="128" fill="#FFF7DF" opacity="0.92" />
+        <path d="M-20,780 L280,620 L620,695 L980,580 L1340,680 L1690,610 L1940,740 L1940,1080 L-20,1080 Z" fill="#180B08" />
+      </svg>
+      ${heroNum}
+      ${calCols}
+      <div class="k-center-stage">
+        <div class="k-eyebrow"><span class="k-dot"></span><span>${stepCode} · ${escapeHtml(scene.title || tagText)}</span></div>
+        <div class="k-headline k-headline-lg">${buildCharSpansHtml(safeTitleLines)}</div>
+        <div class="k-pills-row">${highlights.map((h) => `<div class="k-pill"><span>◆</span>${escapeHtml(h)}</div>`).join('')}</div>
+      </div>`
   } else {
     // kinetic-impact
     contentHtml = `
@@ -324,7 +556,7 @@ function renderSceneTemplateHtml(scene, idx, total, theme) {
 }
 
 export function buildRichHtmlVideo(script) {
-  const theme = resolvePalette(script)
+  const theme = { ...resolvePalette(script), brandMark: script?.brandMark || '' }
   const scenes = Array.isArray(script?.scenes) ? script.scenes : []
   const fps = Number(script?.fps) || 30
   const width = Number(script?.width) || 1920
@@ -333,10 +565,12 @@ export function buildRichHtmlVideo(script) {
   const safeZone = resolveSafeZoneSpec(width, height, script?.targetPlatform || 'universal')
   const complianceNotice = buildComplianceNoticeText(script)
   const bundledFontFaceCss = buildBundledFontFaceCss('fonts')
+  const landScale = width > height ? Math.max(0.42, Math.min(2.2, width / 1920)) : 1
+  const lp = (n) => Math.max(1, Math.round(n * landScale))
 
   let cursorFrame = 0
   const timeline = scenes.map((s, idx) => {
-    const durFrames = Math.max(30, Number(s.durationInFrames) || Math.ceil(Number(s.durationSec || 4.5) * fps))
+    const durFrames = Math.max(12, Number(s.durationInFrames) || Math.ceil(Number(s.durationSec || 4.5) * fps))
     const startFrame = Number.isFinite(Number(s.startFrame)) ? Number(s.startFrame) : cursorFrame
     const endFrame = startFrame + durFrames
     cursorFrame = endFrame
@@ -356,6 +590,10 @@ export function buildRichHtmlVideo(script) {
       narration: s.narration || '',
       subtitles: Array.isArray(s.subtitles) ? s.subtitles : [],
       counterTarget: Number(s.counterTarget) || 96,
+      workflowSteps: Array.isArray(s.workflowSteps) ? s.workflowSteps : Array.isArray(script?.workflowSteps) ? script.workflowSteps : [],
+      hudStep: Number.isFinite(Number(s.hudStep)) ? Number(s.hudStep) : -1,
+      cams: Array.isArray(s.cams) ? s.cams : [],
+      loupe: s.loupe || null,
       avatarClip: s.avatarClip || null,
       avatarLayout: s.avatarLayout || '',
     }
@@ -465,56 +703,56 @@ export function buildRichHtmlVideo(script) {
       position: absolute; left: 50%; top: 50%; transform-style: preserve-3d;
     }
     .k-3d-card {
-      position: absolute; left: 0; top: 0; width: 320px; border-radius: 10px; overflow: hidden;
+      position: absolute; left: 0; top: 0; width: ${lp(320)}px; border-radius: ${lp(10)}px; overflow: hidden;
       background: rgba(14,18,28,0.92); border: 1px solid rgba(255,255,255,0.2);
       box-shadow: 0 22px 60px rgba(0,0,0,0.65); transform-style: preserve-3d;
     }
     .k-3d-media { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
     .k-3d-chrome {
-      position: absolute; top: 8px; left: 10px; display: flex; gap: 5px;
+      position: absolute; top: ${lp(8)}px; left: ${lp(10)}px; display: flex; gap: ${lp(5)}px;
     }
-    .k-3d-chrome i { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,0.65); }
+    .k-3d-chrome i { width: ${lp(7)}px; height: ${lp(7)}px; border-radius: 50%; background: rgba(255,255,255,0.65); }
     .k-3d-badge {
-      width: auto; min-width: 190px; padding: 12px 22px;
-      display: inline-flex; align-items: center; gap: 10px;
-      font: 700 22px var(--font-mono); color: #E2E8F0; white-space: nowrap;
+      width: auto; min-width: ${lp(190)}px; padding: ${lp(12)}px ${lp(22)}px;
+      display: inline-flex; align-items: center; gap: ${lp(10)}px;
+      font: 700 ${lp(22)}px var(--font-mono); color: #E2E8F0; white-space: nowrap;
       border-color: color-mix(in srgb, var(--accent2) 55%, transparent);
     }
-    .k-3d-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--gold); }
+    .k-3d-dot { width: ${lp(10)}px; height: ${lp(10)}px; border-radius: 3px; background: var(--gold); }
 
     /* Split Stage & Showcase Frames */
     .k-split-grid {
       position: relative; z-index: 4; width: 100%; height: 100%;
-      padding: 88px 110px 135px; display: flex; align-items: center; justify-content: space-between; gap: 56px;
+      padding: ${lp(82)}px ${lp(105)}px ${Math.max(lp(164), (Number(script?.subtitleBottomPx) || safeZone.subtitleBottomPx) + lp(72))}px; display: flex; align-items: center; justify-content: space-between; gap: ${lp(52)}px;
     }
     .k-split-grid.k-reverse { flex-direction: row-reverse; }
     .k-left-col {
-      flex: 1.05; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 24px;
+      flex: 1.05; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: ${lp(22)}px;
     }
     .k-right-col {
-      flex: 1; display: flex; align-items: center; justify-content: center; perspective: 1200px;
+      flex: 1; display: flex; align-items: center; justify-content: center; perspective: ${lp(1200)}px;
     }
 
     .k-center-stage {
       position: relative; z-index: 4; width: 100%; height: 100%;
-      padding: 90px 120px 140px; display: flex; flex-direction: column; align-items: center; justify-content: center;
-      text-align: center; gap: 28px;
+      padding: ${lp(84)}px ${lp(115)}px ${Math.max(lp(168), (Number(script?.subtitleBottomPx) || safeZone.subtitleBottomPx) + lp(72))}px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; gap: ${lp(24)}px;
     }
 
     /* Typography */
     .k-eyebrow {
-      display: inline-flex; align-items: center; gap: 10px;
-      font: 700 18px var(--font-mono); letter-spacing: 3px; color: var(--accent2);
+      display: inline-flex; align-items: center; gap: ${lp(10)}px;
+      font: 700 ${lp(18)}px var(--font-mono); letter-spacing: ${lp(3)}px; color: var(--accent2);
       text-transform: uppercase;
     }
-    .k-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 12px var(--gold); }
+    .k-dot { width: ${lp(8)}px; height: ${lp(8)}px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 12px var(--gold); }
     .k-headline {
-      font-family: var(--font-sans); font-size: 92px; font-weight: 900; line-height: 1.14;
+      font-family: var(--font-sans); font-size: ${lp(92)}px; font-weight: 900; line-height: 1.14;
       letter-spacing: -1px; max-width: 100%;
     }
-    .k-headline-lg { font-size: 108px; }
-    .k-headline-md { font-size: 76px; }
-    .k-headline-sm { font-size: 62px; }
+    .k-headline-lg { font-size: ${lp(108)}px; }
+    .k-headline-md { font-size: ${lp(76)}px; }
+    .k-headline-sm { font-size: ${lp(62)}px; }
     .k-line-row { display: block; }
     .k-ch {
       display: inline-block;
@@ -523,145 +761,145 @@ export function buildRichHtmlVideo(script) {
       filter: drop-shadow(0 6px 0 rgba(0,0,0,0.48)) drop-shadow(0 16px 26px rgba(0,0,0,0.55));
     }
     .k-subline {
-      font-size: 28px; line-height: 1.48; font-weight: 600; color: var(--sub); max-width: 780px;
+      font-size: ${lp(28)}px; line-height: 1.48; font-weight: 600; color: var(--sub); max-width: ${lp(780)}px;
       text-shadow: 0 2px 12px rgba(0,0,0,0.7);
     }
 
     /* Pills & Callouts */
-    .k-pills-row { display: flex; flex-wrap: wrap; gap: 14px; }
+    .k-pills-row { display: flex; flex-wrap: wrap; gap: ${lp(14)}px; }
     .k-pill {
-      display: inline-flex; align-items: center; gap: 8px;
-      padding: 10px 22px; border-radius: 40px;
+      display: inline-flex; align-items: center; gap: ${lp(8)}px;
+      padding: ${lp(10)}px ${lp(22)}px; border-radius: 40px;
       background: rgba(15,23,42,0.72); border: 1.5px solid color-mix(in srgb, var(--accent2) 55%, transparent);
-      font: 700 22px var(--font-sans); color: #F8FAFC;
+      font: 700 ${lp(22)}px var(--font-sans); color: #F8FAFC;
       box-shadow: 0 10px 28px rgba(0,0,0,0.35);
     }
     .k-pill span { color: var(--gold); }
 
     .k-accent-rule {
-      width: 240px; height: 4px; border-radius: 2px;
+      width: ${lp(240)}px; height: ${lp(4)}px; border-radius: 2px;
       background: linear-gradient(90deg, var(--gold), var(--accent2));
       transform-origin: left center;
     }
-    .k-callouts { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 760px; }
+    .k-callouts { display: flex; flex-direction: column; gap: ${lp(14)}px; width: 100%; max-width: ${lp(760)}px; }
     .k-callout {
-      display: flex; align-items: center; gap: 20px; padding: 16px 24px; border-radius: 12px;
+      display: flex; align-items: center; gap: ${lp(18)}px; padding: ${lp(15)}px ${lp(22)}px; border-radius: ${lp(12)}px;
       background: linear-gradient(180deg, rgba(24,28,36,0.92), rgba(12,14,19,0.94));
       border: 1px solid rgba(255,255,255,0.12);
       border-left: 4px solid var(--accent-bar, var(--accent2));
       box-shadow: 0 18px 42px rgba(0,0,0,0.45);
     }
-    .k-cnum { font: 800 24px var(--font-mono); color: var(--accent-bar, var(--gold)); }
-    .k-ctxt { font: 700 28px var(--font-sans); color: #F8FAFC; }
+    .k-cnum { font: 800 ${lp(24)}px var(--font-mono); color: var(--accent-bar, var(--gold)); }
+    .k-ctxt { font: 700 ${lp(27)}px var(--font-sans); color: #F8FAFC; }
 
     /* Showcase Media Window + PiP */
-    .k-card-stage { position: relative; width: 100%; max-width: 820px; transform-style: preserve-3d; }
+    .k-card-stage { position: relative; width: 100%; max-width: ${lp(820)}px; transform-style: preserve-3d; }
     .k-mac-frame {
-      position: relative; width: 100%; border-radius: 16px; overflow: hidden;
+      position: relative; width: 100%; border-radius: ${lp(16)}px; overflow: hidden;
       background: #0E1118; border: 1.5px solid rgba(255,255,255,0.22);
       box-shadow: 0 36px 90px rgba(0,0,0,0.72), 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
     }
     .k-mac-bar {
-      height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 16px;
+      height: ${lp(36)}px; display: flex; align-items: center; gap: ${lp(8)}px; padding: 0 ${lp(16)}px;
       background: rgba(20,24,34,0.95); border-bottom: 1px solid rgba(255,255,255,0.08);
     }
-    .k-mac-bar i { width: 10px; height: 10px; border-radius: 50%; }
+    .k-mac-bar i { width: ${lp(10)}px; height: ${lp(10)}px; border-radius: 50%; }
     .k-mac-bar i:nth-child(1) { background: #FF5F57; }
     .k-mac-bar i:nth-child(2) { background: #FEBC2E; }
     .k-mac-bar i:nth-child(3) { background: #28C840; }
-    .k-mac-bar span { margin-left: 10px; font: 600 13px var(--font-mono); color: var(--sub); letter-spacing: 1.5px; }
-    .k-mac-viewport { position: relative; width: 100%; aspect-ratio: 16/10; overflow: hidden; background: #050608; }
-    .k-mac-viewport .k-media-el { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .k-mac-bar span { margin-left: ${lp(10)}px; font: 600 ${Math.max(11, lp(13))}px var(--font-mono); color: var(--sub); letter-spacing: 1.5px; }
+    .k-mac-viewport { position: relative; width: 100%; aspect-ratio: 16/10; overflow: hidden; background: #07100F; }
+    .k-mac-viewport .k-media-el { width: 100%; height: 100%; object-fit: contain; display: block; }
     .k-spec-glint {
       position: absolute; inset: 0; pointer-events: none;
       background: linear-gradient(115deg, transparent 35%, rgba(255,255,255,0.16) 49%, transparent 62%);
     }
     .k-pip-frame {
-      position: absolute; right: -28px; bottom: -28px; width: 42%; aspect-ratio: 16/10;
-      border-radius: 14px; overflow: hidden; border: 2px solid var(--gold);
+      position: absolute; right: ${-lp(28)}px; bottom: ${-lp(28)}px; width: 42%; aspect-ratio: 16/10;
+      border-radius: ${lp(14)}px; overflow: hidden; border: 2px solid var(--gold);
       box-shadow: 0 22px 55px rgba(0,0,0,0.78); background: #0B0D12;
     }
     .k-pip-frame .k-media-el { width: 100%; height: 100%; object-fit: cover; display: block; }
 
     .k-terminal-card {
-      width: 100%; border-radius: 16px; overflow: hidden;
+      width: 100%; border-radius: ${lp(16)}px; overflow: hidden;
       background: linear-gradient(180deg, rgba(20,24,32,0.94), rgba(10,12,17,0.96));
       border: 1px solid rgba(255,255,255,0.14); box-shadow: 0 30px 80px rgba(0,0,0,0.65);
     }
-    .k-term-body { padding: 34px; display: flex; flex-direction: column; gap: 22px; }
-    .k-term-row { display: flex; align-items: center; gap: 18px; font-size: 28px; }
-    .k-term-row span { font: 700 20px var(--font-mono); color: var(--gold); padding: 4px 12px; border-radius: 6px; background: rgba(245,185,46,0.14); }
+    .k-term-body { padding: ${lp(34)}px; display: flex; flex-direction: column; gap: ${lp(22)}px; }
+    .k-term-row { display: flex; align-items: center; gap: ${lp(18)}px; font-size: ${lp(28)}px; }
+    .k-term-row span { font: 700 ${lp(20)}px var(--font-mono); color: var(--gold); padding: ${lp(4)}px ${lp(12)}px; border-radius: 6px; background: rgba(245,185,46,0.14); }
     .k-term-row b { color: #F8FAFC; font-weight: 700; }
 
     /* Mosaic Pulse Wall */
     .k-mosaic-wrap {
       position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-      perspective: 1400px;
+      perspective: ${lp(1400)}px;
     }
     .k-mosaic-grid {
-      width: 1700px; height: 860px; display: grid;
+      width: ${Math.round(width * 0.885)}px; height: ${Math.round(height * 0.78)}px; display: grid;
       grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr);
-      gap: 20px; transform-style: preserve-3d;
+      gap: ${lp(20)}px; transform-style: preserve-3d;
     }
     .k-mosaic-cell {
-      position: relative; border-radius: 14px; overflow: hidden;
+      position: relative; border-radius: ${lp(14)}px; overflow: hidden;
       background: #10141D; border: 1.5px solid rgba(255,255,255,0.16);
       box-shadow: 0 24px 60px rgba(0,0,0,0.6); transform-style: preserve-3d;
     }
     .k-mosaic-cell .k-media-el { width: 100%; height: 100%; object-fit: cover; display: block; }
     .k-mosaic-typo {
       width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
-      font: 900 42px var(--font-sans); color: var(--text);
+      font: 900 ${lp(42)}px var(--font-sans); color: var(--text);
       background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent) 28%, transparent), #0B0D14);
     }
     .k-mosaic-badge {
-      position: absolute; left: 12px; top: 12px; padding: 4px 10px; border-radius: 6px;
-      background: rgba(5,6,8,0.78); font: 700 14px var(--font-mono); color: var(--accent2);
+      position: absolute; left: ${lp(12)}px; top: ${lp(12)}px; padding: 4px ${lp(10)}px; border-radius: 6px;
+      background: rgba(5,6,8,0.78); font: 700 ${Math.max(11, lp(14))}px var(--font-mono); color: var(--accent2);
     }
     .k-bottom-fade {
       position: absolute; inset: 0; pointer-events: none;
-      background: linear-gradient(180deg, rgba(5,6,8,0.08) 0%, rgba(5,6,8,0.22) 50%, rgba(5,6,8,0.92) 100%);
+      background: linear-gradient(180deg, rgba(5,6,8,0.08) 0%, rgba(5,6,8,0.22) 48%, rgba(5,6,8,0.92) 100%);
     }
     .k-mosaic-overlay {
-      position: absolute; left: 96px; right: 96px; bottom: 112px; z-index: 6;
-      display: flex; align-items: flex-end; gap: 36px;
+      position: absolute; left: ${lp(96)}px; right: ${lp(96)}px; bottom: ${Math.max(lp(192), (Number(script?.subtitleBottomPx) || safeZone.subtitleBottomPx) + lp(78))}px; z-index: 6;
+      display: flex; align-items: flex-end; gap: ${lp(34)}px;
     }
     .k-counter-badge {
-      display: flex; flex-direction: column; padding: 14px 26px; border-radius: 12px;
+      display: flex; flex-direction: column; padding: ${lp(14)}px ${lp(24)}px; border-radius: ${lp(12)}px;
       background: rgba(8,10,16,0.88); border-left: 5px solid var(--gold);
     }
     .k-cnt-num {
-      font: 900 72px/1 var(--font-mono);
+      font: 900 ${lp(72)}px/1 var(--font-mono);
       background: ${theme.accentGrad}; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
     }
-    .k-cnt-unit { font: 700 16px var(--font-mono); color: var(--sub); letter-spacing: 3px; margin-top: 4px; }
+    .k-cnt-unit { font: 700 ${lp(16)}px var(--font-mono); color: var(--sub); letter-spacing: ${lp(3)}px; margin-top: 4px; }
 
     /* Compare Dual */
     .k-compare-row {
-      display: flex; align-items: center; justify-content: center; gap: 38px; width: 100%; max-width: 1440px; margin-top: 10px;
+      display: flex; align-items: center; justify-content: center; gap: ${lp(36)}px; width: 100%; max-width: ${lp(1440)}px; margin-top: ${lp(10)}px;
     }
     .k-cmp-card {
-      flex: 1; max-width: 580px; padding: 44px 38px; border-radius: 20px; text-align: left;
+      flex: 1; max-width: ${lp(580)}px; padding: ${lp(40)}px ${lp(34)}px; border-radius: ${lp(20)}px; text-align: left;
       background: linear-gradient(180deg, rgba(24,28,36,0.94), rgba(11,13,18,0.94));
       border: 1px solid rgba(255,255,255,0.14); border-top: 4px solid var(--accent2);
       box-shadow: 0 30px 75px rgba(0,0,0,0.62);
     }
     .k-cmp-card.k-cmp-b { border-top-color: var(--gold); }
-    .k-cmp-tag { font: 700 18px var(--font-mono); color: var(--accent2); letter-spacing: 2px; }
+    .k-cmp-tag { font: 700 ${lp(18)}px var(--font-mono); color: var(--accent2); letter-spacing: 2px; }
     .k-cmp-gold { color: var(--gold); }
-    .k-cmp-val { font: 900 48px/1.2 var(--font-sans); color: #FFFFFF; margin-top: 20px; }
-    .k-cmp-bridge { width: 96px; height: 3px; position: relative; overflow: hidden; }
+    .k-cmp-val { font: 900 ${lp(46)}px/1.22 var(--font-sans); color: #FFFFFF; margin-top: ${lp(18)}px; }
+    .k-cmp-bridge { width: ${lp(96)}px; height: 3px; position: relative; overflow: hidden; }
     .k-cmp-bridge i { display: block; width: 100%; height: 100%; border-top: 3px dashed rgba(255,255,255,0.45); }
 
     /* Climax Glow Bar & Seal */
     .k-glow-bar {
-      width: 680px; height: 4px; border-radius: 2px;
+      width: ${lp(680)}px; height: 4px; border-radius: 2px;
       background: linear-gradient(90deg, var(--gold), var(--accent), var(--accent2));
       box-shadow: 0 0 24px color-mix(in srgb, var(--accent) 65%, transparent);
     }
     .k-stamp-seal {
-      padding: 12px 32px; border: 4px solid var(--gold); border-radius: 8px;
-      font: 900 32px var(--font-mono); letter-spacing: 5px; color: var(--gold);
+      padding: ${lp(12)}px ${lp(32)}px; border: ${Math.max(3, lp(4))}px solid var(--gold); border-radius: 8px;
+      font: 900 ${lp(32)}px var(--font-mono); letter-spacing: ${lp(5)}px; color: var(--gold);
       box-shadow: 0 0 36px rgba(245,185,46,0.22);
     }
 
@@ -677,23 +915,23 @@ export function buildRichHtmlVideo(script) {
     }
     #flash { background: #FFFFFF; opacity: 0; }
     #chrome-hud .k-corner {
-      position: absolute; width: 22px; height: 22px; opacity: 0.48;
+      position: absolute; width: ${lp(22)}px; height: ${lp(22)}px; opacity: 0.48;
       border-color: rgba(255,255,255,0.65); border-style: solid; border-width: 0;
     }
-    #c-tl { left: 32px; top: 32px; border-left-width: 2px; border-top-width: 2px; }
-    #c-tr { right: 32px; top: 32px; border-right-width: 2px; border-top-width: 2px; }
-    #c-bl { left: 32px; bottom: 32px; border-left-width: 2px; border-bottom-width: 2px; }
-    #c-br { right: 32px; bottom: 32px; border-right-width: 2px; border-bottom-width: 2px; }
+    #c-tl { left: ${lp(32)}px; top: ${lp(32)}px; border-left-width: 2px; border-top-width: 2px; }
+    #c-tr { right: ${lp(32)}px; top: ${lp(32)}px; border-right-width: 2px; border-top-width: 2px; }
+    #c-bl { left: ${lp(32)}px; bottom: ${lp(32)}px; border-left-width: 2px; border-bottom-width: 2px; }
+    #c-br { right: ${lp(32)}px; bottom: ${lp(32)}px; border-right-width: 2px; border-bottom-width: 2px; }
 
     #sub-wrap {
       position: absolute; left: ${safeZone.safePaddingPx.left}px; right: ${safeZone.safePaddingPx.right}px; bottom: ${Number(script?.subtitleBottomPx) || safeZone.subtitleBottomPx}px;
       display: flex; justify-content: center; pointer-events: none; z-index: 25;
     }
     #sub-pill {
-      padding: 8px 26px; border-radius: 10px;
+      padding: ${lp(8)}px ${lp(26)}px; border-radius: ${lp(10)}px;
       background: rgba(5,7,11,0.78);
       border: 1px solid rgba(255,255,255,0.14);
-      font-family: var(--font-sans); font-size: ${width < height ? 28 : 32}px; font-weight: 700; line-height: 1.35;
+      font-family: var(--font-sans); font-size: ${width < height ? 28 : Math.max(20, lp(32))}px; font-weight: 700; line-height: 1.35;
       color: #FFFFFF; max-width: ${Math.round(width * 0.84)}px; text-align: center; white-space: ${width < height ? 'normal' : 'nowrap'};
       text-shadow: 0 2px 8px rgba(0,0,0,0.92);
     }
@@ -706,10 +944,21 @@ export function buildRichHtmlVideo(script) {
       background: linear-gradient(90deg, var(--accent), var(--gold));
     }
     #ai-badge {
-      position: absolute; top: ${Math.max(24, safeZone.safePaddingPx.top)}px; left: ${Math.max(28, safeZone.safePaddingPx.left)}px; z-index: 28;
-      padding: 6px 14px; border-radius: 999px;
+      ${(() => {
+        const badgeOn = script?.aiBadgeEnabled !== undefined ? Boolean(script.aiBadgeEnabled) : script?.aiBadge !== false
+        if (!badgeOn) return 'display: none;'
+        const topVal = `${Math.max(24, safeZone.safePaddingPx.top)}px`
+        const bottomVal = `${Math.max(28, width < height ? Math.round(height * 0.20) : 28)}px`
+        const sideVal = `${Math.max(28, safeZone.safePaddingPx.left)}px`
+        const pos = String(script?.aiBadgePosition || 'top-right').toLowerCase()
+        if (pos === 'top-left') return `position: absolute; top: ${topVal}; left: ${sideVal};`
+        if (pos === 'bottom-left') return `position: absolute; bottom: ${bottomVal}; left: ${sideVal};`
+        if (pos === 'bottom-right') return `position: absolute; bottom: ${bottomVal}; right: ${sideVal};`
+        return `position: absolute; top: ${topVal}; right: ${sideVal};`
+      })()} z-index: 28;
+      padding: ${Math.max(4, lp(6))}px ${Math.max(10, lp(14))}px; border-radius: 999px;
       background: rgba(8,12,20,0.76); border: 1px solid rgba(255,255,255,0.18);
-      font: 600 15px var(--font-sans); color: #E2E8F0; letter-spacing: 0.03em;
+      font: 600 ${Math.max(12, lp(15))}px var(--font-sans); color: #E2E8F0; letter-spacing: 0.03em;
     }
     #avatar-overlay-wrap {
       position: absolute; pointer-events: none; z-index: 27; display: none; overflow: hidden;
@@ -777,6 +1026,163 @@ export function buildRichHtmlVideo(script) {
     .k-mosaic-grid { width: ${Math.round(width * 0.88)}px; height: ${Math.round(height * 0.62)}px; }
     #sub-pill { max-width: ${Math.round(width * 0.9)}px; font-size: 27px; }
     ` : ''}
+
+    /* Product Showcase Windows, Focus Camera, Fan Opener, Workflow, A/B Wipe, Dashboard & Trio */
+    .k-app-stage {
+      position: absolute; inset: 0; z-index: 4;
+      padding: ${lp(86)}px ${lp(68)}px ${Math.max(lp(158), (Number(script?.subtitleBottomPx) || safeZone.subtitleBottomPx) + lp(68))}px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: ${lp(16)}px;
+    }
+    .k-fan-stage { gap: ${lp(18)}px; }
+    .k-fan-arc { position: relative; width: 100%; height: ${lp(430)}px; display: flex; justify-content: center; align-items: center; }
+    .k-fan-card {
+      position: absolute; width: ${lp(236)}px; height: ${lp(336)}px; border-radius: ${lp(16)}px; overflow: hidden;
+      background: #0A1615; border: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+      box-shadow: 0 ${lp(24)}px ${lp(52)}px rgba(0,0,0,0.72);
+    }
+    .k-fan-card .k-media-el { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .k-fan-badge {
+      display: inline-flex; align-items: center; gap: ${lp(12)}px; padding: ${lp(8)}px ${lp(20)}px; border-radius: 999px;
+      background: rgba(6,14,14,0.88); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+      font: 800 ${Math.max(12, lp(16))}px var(--font-mono); color: var(--accent); letter-spacing: 2px;
+    }
+    .k-brand-mini { width: ${lp(22)}px; height: ${lp(22)}px; border-radius: ${lp(5)}px; object-fit: cover; display: block; }
+    .k-app-wide { align-items: center; }
+    .k-app-split { flex-direction: row; gap: ${lp(42)}px; align-items: center; }
+    .k-app-split .k-split-copy { flex: 0 0 34%; max-width: none; }
+    .k-app-head { width: ${width < height ? '100%' : '88%'}; max-width: ${lp(1420)}px; display: flex; align-items: center; justify-content: space-between; gap: ${lp(16)}px; }
+    .k-app-head-l { display: flex; align-items: center; gap: ${lp(14)}px; }
+    .k-tag-chip {
+      padding: ${lp(5)}px ${lp(14)}px; border-radius: 999px;
+      background: rgba(var(--rgbAccent), 0.16); border: 1px solid var(--accent);
+      font: 800 ${Math.max(11, lp(15))}px var(--font-mono); color: var(--accent);
+    }
+    .k-tag-gold { background: rgba(var(--rgbGold), 0.16); border-color: var(--gold); color: var(--gold); }
+    .k-app-head-title { font: 900 ${Math.max(18, lp(30))}px var(--font-sans); color: var(--text); }
+    .k-app-head-sub { font: 700 ${Math.max(13, lp(18))}px var(--font-sans); color: var(--gold); }
+    .k-app-win-wrap {
+      position: relative; flex: 1; width: ${width < height ? '100%' : '88%'}; max-width: ${lp(1420)}px;
+      min-height: 0; height: 100%; display: flex; align-items: center; justify-content: center;
+    }
+    .k-app-split .k-app-win-wrap { width: auto; }
+    .k-app-win {
+      width: 100%; height: 100%; max-width: 100%; max-height: 100%; display: flex; flex-direction: column;
+      border-radius: ${lp(18)}px; overflow: hidden; background: #0B1514;
+      border: 1.5px solid color-mix(in srgb, var(--accent) 42%, transparent);
+      box-shadow: 0 ${lp(30)}px ${lp(78)}px rgba(0,0,0,0.68);
+    }
+    .k-app-win.k-win-light, .k-trio-win.k-win-light { background: #F8FAFC; }
+    .k-app-win.k-win-light .k-app-bar, .k-trio-win.k-win-light .k-app-bar { background: rgba(226,232,240,0.95); border-bottom-color: rgba(15,23,42,0.12); }
+    .k-app-win.k-win-light .k-app-title, .k-trio-win.k-win-light .k-app-title { color: #0F172A; }
+    .k-app-win.k-win-light .k-app-view, .k-trio-win.k-win-light .k-app-view { background: #FFFFFF; }
+    .k-app-bar {
+      height: ${lp(38)}px; padding: 0 ${lp(16)}px; display: flex; align-items: center; gap: ${lp(10)}px; flex-shrink: 0;
+      background: rgba(13,26,25,0.96); border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .k-app-dots { display: flex; gap: ${lp(6)}px; }
+    .k-app-dots i { width: ${lp(10)}px; height: ${lp(10)}px; border-radius: 50%; display: block; }
+    .k-app-dots i:nth-child(1) { background: #FF5F56; }
+    .k-app-dots i:nth-child(2) { background: #FFBD2E; }
+    .k-app-dots i:nth-child(3) { background: #27C93F; }
+    .k-app-title { font: 700 ${Math.max(11, lp(14))}px var(--font-sans); color: #E2E8F0; }
+    .k-app-kicker {
+      margin-left: auto; padding: ${lp(3)}px ${lp(10)}px; border-radius: 999px;
+      background: rgba(255,255,255,0.06); font: 700 ${Math.max(10, lp(12))}px var(--font-mono); color: var(--gold);
+    }
+    .k-app-view { position: relative; flex: 1; overflow: hidden; background: #07100F; min-height: 0; display: flex; align-items: center; justify-content: center; }
+    .k-cam-stage { position: relative; width: 100%; height: 100%; transform-origin: 0 0; }
+    .k-cam-stage .k-media-el, .k-app-view > .k-media-el, .k-wipe-a .k-media-el, .k-wipe-b .k-media-el { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .k-cam-stage.is-aspect-fitted .k-media-el { object-fit: fill; }
+    .k-mark-box {
+      position: absolute; border-radius: ${lp(12)}px; border: 2.5px solid var(--accent);
+      box-shadow: 0 0 0 4px rgba(0,0,0,0.38), 0 0 ${lp(24)}px var(--accent);
+      pointer-events: none; z-index: 10; opacity: 0;
+    }
+    .k-mark-box.k-mark-ring { border-radius: 999px; }
+    .k-mark-box.k-mark-gold { border-color: var(--gold); box-shadow: 0 0 0 4px rgba(0,0,0,0.38), 0 0 ${lp(24)}px var(--gold); }
+    .k-mark-chip {
+      position: absolute; left: 50%; bottom: calc(100% + ${lp(8)}px); transform: translateX(-50%);
+      padding: ${lp(4)}px ${lp(12)}px; border-radius: 999px; white-space: nowrap;
+      background: rgba(6,14,14,0.94); border: 1.5px solid var(--accent);
+      font: 800 ${Math.max(12, lp(16))}px var(--font-sans); color: #F8FAFC;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.6);
+    }
+    .k-mark-box.k-mark-gold .k-mark-chip { border-color: var(--gold); }
+    .k-mark-chip.k-mark-below { bottom: auto; top: calc(100% + ${lp(8)}px); }
+    .k-loupe-ring {
+      position: absolute; right: ${lp(22)}px; bottom: ${lp(22)}px; width: ${lp(220)}px; height: ${lp(220)}px;
+      border-radius: 50%; overflow: hidden; border: 3.5px solid var(--gold);
+      box-shadow: 0 ${lp(20)}px ${lp(48)}px rgba(0,0,0,0.8); background: #07100F; z-index: 18;
+    }
+    .k-loupe-ring.k-loupe-left { right: auto; left: ${lp(22)}px; }
+    .k-loupe-cam { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; }
+    .k-loupe-cam .k-media-el { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .k-loupe-cam.is-aspect-fitted .k-media-el { object-fit: fill; }
+    .k-loupe-tag {
+      position: absolute; bottom: ${lp(16)}px; left: 50%; transform: translateX(-50%); max-width: 84%;
+      padding: ${lp(3)}px ${lp(10)}px; border-radius: 999px; background: rgba(6,14,14,0.94);
+      border: 1px solid var(--gold); color: #FFF; font: 800 ${Math.max(11, lp(12))}px var(--font-sans);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .k-wf-stage { justify-content: space-between; }
+    .k-wf-head { text-align: center; display: flex; flex-direction: column; align-items: center; gap: ${lp(8)}px; }
+    .k-wf-row { display: flex; gap: ${lp(18)}px; width: 100%; flex: 1; min-height: 0; align-items: stretch; }
+    .k-wf-card {
+      flex: 1; border-radius: ${lp(18)}px; overflow: hidden; background: rgba(9,19,18,0.88);
+      border: 2px solid rgba(255,255,255,0.14); display: flex; flex-direction: column;
+      box-shadow: 0 ${lp(14)}px ${lp(36)}px rgba(0,0,0,0.48);
+    }
+    .k-wf-top { padding: ${lp(12)}px ${lp(16)}px; border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center; font: 900 ${Math.max(13, lp(17))}px var(--font-mono); color: var(--accent); }
+    .k-wf-dot { width: ${lp(9)}px; height: ${lp(9)}px; border-radius: 50%; background: rgba(255,255,255,0.2); display: block; }
+    .k-wf-media { flex: 1; position: relative; background: #07100F; min-height: 0; }
+    .k-wf-media .k-media-el { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .k-wf-info { padding: ${lp(14)}px ${lp(16)}px; }
+    .k-wf-title { font: 800 ${Math.max(15, lp(21))}px var(--font-sans); color: #F8FAFC; }
+    .k-wf-desc { font: 500 ${Math.max(12, lp(14))}px var(--font-sans); color: var(--sub); margin-top: ${lp(4)}px; }
+    .k-wipe-a, .k-wipe-b { position: absolute; inset: 0; }
+    .k-wipe-line { position: absolute; top: 0; bottom: 0; left: 50%; width: 3px; background: linear-gradient(180deg, var(--accent), var(--gold)); box-shadow: 0 0 18px var(--accent); transform: translateX(-1.5px); z-index: 8; }
+    .k-wipe-knob {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: ${lp(36)}px; height: ${lp(36)}px;
+      border-radius: 50%; background: #081312; border: 2px solid var(--gold); color: #FFF;
+      display: flex; align-items: center; justify-content: center; font: 900 ${Math.max(11, lp(13))}px var(--font-mono);
+    }
+    .k-wipe-tag { position: absolute; top: ${lp(16)}px; padding: ${lp(5)}px ${lp(14)}px; border-radius: 999px; background: rgba(6,14,14,0.9); font: 800 ${Math.max(12, lp(15))}px var(--font-sans); z-index: 10; }
+    .k-wipe-tag-l { left: ${lp(16)}px; border: 1px solid var(--accent); color: var(--accent); }
+    .k-wipe-tag-r { right: ${lp(16)}px; border: 1px solid var(--gold); color: var(--gold); }
+    .k-dash-grid { flex-direction: row; gap: ${lp(32)}px; align-items: center; }
+    .k-dash-left { flex: 0 0 39%; display: flex; flex-direction: column; gap: ${lp(18)}px; }
+    .k-dash-right { flex: 1; width: auto; height: 100%; }
+    .k-dash-panel { padding: ${lp(24)}px; border-radius: ${lp(18)}px; background: rgba(10,22,21,0.9); border: 1.5px solid color-mix(in srgb, var(--accent) 32%, transparent); display: flex; flex-direction: column; gap: ${lp(14)}px; }
+    .k-dash-panel-top { display: flex; justify-content: space-between; align-items: center; }
+    .k-dash-panel-top span { font: 800 ${Math.max(14, lp(19))}px var(--font-sans); color: #E2E8F0; }
+    .k-dash-panel-top em { font-style: normal; font: 700 ${Math.max(11, lp(13))}px var(--font-mono); color: var(--gold); }
+    .k-dash-num { font: 900 ${Math.max(36, lp(54))}px var(--font-mono); color: var(--accent); line-height: 1.05; }
+    .k-dash-bar { height: ${lp(8)}px; border-radius: 99px; background: rgba(255,255,255,0.08); overflow: hidden; }
+    .k-dash-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--gold)); }
+    .k-dash-cells { display: grid; grid-template-columns: repeat(10, 1fr); gap: ${lp(6)}px; }
+    .k-dash-cell { height: ${lp(13)}px; border-radius: ${lp(4)}px; background: rgba(255,255,255,0.08); display: block; }
+    .k-trio-stage { justify-content: center; gap: ${lp(24)}px; }
+    .k-trio-row { display: flex; gap: ${lp(22)}px; width: 100%; ${width < height ? 'flex: 1;' : ''} min-height: 0; align-items: center; justify-content: center; }
+    .k-trio-win {
+      flex: 1; ${width < height ? 'height: 88%;' : 'aspect-ratio: 16 / 10.6; max-height: 86%;'} display: flex; flex-direction: column; border-radius: ${lp(16)}px; overflow: hidden;
+      background: #0B1514; border: 1.5px solid rgba(255,255,255,0.16); box-shadow: 0 ${lp(22)}px ${lp(52)}px rgba(0,0,0,0.62);
+    }
+    #workflow-hud {
+      position: absolute; ${width < height ? `top: ${Math.round(height * 0.04)}px;` : `top: ${lp(20)}px;`} left: 50%; transform: translateX(-50%);
+      display: none; align-items: center; gap: ${lp(8)}px; padding: ${lp(6)}px ${lp(16)}px; border-radius: 999px;
+      background: rgba(8,16,15,0.84); border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+      box-shadow: 0 10px 26px rgba(0,0,0,0.45); z-index: 29; pointer-events: none;
+    }
+    .k-hud-step { padding: ${lp(3)}px ${lp(10)}px; border-radius: 999px; font: 700 ${Math.max(12, lp(14))}px var(--font-sans); color: #94A3B8; white-space: nowrap; }
+    .k-hud-step.is-done { background: rgba(var(--rgbAccent), 0.16); color: var(--accent); }
+    .k-hud-step.is-active { background: linear-gradient(90deg, var(--accent), var(--gold)); color: #061211; font-weight: 900; }
+    .k-hud-sep { color: rgba(255,255,255,0.22); font-size: ${lp(13)}px; }
+    .k-hud-sec { font: 800 ${Math.max(11, lp(13))}px var(--font-mono); color: var(--gold); margin-left: ${lp(6)}px; }
+    ${width < height ? `
+    .k-app-stage { padding: 100px 36px ${Math.max(220, (Number(script?.subtitleBottomPx) || safeZone.subtitleBottomPx) + 84)}px; }
+    .k-app-split, .k-dash-grid, .k-wf-row, .k-trio-row { flex-direction: column; }
+    .k-fan-card { width: 170px; height: 245px; }
+    ` : ''}
   </style>
 </head>
 <body>
@@ -797,7 +1203,8 @@ export function buildRichHtmlVideo(script) {
       <div id="c-bl" class="k-corner"></div>
       <div id="c-br" class="k-corner"></div>
     </div>
-    <div id="ai-badge">${escapeHtml(typeof script?.aiBadge === 'string' && script.aiBadge.trim() ? script.aiBadge : complianceNotice.badgeText)}</div>
+    <div id="ai-badge">${escapeHtml(typeof script?.aiBadgeText === 'string' && script.aiBadgeText.trim() ? script.aiBadgeText : typeof script?.aiBadge === 'string' && script.aiBadge.trim() ? script.aiBadge : complianceNotice.badgeText)}</div>
+    <div id="workflow-hud"></div>
     <div id="avatar-overlay-wrap"><video id="avatar-overlay-video" muted playsinline preload="auto"></video></div>
     <div id="end-notice-wrap"><div id="end-notice">${escapeHtml(complianceNotice.endNoticeBody)}</div></div>
     <div id="sub-wrap"><div id="sub-pill"></div></div>
@@ -1013,11 +1420,29 @@ export function buildRichHtmlVideo(script) {
       const cmpA = scEl.querySelector('.k-cmp-a');
       const cmpB = scEl.querySelector('.k-cmp-b');
       const cmpBridge = scEl.querySelector('.k-cmp-bridge');
+      const appWinWrap = scEl.querySelector('.k-app-win-wrap');
+      const appWin = scEl.querySelector('.k-app-win');
+      const appBar = scEl.querySelector('.k-app-bar');
+      const appView = scEl.querySelector('.k-app-view');
+      const camStage = scEl.querySelector('.k-cam-stage');
+      const markBoxes = [...scEl.querySelectorAll('.k-mark-box')];
+      const loupeRing = scEl.querySelector('.k-loupe-ring');
+      const loupeCam = scEl.querySelector('.k-loupe-cam');
+      const fanCards = [...scEl.querySelectorAll('.k-fan-card')];
+      const wfCards = [...scEl.querySelectorAll('.k-wf-card')];
+      const wipeB = scEl.querySelector('.k-wipe-b');
+      const wipeLine = scEl.querySelector('.k-wipe-line');
+      const dashNum = scEl.querySelector('.k-dash-num');
+      const dashBarFill = scEl.querySelector('.k-dash-bar-fill');
+      const dashCells = [...scEl.querySelectorAll('.k-dash-cell')];
+      const trioWins = [...scEl.querySelectorAll('.k-trio-win')];
       const videos = [...scEl.querySelectorAll('video')];
 
       sceneEls.push({
         scEl, meta, chEls, bgMedia, cardStage, macGlint, eyebrow, subline, ruleEl, glowBar, sealEl,
-        pills, callouts, cards3d, mosaicCells, cntNum, cmpA, cmpB, cmpBridge, videos,
+        pills, callouts, cards3d, mosaicCells, cntNum, cmpA, cmpB, cmpBridge,
+        appWinWrap, appWin, appBar, appView, camStage, markBoxes, loupeRing, loupeCam, fanCards, wfCards, wipeB, wipeLine, dashNum, dashBarFill, dashCells, trioWins,
+        videos,
       });
     });
 
@@ -1145,10 +1570,11 @@ export function buildRichHtmlVideo(script) {
         }
       });
 
-      // Global #world camera rig: beat pulse + entrance zoom punch + shake
-      const [shX, shY] = shakeAt(t, meta.startSec, 0.34, 15);
-      const punch = pr(localT, 0, 0.32) < 1 ? (1 - EZ.out(pr(localT, 0, 0.32))) * 0.045 : 0;
-      const camZoom = 1 + beatPulse(t, true) * 0.011 + punch;
+      // Global #world camera rig: subtle beat pulse + restrained shake on impact scenes only
+      const isHeavyImpact = ['kinetic-impact', 'radial-climax', '3d-stage-opener', 'mosaic-pulse-wall'].includes(meta.layout);
+      const [shX, shY] = isHeavyImpact ? shakeAt(t, meta.startSec, 0.28, 9) : [0, 0];
+      const punch = isHeavyImpact && pr(localT, 0, 0.30) < 1 ? (1 - EZ.out(pr(localT, 0, 0.30))) * 0.032 : 0;
+      const camZoom = 1 + beatPulse(t, true) * (isHeavyImpact ? 0.010 : 0.004) + punch;
       worldEl.style.transform = 'translate(' + shX.toFixed(1) + 'px,' + shY.toFixed(1) + 'px) scale(' + camZoom.toFixed(4) + ')';
 
       // Render Background Canvas (#fxb)
@@ -1250,6 +1676,198 @@ export function buildRichHtmlVideo(script) {
           cur.cmpB.style.transform = 'translateX(' + ((1 - bx) * 140).toFixed(1) + 'px)';
           if (cur.cmpBridge) cur.cmpBridge.style.transform = 'scaleX(' + EZ.expo(pr(localT, 0.55, 0.9)).toFixed(3) + ')';
         }
+
+        // Card Fan Opener
+        if (cur.fanCards && cur.fanCards.length > 0) {
+          const isPort = CFG.width < CFG.height;
+          const totalC = cur.fanCards.length;
+          const mid = (totalC - 1) / 2;
+          cur.fanCards.forEach((card, fi) => {
+            const rel = fi - mid;
+            const sp = EZ.spring(pr(localT, fi * 0.06, fi * 0.06 + 0.45));
+            const angle = rel * (isPort ? 7.5 : 9.2) * sp;
+            const tx = rel * (isPort ? 74 : 136) * (CFG.width > CFG.height ? Math.min(1.5, CFG.width / 1920) : 1) * sp;
+            const ty = Math.abs(rel) * (isPort ? 14 : 20) + (1 - sp) * 60;
+            const sc = (1 - Math.abs(rel) * 0.05) * (0.85 + 0.15 * sp);
+            card.style.zIndex = String(20 - Math.round(Math.abs(rel) * 3));
+            card.style.opacity = clamp(sp * 1.4).toFixed(3);
+            card.style.transform = 'translate(' + tx.toFixed(1) + 'px,' + ty.toFixed(1) + 'px) rotate(' + angle.toFixed(2) + 'deg) scale(' + sc.toFixed(4) + ')';
+          });
+        }
+
+        // FocusShot Normalized Zoom & Pan + Pixel-Locked Hotspots + Aspect-Fitted Window + Magnifier Loupe
+        let fittedRatio = 0;
+        if (cur.camStage) {
+          const stageMedia = cur.camStage.querySelector('.k-media-el');
+          const nw = (stageMedia && (stageMedia.naturalWidth || stageMedia.videoWidth)) || Number(cur.camStage.dataset.nw || 0);
+          const nh = (stageMedia && (stageMedia.naturalHeight || stageMedia.videoHeight)) || Number(cur.camStage.dataset.nh || 0);
+          if (nw > 0 && nh > 0) {
+            fittedRatio = nw / nh;
+            if (cur.appWinWrap && cur.appWin && cur.appView) {
+              const wrapW = cur.appWinWrap.clientWidth || 0;
+              const wrapH = cur.appWinWrap.clientHeight || 0;
+              const barH = cur.appBar ? cur.appBar.offsetHeight : 38;
+              const fitKey = nw + 'x' + nh + ':' + wrapW + 'x' + wrapH;
+              if (wrapW > 40 && wrapH > barH + 40 && cur._lastWinFitKey !== fitKey) {
+                cur._lastWinFitKey = fitKey;
+                const availW = wrapW;
+                const availH = Math.max(80, wrapH - barH);
+                let imgW = availW;
+                let imgH = Math.round(imgW / fittedRatio);
+                if (imgH > availH) {
+                  imgH = availH;
+                  imgW = Math.round(imgH * fittedRatio);
+                }
+                cur.appWin.style.width = imgW + 'px';
+                cur.appWin.style.height = (imgH + barH) + 'px';
+                cur.appWin.style.flex = '0 0 auto';
+                cur.camStage.style.width = '100%';
+                cur.camStage.style.height = '100%';
+                cur.camStage.classList.add('is-aspect-fitted');
+              }
+            } else if (cur.appView) {
+              const vw = cur.appView.clientWidth || 0;
+              const vh = cur.appView.clientHeight || 0;
+              if (vw > 40 && vh > 40) {
+                const targetW = (vw / vh > fittedRatio) ? vh * fittedRatio : vw;
+                const targetH = (vw / vh > fittedRatio) ? vh : vw / fittedRatio;
+                cur.camStage.style.width = Math.round(targetW) + 'px';
+                cur.camStage.style.height = Math.round(targetH) + 'px';
+                cur.camStage.classList.add('is-aspect-fitted');
+              }
+            }
+          }
+          const normCam = (rawKey, idx, totalLen) => {
+            const r = rawKey || {};
+            const tVal = Number.isFinite(Number(r.t)) ? Number(r.t) : Number.isFinite(Number(r.at)) ? Number(r.at) : idx / Math.max(1, totalLen - 1);
+            const fxVal = Number.isFinite(Number(r.fx)) ? Number(r.fx) : Number.isFinite(Number(r.x)) ? Number(r.x) : 0.5;
+            const fyVal = Number.isFinite(Number(r.fy)) ? Number(r.fy) : Number.isFinite(Number(r.y)) ? Number(r.y) : 0.5;
+            const zVal = Number.isFinite(Number(r.z)) ? Number(r.z) : Number.isFinite(Number(r.s)) ? Number(r.s) : 1.0;
+            return { t: tVal, fx: fxVal, fy: fyVal, z: Math.max(0.5, zVal) };
+          };
+          const rawCams = Array.isArray(meta.cams) && meta.cams.length
+            ? meta.cams.map((k, ki) => normCam(k, ki, meta.cams.length))
+            : [{ t: 0, fx: 0.5, fy: 0.5, z: 1.0 }, { t: 1, fx: 0.5, fy: 0.5, z: 1.06 }];
+          const keys = rawCams.length === 1 ? [rawCams[0], { ...rawCams[0], t: 1 }] : [...rawCams].sort((a, b) => a.t - b.t);
+          let fx = keys[0].fx, fy = keys[0].fy, z = keys[0].z;
+          for (let ki = 0; ki < keys.length - 1; ki++) {
+            const a = keys[ki], b = keys[ki + 1];
+            if (p >= a.t && p <= b.t) {
+              const u = clamp((p - a.t) / Math.max(0.001, b.t - a.t));
+              const e = u * u * (3 - 2 * u);
+              fx = lerp(a.fx, b.fx, e); fy = lerp(a.fy, b.fy, e); z = lerp(a.z, b.z, e);
+              break;
+            }
+            if (p > b.t) { fx = b.fx; fy = b.fy; z = b.z; }
+          }
+          const tx = Math.max(1 - z, Math.min(0, 0.5 - fx * z)) * 100;
+          const ty = Math.max(1 - z, Math.min(0, 0.5 - fy * z)) * 100;
+          cur.camStage.style.transform = 'translate(' + tx.toFixed(3) + '%,' + ty.toFixed(3) + '%) scale(' + z.toFixed(4) + ')';
+        }
+        if (cur.markBoxes && cur.markBoxes.length > 0) {
+          cur.markBoxes.forEach((mb) => {
+            const sf = Number(mb.dataset.start || 6);
+            const st = sf / Math.max(1, CFG.fps);
+            const mIn = EZ.spring(pr(localT, st, st + 0.35));
+            const pulse = 0.72 + 0.28 * Math.sin(Math.max(0, localT - st) * 6.5);
+            mb.style.opacity = localT >= st ? (mIn * pulse).toFixed(3) : '0';
+            mb.style.transform = 'scale(' + (1.16 - 0.16 * mIn).toFixed(4) + ')';
+          });
+        }
+        if (cur.loupeCam && meta.loupe) {
+          const lx = Number(meta.loupe.fx ?? 0.5), ly = Number(meta.loupe.fy ?? 0.5);
+          const lz = Number(meta.loupe.z ?? 2.6) + p * 0.2;
+          const L = cur.loupeRing ? (cur.loupeRing.clientWidth || 220) : 220;
+          if (fittedRatio > 0) {
+            const lw = fittedRatio >= 1 ? Math.round(L * fittedRatio) : L;
+            const lh = fittedRatio >= 1 ? L : Math.round(L / fittedRatio);
+            cur.loupeCam.style.width = lw + 'px';
+            cur.loupeCam.style.height = lh + 'px';
+            cur.loupeCam.classList.add('is-aspect-fitted');
+            const txPx = Math.max(L - lw * lz, Math.min(0, L / 2 - lx * lw * lz));
+            const tyPx = Math.max(L - lh * lz, Math.min(0, L / 2 - ly * lh * lz));
+            cur.loupeCam.style.transform = 'translate(' + txPx.toFixed(1) + 'px,' + tyPx.toFixed(1) + 'px) scale(' + lz.toFixed(4) + ')';
+          } else {
+            const ltx = Math.max(1 - lz, Math.min(0, 0.5 - lx * lz)) * 100;
+            const lty = Math.max(1 - lz, Math.min(0, 0.5 - ly * lz)) * 100;
+            cur.loupeCam.style.transform = 'translate(' + ltx.toFixed(3) + '%,' + lty.toFixed(3) + '%) scale(' + lz.toFixed(4) + ')';
+          }
+        }
+
+        // Workflow Steps
+        if (cur.wfCards && cur.wfCards.length > 0) {
+          const activeStep = Math.min(cur.wfCards.length - 1, Math.floor(p * cur.wfCards.length));
+          cur.wfCards.forEach((wc, wi) => {
+            const sp = EZ.spring(pr(localT, wi * 0.09, wi * 0.09 + 0.4));
+            const isAct = wi === activeStep;
+            wc.style.opacity = clamp(sp * 1.4).toFixed(3);
+            wc.style.transform = 'translateY(' + ((1 - sp) * 32).toFixed(1) + 'px) scale(' + (isAct ? '1.03' : '1.0') + ')';
+            wc.style.borderColor = isAct ? CFG.gold : 'rgba(255,255,255,0.14)';
+            const dot = wc.querySelector('.k-wf-dot');
+            if (dot) dot.style.background = isAct ? CFG.accent : 'rgba(255,255,255,0.2)';
+          });
+        }
+
+        // Split Wipe Compare
+        if (cur.wipeB && cur.wipeLine) {
+          const split = 0.5 + 0.34 * Math.sin(p * Math.PI * 2 - Math.PI / 2);
+          const pctStr = (split * 100).toFixed(2) + '%';
+          cur.wipeB.style.clipPath = 'inset(0 0 0 ' + pctStr + ')';
+          cur.wipeLine.style.left = pctStr;
+        }
+
+        // Metric Dashboard
+        if (cur.dashNum) {
+          const targetVal = Number(cur.dashNum.dataset.target || 100);
+          const suffixStr = cur.dashNum.dataset.suffix || '';
+          const eP = EZ.out(pr(localT, 0.16, Math.min(durT - 0.25, 1.8)));
+          const disp = Math.round(targetVal * eP);
+          cur.dashNum.textContent = disp.toLocaleString('en-US') + suffixStr;
+          if (cur.dashBarFill) cur.dashBarFill.style.width = (eP * 100).toFixed(1) + '%';
+          if (cur.dashCells && cur.dashCells.length > 0) {
+            const lit = Math.round(eP * cur.dashCells.length);
+            cur.dashCells.forEach((cell, ci) => {
+              const on = ci < lit;
+              cell.style.background = on ? (ci % 4 === 0 ? CFG.gold : CFG.accent) : 'rgba(255,255,255,0.08)';
+              cell.style.opacity = on ? '0.94' : '0.45';
+            });
+          }
+        }
+
+        // Multi-Window Trio
+        if (cur.trioWins && cur.trioWins.length > 0) {
+          const actWin = Math.min(cur.trioWins.length - 1, Math.floor(p * cur.trioWins.length));
+          cur.trioWins.forEach((tw, wi) => {
+            const isAct = wi === actWin;
+            const sp = EZ.spring(pr(localT, wi * 0.08, wi * 0.08 + 0.42));
+            tw.style.opacity = (clamp(sp * 1.4) * (isAct ? 1 : 0.84)).toFixed(3);
+            tw.style.transform = 'scale(' + ((isAct ? 1.03 : 0.96) * (0.9 + 0.1 * sp)).toFixed(4) + ')';
+            tw.style.borderColor = isAct ? CFG.gold : 'rgba(255,255,255,0.16)';
+            const b = tw.querySelector('.k-trio-badge');
+            if (b) b.textContent = isAct ? 'ACTIVE' : 'VIEW';
+          });
+        }
+      }
+
+      // Update Top Workflow HUD
+      const wfHudEl = document.getElementById('workflow-hud');
+      if (wfHudEl) {
+        const wfSteps = Array.isArray(meta.workflowSteps) ? meta.workflowSteps : [];
+        const actStep = Number(meta.hudStep ?? -1);
+        if (wfSteps.length > 0 && actStep >= 0) {
+          wfHudEl.style.display = 'flex';
+          const secCode = String(activeIdx + 1).padStart(2, '0') + ' / ' + String(CFG.timeline.length).padStart(2, '0');
+          const key = secCode + ':' + actStep + ':' + wfSteps.join('|');
+          if (wfHudEl.dataset.key !== key) {
+            wfHudEl.dataset.key = key;
+            wfHudEl.innerHTML = wfSteps.map((st, si) => {
+              const cls = si === actStep ? 'is-active' : si < actStep ? 'is-done' : '';
+              return '<span class="k-hud-step ' + cls + '">' + st + '</span>' + (si < wfSteps.length - 1 ? '<span class="k-hud-sep">›</span>' : '');
+            }).join('') + '<span class="k-hud-sec">' + secCode + '</span>';
+          }
+        } else {
+          wfHudEl.style.display = 'none';
+        }
       }
 
       // Render Foreground VFX Canvas (#fxt)
@@ -1258,9 +1876,9 @@ export function buildRichHtmlVideo(script) {
         drawRadialLines(fxt, t, CFG.width / 2, CFG.height / 2, 0.65, CFG.rgbAccent);
         drawGlow(fxt, CFG.width / 2, CFG.height / 2, 420, CFG.rgbGold, 0.16 + beatPulse(t, true) * 0.1);
       }
-      if (localT < 1.2) {
+      if (localT < 1.0 && ['kinetic-impact', 'radial-climax', '3d-stage-opener', 'mosaic-pulse-wall'].includes(meta.layout)) {
         drawShockRing(fxt, localT, 0.04, CFG.width * 0.5, CFG.height * 0.45, Math.min(CFG.width, CFG.height) * 0.78, 0.65, CFG.rgbAccent);
-        drawSparks(fxt, localT, 0.1, CFG.width * 0.5, CFG.height * 0.45, CFG.rgbGold, 44, activeIdx + 5);
+        drawSparks(fxt, localT, 0.1, CFG.width * 0.5, CFG.height * 0.45, CFG.rgbGold, 36, activeIdx + 5);
         drawScanSweep(fxt, localT, 0.35, 0.55, CFG.rgbAccent);
       }
 

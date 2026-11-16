@@ -15,10 +15,13 @@ import {
   updateAsset,
 } from './asset-manager.js'
 import {
+  analyzeAudioBeatStructure,
+  choreographBeatSfxCues,
   ensureProjectAudioAssets,
   generateBgmWav,
   generateSfxWav,
   mixVideoAudio,
+  quantizeScenesToBeatGrid,
 } from './audio-synth.js'
 import {
   planVideoFromAssets,
@@ -40,6 +43,7 @@ import {
   probeVoiceAcousticTelemetry,
 } from './voice-master.js'
 import {
+  authorBatchedRemotionScenes,
   getAiCodingHistory,
   refineAiScene,
   rollbackAiVersion,
@@ -54,13 +58,18 @@ import {
   synthesizeTtsEngineAudioCue,
 } from './audio-coder.js'
 import {
+  normalizeTransitionKind,
   PROMO_SHOT_RECIPES,
   runSchemaDirectorWithDegradation,
+  VALID_TRANSITIONS,
 } from './plan-schema.js'
 import { exportPublishPack } from './publish-pack.js'
 import { registerVendorClip, renderVendorClipIsolated } from './vendor-clip.js'
 
 export {
+  analyzeAudioBeatStructure,
+  choreographBeatSfxCues,
+  quantizeScenesToBeatGrid,
   importAssets,
   readAssets,
   removeAsset,
@@ -74,6 +83,8 @@ export {
   generateAiCodedBgmTrack,
   synthesizeTtsEngineAudioCue,
   PROMO_SHOT_RECIPES,
+  VALID_TRANSITIONS,
+  normalizeTransitionKind,
   runSchemaDirectorWithDegradation,
   exportPublishPack,
   registerVendorClip,
@@ -92,6 +103,7 @@ export {
   testLlmConnection,
   fetchAvailableModels,
   callLlmChat,
+  authorBatchedRemotionScenes,
   runAiStudioPipeline,
   refineAiScene,
   rollbackAiVersion,
@@ -127,16 +139,30 @@ export async function produceFullVideo(options = {}) {
     fps,
     renderWidth,
     renderHeight,
+    scenesSpec,
+    workflowSteps,
+    brandMark,
+    curateAssets = false,
+    masterVoice = true,
+    useLlmMastering = false,
     onProgress,
   } = options
 
   if (!projectDir) throw new Error('projectDir is required')
   const absDir = resolve(projectDir)
 
+  if (curateAssets) {
+    onProgress?.('0/5 正在智能筛选与无损分辨率适配素材...')
+    if (sources && (Array.isArray(sources) ? sources.length > 0 : true)) {
+      await importAssets({ projectDir: absDir, sources })
+    }
+    await executeCurateAndEditAssets({ projectDir: absDir, style, quality, aspectRatio })
+  }
+
   onProgress?.('1/5 正在导入并分析素材（本地草稿快速生成）...')
   const planned = await planVideoFromAssets({
     projectDir: absDir,
-    sources,
+    sources: curateAssets ? undefined : sources,
     title,
     topic,
     style,
@@ -147,6 +173,9 @@ export async function produceFullVideo(options = {}) {
     height,
     aiBadge,
     voiceId,
+    scenesSpec,
+    workflowSteps,
+    brandMark,
     ...(fps ? { fps: Number(fps) } : {}),
   })
 
@@ -166,6 +195,17 @@ export async function produceFullVideo(options = {}) {
       sceneId: s.id,
       allowPlaceholder,
     })
+  }
+
+  if (masterVoice && !allowPlaceholder) {
+    try {
+      onProgress?.('2.5/5 正在进行 AI 人声声学探测与广播级修音...')
+      await masterVoiceTracks({
+        projectDir: absDir,
+        useLlm: Boolean(useLlmMastering),
+        remixMasterAudio: false,
+      })
+    } catch {}
   }
 
   curScript = readScriptJson(absDir).data
@@ -265,7 +305,7 @@ export function apply(ctx) {
         projectDir: { type: 'string', description: 'Video project directory.' },
         mood: {
           type: 'string',
-          enum: ['tech', 'cinematic', 'warm', 'energetic'],
+          enum: ['tech', 'cinematic', 'warm', 'energetic', 'emerald'],
           description: 'Music mood when generating BGM.',
         },
         mixMaster: { type: 'boolean', description: 'If true, mix voice + SFX + BGM into output/master-audio.wav.' },
@@ -304,7 +344,7 @@ export function apply(ctx) {
         topic: { type: 'string', description: 'Creative brief or topic.' },
         style: {
           type: 'string',
-          enum: ['tech', 'cinematic', 'documentary', 'energetic', 'warm'],
+          enum: ['tech', 'cinematic', 'documentary', 'energetic', 'warm', 'emerald'],
           description: 'Visual and musical style.',
         },
         engine: { type: 'string', enum: ['html', 'remotion'], description: 'Target render engine.' },
@@ -338,7 +378,7 @@ export function apply(ctx) {
         sources: { type: 'array', items: { type: 'string' }, description: 'Optional local media folders or files to import.' },
         title: { type: 'string', description: 'Video title.' },
         topic: { type: 'string', description: 'Topic / prompt.' },
-        style: { type: 'string', enum: ['tech', 'cinematic', 'documentary', 'energetic', 'warm'] },
+        style: { type: 'string', enum: ['tech', 'cinematic', 'documentary', 'energetic', 'warm', 'emerald'] },
         engine: { type: 'string', enum: ['html', 'remotion'] },
         aspectRatio: { type: 'string', enum: ['auto', '16:9', '9:16', '3:4', '1:1', 'custom'] },
         quality: { type: 'string', enum: ['720p', '1080p', '2k', '4k', 'custom'] },
@@ -454,6 +494,8 @@ export function apply(ctx) {
         engine: { type: 'string', enum: ['remotion', 'html'], description: 'Output engine (remotion strongly recommended for AI coding).' },
         creationMode: { type: 'string', enum: ['ai-coded', 'schema-plan'], description: 'ai-coded for max creative ceiling or schema-plan for 4-tier degradation reliability.' },
         bgmMode: { type: 'string', enum: ['llm-coded', 'uploaded', 'tts-engine'], description: 'BGM synthesis mode: llm-coded (LLM writes JS DSP synth code), uploaded (user track), or tts-engine (IndexTTS-2.5 atmospheric).' },
+        narrationMode: { type: 'string', enum: ['tts', 'tts-beat-sync', 'subtitle-mv'], description: 'Narration rhythm mode: tts (standard spoken narration), tts-beat-sync (spoken TTS + cut snapped to BGM downbeats), or subtitle-mv (pure beat-locked music/animation with bold subtitles & SFX, no voiceover).' },
+        targetDurationSec: { type: 'number', description: 'Optional target total duration in seconds when generating a beat-synced MV.' },
         targetPlatform: { type: 'string', enum: ['universal', 'douyin', 'kuaishou', 'xiaohongshu', 'bilibili'], description: 'Target publishing platform safe zone preset.' },
         aspectRatio: { type: 'string', enum: ['auto', '16:9', '9:16', '3:4', '1:1', 'custom'], description: 'auto lets AI select from topic/assets; or specify exact ratio.' },
         quality: { type: 'string', enum: ['720p', '1080p', '2k', '4k', 'custom'], description: 'Output quality preset.' },
@@ -461,6 +503,10 @@ export function apply(ctx) {
         height: { type: 'number', description: 'Custom pixel height.' },
         voiceId: { type: 'string', description: 'Voice ID or "auto".' },
         aiBadge: { type: 'boolean', description: 'Show optional AI corner attribution badge.' },
+        aiBadgeEnabled: { type: 'boolean', description: 'Explicit toggle to enable/disable AI attribution corner badge.' },
+        aiBadgePosition: { type: 'string', enum: ['top-right', 'top-left', 'bottom-right', 'bottom-left'], description: 'Corner placement for the AI attribution badge.' },
+        aiBadgeText: { type: 'string', description: 'Custom text inside the AI attribution badge.' },
+        pacingMode: { type: 'string', enum: ['auto', 'calm', 'balanced', 'dynamic'], description: 'Narrative pacing preset: auto (smart topic fit), calm, balanced, or dynamic.' },
         useDraftReference: { type: 'boolean', description: 'Read existing local draft script/WAVs as pacing baseline.' },
         render: { type: 'boolean', description: 'Whether to immediately render MP4 and run FFmpeg QA.' },
       },
@@ -604,6 +650,9 @@ export function apply(ctx) {
         aspectRatio: { type: 'string', description: '16:9, 9:16, 3:4, 1:1, or auto.' },
         quality: { type: 'string', description: '720p, 1080p, 2k, 4k.' },
         bgmMode: { type: 'string', enum: ['uploaded', 'llm-coded', 'tts-engine'], description: 'BGM source mode.' },
+        narrationMode: { type: 'string', enum: ['tts', 'tts-beat-sync', 'subtitle-mv'], description: 'Voice vs beat-locked subtitle MV mode.' },
+        aiAuthorCode: { type: 'boolean', description: 'When true (default in ai-coded mode), LLM authors per-scene bespoke Remotion TSX batch files with tsc verification.' },
+        targetDurationSec: { type: 'number', description: 'Optional target video duration in seconds.' },
         avatarEnabled: { type: 'boolean', description: 'Include transparent digital human presenter overlay.' },
         avatarMode: { type: 'string', enum: ['ai-human', 'cloned-human'], description: 'Avatar generation mode.' },
         avatarLayout: { type: 'string', enum: ['pip-br', 'pip-bl', 'fullscreen'], description: 'Avatar compositing layout.' },

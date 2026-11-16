@@ -62,16 +62,50 @@ export const AVATAR_TEMPLATES = [
   },
 ]
 
+function readSavedAvatarConfig() {
+  try {
+    const cfgPath = join(resolveEnvPath('DSH_VIDEO_HOME', './.dsh-home'), 'avatar-config.json')
+    if (existsSync(cfgPath)) return JSON.parse(readFileSync(cfgPath, 'utf8'))
+  } catch {}
+  return {}
+}
+
+export function saveAvatarConfig({ provider, endpoint, apiKey } = {}) {
+  const dshHome = resolveEnvPath('DSH_VIDEO_HOME', './.dsh-home')
+  mkdirSync(dshHome, { recursive: true })
+  const cfgPath = join(dshHome, 'avatar-config.json')
+  const prev = readSavedAvatarConfig()
+  const rawKey = apiKey !== undefined ? String(apiKey).trim() : undefined
+  const nextKey = rawKey === 'KEEP_EXISTING' || (rawKey && rawKey.includes('****')) ? prev.apiKey || '' : (rawKey ?? prev.apiKey ?? '')
+  const next = {
+    provider: String(provider ?? prev.provider ?? 'auto').trim().toLowerCase() || 'auto',
+    endpoint: String(endpoint ?? prev.endpoint ?? '').trim(),
+    apiKey: nextKey,
+    updatedAt: new Date().toISOString(),
+  }
+  writeFileSync(cfgPath, JSON.stringify(next, null, 2) + '\n', 'utf8')
+  return getAvatarProviderSummary()
+}
+
+function resolveAvatarAuthKey() {
+  loadEnv()
+  const fileCfg = readSavedAvatarConfig()
+  return String(fileCfg.apiKey || process.env.AVATAR_API_KEY || '').trim()
+}
+
 export function getAvatarProviderSummary() {
   loadEnv()
-  const provider = String(process.env.AVATAR_PROVIDER || 'auto').trim().toLowerCase() || 'auto'
-  const endpoint = String(process.env.AVATAR_ENDPOINT || '').trim()
-  const apiKey = String(process.env.AVATAR_API_KEY || '').trim()
+  const fileCfg = readSavedAvatarConfig()
+  const provider = String(fileCfg.provider || process.env.AVATAR_PROVIDER || 'auto').trim().toLowerCase() || 'auto'
+  const endpoint = String(fileCfg.endpoint || process.env.AVATAR_ENDPOINT || '').trim()
+  const apiKey = String(fileCfg.apiKey || process.env.AVATAR_API_KEY || '').trim()
   const timeoutMs = Math.max(15_000, Number(process.env.AVATAR_TIMEOUT_MS) || 180_000)
   return {
     provider,
     endpoint,
     hasApiKey: Boolean(apiKey),
+    maskedApiKey: apiKey ? `${apiKey.slice(0, 4)}****${apiKey.slice(-4)}` : '',
+    neuralReady: Boolean(endpoint),
     timeoutMs,
   }
 }
@@ -657,6 +691,7 @@ export async function executeGenerateAvatar(options = {}) {
     sourceImagePath = '',
     voiceId = 'auto',
     voiceSamplePath = '',
+    voiceGender = 'neutral',
     narrationText = '',
     audioPath = '',
     avatarLayout = 'pip-br',
@@ -687,7 +722,7 @@ export async function executeGenerateAvatar(options = {}) {
     const cloned = await cloneRecordedVoice({
       sourcePath: absSample,
       name: `数字人克隆声纹-${Date.now().toString().slice(-4)}`,
-      gender: 'female',
+      gender: voiceGender === 'male' || voiceGender === 'female' ? voiceGender : 'neutral',
     })
     if (cloned?.voice?.id) {
       resolvedVoiceId = cloned.voice.id
@@ -743,7 +778,7 @@ export async function executeGenerateAvatar(options = {}) {
     try {
       const rem = await invokeRemoteAvatarEndpoint({
         endpoint: cfg.endpoint,
-        apiKey: cfg.apiKey,
+        apiKey: resolveAvatarAuthKey(),
         provider: cfg.provider === 'auto' ? 'musetalk' : cfg.provider,
         avatarMode,
         audioPath: drivingWav,
@@ -816,6 +851,13 @@ export async function executeGenerateAvatar(options = {}) {
   onProgress?.({ stage: 'avatar-verify', progress: 95, message: '4/4 正在核验透明通道规格并写入 script.json...' })
   const streamMeta = await probeVideoStream(outAbs, signal)
 
+  const isNeuralLipSync = Boolean(usedRemoteFile)
+  const visualNotice = isNeuralLipSync
+    ? `已通过外部数字人接口 (${providerUsed}) 生成真人口型同步叠层`
+    : avatarMode === 'cloned-human'
+      ? '当前未配置外部 MuseTalk / LatentSync 接口，已自动采用本地画中画轮廓与克隆声音同步叠层'
+      : '已通过本地 AI 声波驱动虚拟播报人像生成透明通道叠层'
+
   const clipMeta = {
     path: outRel,
     mode: avatarMode,
@@ -827,6 +869,8 @@ export async function executeGenerateAvatar(options = {}) {
     height: streamMeta.height || height,
     pixFmt: streamMeta.pixFmt || 'yuva420p',
     hasAlpha: streamMeta.hasAlpha,
+    isNeuralLipSync,
+    visualNotice,
     providerUsed,
     sourceBasePath: rawBase || '',
     updatedAt: new Date().toISOString(),
@@ -846,13 +890,15 @@ export async function executeGenerateAvatar(options = {}) {
     writeScriptJson(absDir, scriptObj)
   }
 
-  onProgress?.({ stage: 'done', progress: 100, message: '数字人透明口播层已生成并挂载完成！' })
+  onProgress?.({ stage: 'done', progress: 100, message: visualNotice })
   return {
     ok: true,
     outputPath: outAbs,
     relPath: outRel,
     avatarClip: clipMeta,
     avatarLayout: layout,
+    isNeuralLipSync,
+    visualNotice,
     streamMeta,
   }
 }

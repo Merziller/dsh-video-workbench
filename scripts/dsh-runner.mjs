@@ -181,15 +181,22 @@ async function main() {
     const slots = new Map();
     window.__ModuleLoader__ = {
       load: async ({ factory }) => {
-        const plugin = await factory(async (mod) => {
+        const plugin = await factory((mod) => {
           if (mod === 'react') return React;
           return null;
         });
         const ctx = {
           connection: { fetch: window.fetch.bind(window) },
           slots: {
-            register(slotName, def) {
-              slots.set(slotName, def);
+            inject(_slotName, fn) {
+              return typeof fn === 'function' ? fn() : undefined;
+            },
+            register(arg1, arg2) {
+              if (typeof arg1 === 'string') {
+                slots.set(arg1, arg2);
+              } else if (arg1 && typeof arg1 === 'object' && typeof arg2 === 'function') {
+                slots.set(arg1.name, { ...arg1, render: () => React.createElement(arg2) });
+              }
             }
           }
         };

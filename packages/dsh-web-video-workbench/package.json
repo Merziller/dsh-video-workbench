@@ -5,6 +5,21 @@
   "license": "MIT",
   "type": "module",
   "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
   "dependencies": {
     "@dsh-video/shared": "workspace:*",
     "@dsh-video/tool-local-tts": "workspace:*",

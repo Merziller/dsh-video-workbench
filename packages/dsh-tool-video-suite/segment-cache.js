@@ -151,6 +151,11 @@ export async function renderHtmlSegmentsWithCache({
     })
     renameSync(tmpSeg, segMp4)
     segmentPaths.push(segMp4)
+    onProgress?.({
+      stage: 'render-segment',
+      progress: Math.min(92, Math.round(((i + 1) / scenes.length) * 88)),
+      message: `已渲染分镜片段 ${i + 1}/${scenes.length} (${sc.id || i + 1})`,
+    })
   }
 
   // Concat silent scene segments via FFmpeg concat demuxer
