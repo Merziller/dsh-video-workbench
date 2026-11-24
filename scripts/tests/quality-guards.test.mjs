@@ -151,6 +151,192 @@ await section('brief fallback', async () => {
   check('a non-transient failure is not retried and never marked as an outage', r2.degradationTier === 4 && !r2.llmOutage && calls >= 1 && r2.briefBeatCount === 0, `calls=${calls}`)
 })
 
+/* --------------------------------------------------------------------------- storyboard completeness */
+// Field reports: a 135 s 高燃卡点 film delivered as 13 shots of 10–15 s (the reply was cut off at the output limit and
+// accepted as 「Tier 1 · 完整 JSON Schema」); extra shots appended after the closing shot; a 90 s film from a 2-shot plan.
+await section('storyboard completeness', async () => {
+  const llm = await imp('packages/dsh-tool-media/llm-client.js')
+  const ps = await imp('packages/dsh-tool-media/plan-schema.js')
+  const ba = await imp('packages/dsh-tool-media/beat-analyzer.js')
+
+  // --- the model client reports cut-off replies and asks for JSON mode (fake fetch, request bodies inspected)
+  const bodies = []
+  const run = async (format, baseUrl, replies, extra = {}) => {
+    let i = 0
+    bodies.length = 0
+    const fetchImpl = async (_url, init) => {
+      bodies.push(JSON.parse(init.body))
+      return replies[Math.min(i++, replies.length - 1)]()
+    }
+    const r = await llm.callLlmChat({ overrideConfig: { ...MOCK_LLM, format, baseUrl }, fetchImpl, messages: [{ role: 'user', content: 'json please' }], ...extra })
+    return { r, calls: i }
+  }
+  const sse = (lines) => () => new Response(lines.map((l) => `data: ${typeof l === 'string' ? l : JSON.stringify(l)}\n\n`).join(''), { status: 200, headers: { 'content-type': 'text/event-stream' } })
+  const chatCut = await run('openai-completions', 'https://llm.mock.test/v1', [() => jsonResp({ choices: [{ message: { content: '{"shots":[' }, finish_reason: 'length' }] })], { responseFormat: 'json' })
+  check('openai chat: finish_reason "length" → truncated, JSON mode sent as response_format json_object', chatCut.r.truncated === true && chatCut.r.finishReason === 'length' && bodies[0].response_format?.type === 'json_object')
+  const chatOk = await run('openai-completions', 'https://llm.mock.test/v1', [() => jsonResp({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }] })])
+  check('openai chat: a normal stop is not truncated and no JSON mode unless asked', chatOk.r.truncated === false && chatOk.r.finishReason === 'stop' && !('response_format' in bodies[0]))
+  const chatStream = await run('openai-completions', 'https://llm.mock.test/v1', [sse([{ model: 'm', choices: [{ delta: { content: '{"a":' } }] }, { model: 'm', choices: [{ delta: {}, finish_reason: 'length' }] }, { model: 'm', choices: [], usage: { total_tokens: 9 } }, '[DONE]'])])
+  check('openai chat stream: the finish_reason chunk is read even when a usage chunk follows', chatStream.r.truncated === true && chatStream.r.finishReason === 'length')
+  const retry400 = await run('openai-completions', 'https://llm.mock.test/v1', [() => jsonResp({ error: { message: "Invalid parameter: 'response_format' of type 'json_object' is not supported with this model." } }, 400), () => jsonResp({ choices: [{ message: { content: '{"ok":1}' }, finish_reason: 'stop' }] })], { responseFormat: 'json' })
+  check('a 400 that rejects response_format is retried once without it', retry400.calls === 2 && retry400.r.text === '{"ok":1}' && bodies[0].response_format && !('response_format' in bodies[1]))
+  const other400 = await run('openai-completions', 'https://llm.mock.test/v1', [() => jsonResp({ error: { message: 'model not found' } }, 400)], { responseFormat: 'json' }).then(() => null, (e) => e)
+  check('any other 400 is not retried', other400 && /400/.test(other400.message) && bodies.length === 1)
+  const anth = await run('anthropic-messages', 'https://anthropic.mock.test/v1/messages', [() => jsonResp({ type: 'message', content: [{ type: 'text', text: '{"shots":[' }], stop_reason: 'max_tokens' })], { responseFormat: 'json' })
+  check('anthropic: stop_reason "max_tokens" → truncated; no JSON-mode field (anthropic has none)', anth.r.truncated === true && anth.r.finishReason === 'max_tokens' && !('response_format' in bodies[0]) && !('text' in bodies[0]))
+  const anthStream = await run('anthropic-messages', 'https://anthropic.mock.test/v1/messages', [sse([{ type: 'message_start', message: { stop_reason: null } }, { type: 'content_block_delta', delta: { type: 'text_delta', text: '{"a":' } }, { type: 'message_delta', delta: { stop_reason: 'max_tokens' } }, { type: 'message_stop' }])])
+  check('anthropic stream: message_delta stop_reason max_tokens → truncated', anthStream.r.truncated === true)
+  const resp = await run('openai-responses', 'https://llm.mock.test/v1/responses', [sse([{ type: 'response.output_text.delta', delta: '{"shots":[' }, { type: 'response.incomplete', response: { object: 'response', status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [] } }])], { responseFormat: 'json' })
+  check('openai responses: status incomplete → truncated (reason kept); JSON mode as text.format json_object', resp.r.truncated === true && resp.r.finishReason === 'max_output_tokens' && bodies[0].text?.format?.type === 'json_object')
+  const gem = await run('gemini-native', 'https://gemini.mock.test/v1beta', [() => jsonResp({ candidates: [{ content: { parts: [{ text: '{"shots":[' }] }, finishReason: 'MAX_TOKENS' }] })], { responseFormat: 'json' })
+  check('gemini: finishReason MAX_TOKENS → truncated; JSON mode as generationConfig.responseMimeType', gem.r.truncated === true && gem.r.finishReason === 'MAX_TOKENS' && bodies[0].generationConfig?.responseMimeType === 'application/json')
+  const gem400 = await run('gemini-native', 'https://gemini.mock.test/v1beta', [() => jsonResp({ error: { message: 'Invalid JSON payload received. Unknown name "responseMimeType" at generation_config' } }, 400), () => jsonResp({ candidates: [{ content: { parts: [{ text: '{}' }] }, finishReason: 'STOP' }] })], { responseFormat: 'json' })
+  check('gemini: a relay that rejects responseMimeType is asked once more without it', gem400.calls === 2 && gem400.r.truncated === false && !('responseMimeType' in (bodies[1].generationConfig || {})))
+
+  // --- the director: shared fakes
+  const grid = (bpm, dur) => {
+    const beats = []
+    for (let i = 0, t = 0; t <= dur; i++, t += 60 / bpm) beats.push({ time: Number(t.toFixed(4)), strong: i % 4 === 0, index: i })
+    return { analyzed: true, bpm, beatSec: 60 / bpm, phaseSec: 0, barOffset: 0, durationSec: dur, beats, downbeats: [], drops: [] }
+  }
+  const STORY = ['公元前140年 河东平阳', '你在长安长大', '18岁 你率800轻骑', '斩获2028人 封冠军侯', '你回到河东 认父归宗', '越焉支山', '孤军进祁连', '渡河受降', '深入漠北', '70443级', '封狼居胥', '匈奴未灭 何以家为', '你葬于茂陵附近']
+  const mvShot = (title, i, extra = {}) => ({ id: `scene-${String(i + 1).padStart(2, '0')}`, title, narration: title, emotion: '激昂有力', actionMode: 'clean', layout: 'narrative-diorama', beatCount: 2, durationSec: 1.33, transition: i ? 'slash-wipe' : 'cut', visualBlueprint: `${title}：剪影人物与地图推进`, stageSpec: { mood: 'dawn-amber', setting: 'vast-plain', archetype: 'hero-stand' }, cast: ['hero'], ...extra })
+  const header = { version: 'promo-plan/1', genre: 'history-theater', mode: 'narrative-mv', beatSync: true, title: '霍去病：从少年到封狼居胥', bpm: 90, cast: [{ id: 'hero', name: '霍去病', aliases: ['你'], figure: { outfit: 'armor' } }] }
+  const bgm135 = grid(90, 142.6)
+  const direct = (extra) =>
+    ps.runSchemaDirectorWithDegradation({
+      topic: '霍去病：从少年到封狼居胥',
+      genre: 'history-theater',
+      genreLabel: '历史剪影高燃卡点动画',
+      style: 'cinematic',
+      scriptData: { fps: 30, width: 1920, height: 1080, narrationMode: 'subtitle-mv', scenes: [] },
+      assetsManifest: { items: [] },
+      bgmMeta: bgm135,
+      narrationMode: 'subtitle-mv',
+      pacingMode: 'dynamic',
+      durationMode: 'custom',
+      targetDurationSec: 135,
+      transientRetryDelayMs: 0,
+      ...extra,
+    })
+  const filmSpans = (res, bgm, target) =>
+    ba.quantizeScenesToBeatGrid(res.resolved.resolvedShots, bgm, { mode: 'subtitle-mv', fps: 30, targetDurationSec: target, genre: 'history-theater', narrationMode: 'subtitle-mv', pacingMode: 'dynamic' }).map((s) => s.durationSec)
+
+  // (1) a weak model answers every call with the same storyboard cut off after 13 shots (valid JSON; only the
+  //     provider's finish_reason says it was cut off) → detected, continued (nothing new comes back), densified locally
+  const cut13 = JSON.stringify({ ...header, shots: STORY.map((t, i) => mvShot(t, i)) })
+  const cutArgs = []
+  const weak = await direct({ callLlmChatFn: async (a) => (cutArgs.push(a), { text: cut13, truncated: true, finishReason: 'length' }) })
+  const weakTitles = weak.plan.shots.map((s) => s.title)
+  check('a cut-off 13-shot reply is detected from finish_reason (not accepted as complete)', weak.planCheck.truncated === true && weak.trace.some((t) => t.tier === '1-cutoff' && t.finishReason === 'length'), JSON.stringify(weak.trace.slice(0, 3)))
+  check('every planning call asks for JSON mode', cutArgs.length >= 2 && cutArgs.every((a) => a.responseFormat === 'json'), `${cutArgs.length} calls`)
+  check('…and densified locally to at least 85 % of the minimum (46–62 shots for 135 s)', weak.plan.shots.length >= Math.round(46 * 0.85) && weak.planCheck.densified && weak.plan.densified?.fromShots === 13, `${weak.plan.shots.length} shots`)
+  check('a rebuilt / densified plan is never labelled 「Tier 1 · 完整 JSON Schema」', weak.degradationTier === 1 && weak.tierLabel !== 'Tier 1 · 完整 JSON Schema' && /截断/.test(weak.tierLabel) && /本地加密补镜/.test(weak.tierLabel), weak.tierLabel)
+  check('the planning log line says 「计划 N 镜 / 需要 X–Y 镜」', weak.shotPlanLine === `计划 ${weak.plan.shots.length} 镜 / 需要 46–62 镜`, weak.shotPlanLine)
+  check('plain-Chinese warnings name the cut-off and the local densifying', weak.planWarnings.some((w) => /被截断/.test(w)) && weak.planWarnings.some((w) => /拆成/.test(w) && /13 镜/.test(w)), JSON.stringify(weak.planWarnings))
+  check('story order kept: the first and the closing shot stay first and last', weakTitles[0] === STORY[0] && weakTitles[weakTitles.length - 1] === STORY[12] && weakTitles.indexOf('封狼居胥') < weakTitles.lastIndexOf('你葬于茂陵附近'))
+  const weakSpans = filmSpans(weak, bgm135, 135)
+  check('no picture of the delivered film is held for 10 s or more (was 10.7–15 s)', Math.max(...weakSpans) < 6, `max ${Math.max(...weakSpans).toFixed(2)} s over ${weakSpans.length} shots`)
+
+  // (2) a model that ignores the outline step, runs out of tokens after 13 shots and then continues from the cut
+  const contCalls = []
+  const contFake = async ({ system = '', messages = [] } = {}) => {
+    if (/【续写分镜】/.test(system)) {
+      const from = Number((system.match(/接着写第 (\d+)~(\d+) 镜/) || [])[1])
+      const to = Number((system.match(/接着写第 (\d+)~(\d+) 镜/) || [])[2])
+      contCalls.push(`${from}-${to}`)
+      const last = 50
+      const shots = []
+      for (let n = from; n <= Math.min(to, last); n++) shots.push(mvShot(n === last ? '终章：长河落日' : `征战第${n}镜`, n - 1, n === last ? { stageSpec: { archetype: 'channel-end' } } : {}))
+      return { text: JSON.stringify({ shots, done: to >= last }), finishReason: 'stop' }
+    }
+    contCalls.push(/分页规划 · 第 1 步/.test(system) ? 'outline' : 'other')
+    return { text: cut13, truncated: true, finishReason: 'length' }
+  }
+  const cont = await direct({ callLlmChatFn: contFake })
+  const contTitles = cont.plan.shots.map((s) => s.title)
+  check('a cut-off reply is continued from the cut, page by page, in story order', cont.planCheck.recovered === 'continue' && contCalls[1] === '14-21' && contTitles[13] === '征战第14镜' && contTitles.slice(0, 13).join() === STORY.join(), contCalls.join(','))
+  check('…until the model writes the closing shot (which stays last); no local densifying needed', contTitles[contTitles.length - 1] === '终章：长河落日' && cont.plan.shots.length === 50 && !cont.planCheck.densified && cont.planCheck.storyFinished === true, `${cont.plan.shots.length} shots`)
+  check('…labelled honestly and warned about', cont.tierLabel === 'Tier 1 · 回复被截断，已续写补全' && cont.planWarnings.some((w) => /续写到 50 镜/.test(w)), cont.tierLabel)
+
+  // (3) a long film is planned in pages by a fast model: outline first, then ≤ 8 shots per call
+  const SEG = ['少年长安', '初出茅庐', '河西大战', '祁连孤军', '漠北决战', '封狼居胥', '英年早逝']
+  const pageCalls = []
+  const pagedFake = async ({ system = '', messages = [], maxTokens } = {}) => {
+    if (/分页规划 · 第 1 步/.test(system)) {
+      pageCalls.push({ kind: 'outline', maxTokens })
+      return { text: JSON.stringify({ ...header, segments: SEG.map((t, i) => ({ title: t, summary: `${t}的故事`, shots: i === 6 ? 4 : 8, cast: ['hero'] })) }) }
+    }
+    const m = system.match(/只写第 (\d+)~(\d+) 镜/)
+    const body = JSON.parse(messages[0].content)
+    pageCalls.push({ kind: 'page', from: Number(m[1]), to: Number(m[2]), maxTokens })
+    const shots = []
+    let n = Number(m[1])
+    for (const it of body.pagedPlan.thisPage) for (let k = 0; k < it.shots; k++, n++) shots.push({ ...mvShot(`${SEG[it.n - 1]}·${n}`, n - 1), segment: it.n })
+    return { text: JSON.stringify({ shots }) }
+  }
+  const paged = await direct({ callLlmChatFn: pagedFake })
+  const pages = pageCalls.filter((c) => c.kind === 'page')
+  check('a 135 s 高燃 film is planned as outline + pages of ≤ 8 shots', pageCalls[0]?.kind === 'outline' && pages.length === 7 && pages.every((p) => p.to - p.from + 1 <= ps.PLAN_PAGE_SHOTS), pageCalls.map((c) => c.kind === 'page' ? `${c.from}-${c.to}` : c.kind).join(','))
+  check('every paged call stays well under a 8k output cap', pageCalls.every((c) => Number(c.maxTokens) <= 8000), pageCalls.map((c) => c.maxTokens).join(','))
+  check('the paged plan has the shots the film needs, in story order, closing shot last', paged.plan.shots.length === 54 && paged.plan.shots[0].title === '少年长安·1' && paged.plan.shots[53].title === '英年早逝·54' && paged.planCheck.complete === true && paged.planWarnings.length === 0, `${paged.plan.shots.length} shots`)
+  check('a paged plan says so in its label', /分页 JSON 分镜/.test(paged.tierLabel) && paged.tierLabel !== 'Tier 1 · 完整 JSON Schema', paged.tierLabel)
+
+  // (4) the 90 s 毛选 film: a 2-shot plan → at least 31 shots (nothing more comes from the model)
+  const twoShot = JSON.stringify({ version: 'promo-plan/1', genre: 'other', mode: 'narrative-mv', title: '读毛选解难题', bpm: 96, shots: [
+    { id: 'scene-01', title: '读毛选解难题', narration: '一本书，一套方法。分清处境，才能找到出路。看清谁是朋友，谁在制造难题。', beatCount: 4, durationSec: 2.5, visualBlueprint: '书页翻开，关键词浮现', highlights: ['分清处境', '找到出路'] },
+    { id: 'scene-02', title: '团结起来', narration: '外卖骑手、工厂工人、小店主。处境相通，命运相连。团结起来，才有力量。', beatCount: 4, durationSec: 2.5, visualBlueprint: '三个劳动者在晨光中并肩', highlights: ['团结起来'] },
+  ] })
+  const bgm90 = grid(96, 96)
+  const two = await ps.runSchemaDirectorWithDegradation({
+    topic: '读毛选解难题', genre: 'other', genreLabel: '理论学习卡点动画', style: 'documentary',
+    scriptData: { fps: 30, width: 1920, height: 1080, narrationMode: 'subtitle-mv', scenes: [] }, assetsManifest: { items: [] }, bgmMeta: bgm90,
+    narrationMode: 'subtitle-mv', pacingMode: 'dynamic', durationMode: 'custom', targetDurationSec: 90,
+    callLlmChatFn: async () => ({ text: twoShot, finishReason: 'stop' }), transientRetryDelayMs: 0,
+  })
+  const twoSpans = filmSpans(two, bgm90, 90)
+  check('a 2-shot plan for a 90 s film becomes at least 31 shots (was 45 + 45 s)', two.plan.shots.length >= 31 && two.planCheck.densified && Math.max(...twoSpans) < 6, `${two.plan.shots.length} shots, max ${Math.max(...twoSpans).toFixed(2)} s`)
+  check('densified sub-shots split the subtitle text, vary the camera and keep the closing shot last', new Set(two.plan.shots.map((s) => s.narration)).size >= 6 && new Set(two.plan.shots.map((s) => s.visualBlueprint)).size >= 20 && two.plan.shots[two.plan.shots.length - 1].title === '团结起来')
+
+  // (5) extra shots of a short but finished storyboard go between the shots, never after the closing shot
+  const shortPlan = JSON.stringify({ ...header, shots: ['开篇', '少年', '初战', '大捷', '终章：你葬于茂陵附近'].map((t, i) => mvShot(t, i)) })
+  const insertFake = async ({ system = '' } = {}) => {
+    if (/【补镜加密】/.test(system)) return { text: JSON.stringify({ inserts: [{ afterId: 'scene-02', shot: mvShot('少年练兵', 0) }, { afterId: 'scene-05', shot: mvShot('漠北决战', 0) }], appendShots: [mvShot('凯旋', 0)] }) }
+    return { text: shortPlan }
+  }
+  const ins = await direct({ callLlmChatFn: insertFake, targetDurationSec: 40, bgmMeta: grid(90, 60) })
+  const insTitles = ins.plan.shots.map((s) => s.title)
+  const firstAt = (t) => insTitles.indexOf(t)
+  const lastAt = (t) => insTitles.lastIndexOf(t)
+  check('follow-up shots are inserted in story order and never after the closing shot', firstAt('少年练兵') > lastAt('少年') && lastAt('少年练兵') < firstAt('初战') && firstAt('漠北决战') > lastAt('大捷') && lastAt('凯旋') < firstAt('终章：你葬于茂陵附近') && insTitles[insTitles.length - 1] === '终章：你葬于茂陵附近' && ins.planCheck.recovered === 'insert', insTitles.join('|'))
+  check('mergeShotInserts: an unknown anchor and the closing shot as anchor both land before the closing shot', (() => {
+    const base = ['a', 'b', 'c'].map((t, i) => ({ id: `s${i}`, title: t, narration: t }))
+    const m = ps.mergeShotInserts(base, { inserts: [{ afterId: 's2', shot: { title: 'x', narration: 'x' } }, { afterId: 'nope', shot: { title: 'y', narration: 'y' } }, { afterId: 's0', shot: { title: 'a', narration: 'a' } }] })
+    return m.shots.map((s) => s.title).join('') === 'abxyc' && m.added === 2
+  })())
+
+  // (6) a fine calm / TTS film is left exactly as the model wrote it (one call, no follow-ups, honest label)
+  const calmShots = Array.from({ length: 9 }, (_, i) => ({ id: `scene-${String(i + 1).padStart(2, '0')}`, title: `秋日第${i + 1}幕`, narration: `第${i + 1}幕，咖啡馆的午后，阳光落在窗边的木桌上，我们慢慢讲完这个故事。`, durationSec: 6, layout: 'freeform-stage', transition: i ? 'light-wipe' : 'cut', visualBlueprint: `咖啡馆第${i + 1}幕` }))
+  let calmCalls = 0
+  const calm = await ps.runSchemaDirectorWithDegradation({
+    topic: '社区咖啡馆的秋天', style: 'warm', scriptData: { title: '社区咖啡馆的秋天', scenes: [] }, assetsManifest: { items: [] },
+    narrationMode: 'tts', pacingMode: 'calm',
+    callLlmChatFn: async () => (calmCalls++, { text: JSON.stringify({ version: 'promo-plan/1', title: '社区咖啡馆的秋天', shots: calmShots }), finishReason: 'stop' }),
+    transientRetryDelayMs: 0,
+  })
+  check('a calm TTS plan already in range is unchanged: one call, same shots, 「完整 JSON Schema」, no warnings', calmCalls === 1 && calm.plan.shots.length === 9 && calm.plan.shots.map((s) => s.title).join() === calmShots.map((s) => s.title).join() && calm.tierLabel === 'Tier 1 · 完整 JSON Schema' && calm.planWarnings.length === 0 && !calm.plan.densified, `${calmCalls} calls · ${calm.tierLabel} · ${calm.shotPlanLine}`)
+
+  // (7) JSON salvage: a reply cut inside shot 14 keeps 13 whole shots and is flagged as salvaged
+  const cutText = cut13.slice(0, cut13.indexOf('"id":"scene-13"') + 30)
+  const salvaged = ps.extractPlanJson(cutText)
+  check('a reply cut inside a shot is rebuilt from its whole shots and flagged as cut off', salvaged.salvaged === true && salvaged.json?.shots?.length === 12 && salvaged.json?.title === header.title)
+  check('the salvage works for any array key (inserts / appendShots / segments)', ps.extractPlanJson('{"inserts":[{"afterId":"s1","shot":{"title":"x"}},{"afterId":"s2","shot":{"ti').json?.inserts?.length === 1 && ps.extractPlanJson('{"segments":[{"title":"a","shots":3},{"title":"b","sho').json?.segments?.length === 1)
+
+  // (8) the pipeline shows the shot count line and every planning warning
+  const orchSrc = readFileSync(join(ROOT, 'packages', 'dsh-tool-media', 'pipeline-orchestrator.js'), 'utf8')
+  check('the pipeline logs 「计划 N 镜 / 需要 X–Y 镜」 and surfaces each planning warning', orchSrc.includes('schemaRes.shotPlanLine') && /for \(const w of Array\.isArray\(schemaRes\.planWarnings\)/.test(orchSrc) && orchSrc.includes('onProgress: (msg)'))
+})
+
 /* ----------------------------------------------------------------------------------------------- duration */
 await section('duration policy', async () => {
   const dp = await imp('packages/shared/duration-policy.js')

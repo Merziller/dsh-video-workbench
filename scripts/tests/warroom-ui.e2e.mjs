@@ -346,6 +346,34 @@ try {
     await evaluate(`${SW}.PK.closeAll()`)
     check('人物画风 pick: state, saved to script.json, description box only for 自定义', fsState === true && fsSaved === 'saved' && fsBox === 'shown' && fsGone === 'hidden', JSON.stringify({ fsState: fsState === true || String(fsState), fsSaved, fsBox, fsGone }))
   }
+  // 作品类型 口播剪辑: saved to script.json, the director step switches to the talking-head layout (no brief / voice
+  // fields), the AI 剪辑 panel opens with the engine section; back to AI 原创成片 restores the full step
+  {
+    await evaluate(`${SW}.PK.action('setDirector', { patch: { productionType: 'talk-edit' } })`)
+    const ptSaved = await waitFor(`(async () => { const PK = ${SW}.PK; const st = await PK.store.load(true); const sc = st.activeProject && st.activeProject.script
+      return PK.state.director.productionType === 'talk-edit' && sc && sc.productionType === 'talk-edit' ? 'saved' : null })()`, 10000, '作品类型 saved').catch((e) => e.message)
+    await evaluate(`(() => { const PK = ${SW}.PK; PK.closeAll(); PK.open('studio', { step: 'director' }); return true })()`)
+    const ptLayout = await waitFor(`(() => { const top = ${SW}.PK.topFrame(); if (!top) return null; const t = top.body.innerText
+      return /口播剪辑/.test(t) && /一键出片（口播剪辑）/.test(t) && !/创意需求 · 导演指令/.test(t) ? 'talk' : null })()`, 10000, '口播剪辑 layout').catch((e) => e.message)
+    if (ptLayout === 'talk' && SHOTS) {
+      await sleep(500)
+      await shot('studio-talk-edit')
+    }
+    await evaluate(`(() => { const PK = ${SW}.PK; PK.closeAll(); PK.open('talkEdit'); return true })()`)
+    const teOpen = await waitFor(`(() => { const top = ${SW}.PK.topFrame(); if (!top) return null; const t = top.body.innerText
+      return /本地语音识别/.test(t) && /(要剪辑的视频|素材库里还没有带声音的视频)/.test(t) ? 'open' : null })()`, 20000, 'AI 剪辑 panel').catch((e) => e.message)
+    if (teOpen === 'open' && SHOTS) {
+      await sleep(500)
+      await shot('talk-edit-panel')
+    }
+    const teIssues = teOpen === 'open' ? await evaluate(OVERLAP).catch((e) => [e.message]) : ['not open']
+    await evaluate(`${SW}.PK.closeAll()`)
+    await evaluate(`${SW}.PK.action('setDirector', { patch: { productionType: 'ai-film' } })`)
+    await evaluate(`(() => { const PK = ${SW}.PK; PK.open('studio', { step: 'director' }); return true })()`)
+    const ptBack = await waitFor(`(() => { const top = ${SW}.PK.topFrame(); return top && /创意需求 · 导演指令/.test(top.body.innerText) && /作品类型/.test(top.body.innerText) ? 'film' : null })()`, 10000, 'back to AI 原创成片').catch((e) => e.message)
+    await evaluate(`${SW}.PK.closeAll()`)
+    check('作品类型 口播剪辑: saved, talking-head director layout, AI 剪辑 panel without text problems, back to AI 原创成片', ptSaved === 'saved' && ptLayout === 'talk' && teOpen === 'open' && Array.isArray(teIssues) && teIssues.length === 0 && ptBack === 'film', JSON.stringify({ ptSaved, ptLayout, teOpen, teIssues: Array.isArray(teIssues) ? teIssues.slice(0, 4) : teIssues, ptBack }))
+  }
   // a stale brief left by an old skin bug ("【一句话】undefined", flattened to one line) never reaches the war room
   const staleBrief = await evaluate(`(async () => { const PK = ${SW}.PK; const dir = PK.state.project.dir
     const st = await PK.store.load(true); const sc = st.activeProject && st.activeProject.script; if (!sc) return 'no script'
@@ -415,7 +443,14 @@ try {
     const panels = await evaluate(`[...${SW}.PK.panels.keys()]`)
     const steps = await evaluate(`[...${SW}.PK.studioSteps.keys()]`)
     check(`[${skin}] panel kit registered panels`, panels.length >= 10, panels.join(','))
-    const targets = [...panels.filter((p) => p !== 'studio').map((p) => [p, {}]), ['plaza', { view: 'submit' }], ['plaza', { view: 'mine' }], ...steps.map((s) => ['studio', { step: s }])]
+    const targets = [
+      ...panels.filter((p) => p !== 'studio').map((p) => [p, {}]),
+      ['plaza', { view: 'submit' }],
+      ['plaza', { view: 'mine' }],
+      // 模板填空 with a template loaded (its film settings and the first page of shot cards)
+      ...(panels.includes('templateFill') ? [['templateFill', { templateId: 'history-epic-beat' }]] : []),
+      ...steps.map((s) => ['studio', { step: s }]),
+    ]
     for (const [w, hgt] of VIEWPORTS) {
       await viewport(w, hgt)
       await evaluate(`${SW}.PK.closeAll()`)
@@ -462,11 +497,11 @@ try {
       }
       let toastChecked = false
       for (const [id, a] of targets) {
-        const sub = a.step || a.view || ''
+        const sub = a.step || a.view || a.templateId || ''
         const label = `${id}${sub ? `:${sub}` : ''} @${w}x${hgt}`
         const before = consoleErrors.length
         await evaluate(`(() => { const PK = ${SW}.PK; PK.closeAll(); PK.open(${JSON.stringify(id)}, ${JSON.stringify(a)}); return true })()`)
-        await sleep(id === 'studio' ? 1600 : 900)
+        await sleep(id === 'studio' ? 1600 : a.templateId ? 1800 : 900)
         const info = await evaluate(`(() => { const w = ${SW}; const top = w.PK.topFrame(); if (!top) return { open: false }; const b = top.body; return { open: true, panel: top.id, text: (b.innerText || '').trim().length, renderError: Boolean(b.querySelector('.pk-render-failed')) } })()`)
         const issues = await evaluate(OVERLAP)
         const errs = consoleErrors.slice(before)

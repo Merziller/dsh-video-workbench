@@ -128,9 +128,347 @@ export function snapTimeToBeatGrid(targetSec, beatMeta, { preferDownbeat = true,
   return Number(targetSec.toFixed(4))
 }
 
+// ===========================================================================
+// SUB-SHOTS INSIDE A BEAT-LOCKED SCENE (`scene.cuts`)
+// ---------------------------------------------------------------------------
+// Written by quantizeScenesToBeatGrid() in pure-music (`subtitle-mv`) mode; read by the Remotion and HTML renderers,
+// the built-in diorama, the scene-code prompt and the scene-code checks. Contract:
+//
+//   scene.cuts = [{ start, end, framing, focus: { x, y }, text }]
+//   - start / end  frames relative to the scene start. Contiguous: cuts[0].start === 0, cuts[k].end === cuts[k + 1].start,
+//                  the last end === scene.durationInFrames. Every cut point sits on the BGM beat grid.
+//   - framing      one of CUT_FRAMINGS ('wide' | 'medium' | 'close' | 'detail' | 'low' | 'high'). The renderer re-frames
+//                  the whole scene picture instantly at each cut: zoom CUT_FRAMING_SPEC[framing].scale around `focus`.
+//   - focus        point of interest, { x, y } in 0..1 of the frame ({ x: 0.5, y: 0.5 } = the centre).
+//   - text         subtitle chunk shown during this sub-shot ('' = keep the scene's own line). Chunks are cut only at
+//                  spaces and punctuation, never inside a word; when they carry text, `scene.subtitles` are re-timed
+//                  so every subtitle item starts and ends on a cut.
+//
+// A scene no longer than its pacing cap (resolveSubShotPacing) has no `cuts` (the property is removed). TTS /
+// narration-timed films (`tts-beat-sync`) follow the voice and never get cuts.
+// ===========================================================================
+
+export const CUT_FRAMINGS = ['wide', 'medium', 'close', 'detail', 'low', 'high']
+
+/** Instant re-frame per framing: zoom about the cut's focus point (renderers mirror these numbers). */
+export const CUT_FRAMING_SPEC = {
+  wide: { scale: 1.0, focus: { x: 0.5, y: 0.5 } },
+  medium: { scale: 1.18, focus: { x: 0.5, y: 0.48 } },
+  close: { scale: 1.36, focus: { x: 0.5, y: 0.42 } },
+  detail: { scale: 1.56, focus: { x: 0.5, y: 0.5 } },
+  low: { scale: 1.26, focus: { x: 0.5, y: 0.8 } },
+  high: { scale: 1.26, focus: { x: 0.5, y: 0.22 } },
+}
+
+/** Chinese names of the framings (review prompts, logs). */
+export const CUT_FRAMING_ZH = { wide: '远景', medium: '中景', close: '近景', detail: '特写', low: '低机位', high: '高机位' }
+
+/**
+ * A looser framing for a sub-shot whose re-frame zoom cuts off titles or faces (画面自检 「crop」): one step back
+ * towards the full picture. 'wide' (no zoom) has nothing to loosen → ''.
+ */
+export const CUT_FRAMING_LOOSER = { detail: 'medium', close: 'medium', low: 'medium', high: 'medium', medium: 'wide', wide: '' }
+
+// Longest single picture per pacing. Mirrors plan-schema.js PACING_PROFILES (dynamic shots ≤ 5.5 s, balanced /
+// calm hold longer); on a beat-locked film beats are the unit and the seconds bound keeps slow tempos in check.
+// `splitBeats` lists the preferred sub-shot lengths (bar friendly), the first one that fits cap and `splitSec` wins.
+const SUB_SHOT_PACING = {
+  dynamic: { capBeats: 6, capSec: 4.5, splitBeats: [4], splitSec: 3.0, minBeats: 2 },
+  balanced: { capBeats: 8, capSec: 5.5, splitBeats: [8, 6, 4], splitSec: 4.5, minBeats: 3 },
+  calm: { capBeats: 12, capSec: 8.0, splitBeats: [12, 8, 6, 4], splitSec: 6.5, minBeats: 4 },
+}
+
+/**
+ * The film's longest allowed picture in beats (`capBeats`) and the sub-shot length used to split longer scenes
+ * (`splitBeats`), from the script's pacing (`pacingMode`: dynamic | balanced | calm | auto).
+ */
+export function resolveSubShotPacing(opts = {}, beatSec = 0.6) {
+  const req = String(opts?.pacingMode || '').trim().toLowerCase()
+  let id = SUB_SHOT_PACING[req] ? req : ''
+  if (!id) {
+    // same order as plan-schema.js resolvePacingProfile(): pure-music / beat films are the fast profile
+    const genre = String(opts?.genre || '').toLowerCase()
+    const text = `${opts?.genreLabel || ''} ${opts?.title || ''} ${opts?.topic || ''}`
+    if (String(opts?.narrationMode || '') === 'subtitle-mv' || genre === 'history-theater' || genre === 'mv-lyric' || /卡点|踩点|快闪|混剪|高燃|燃剪|\bMV\b/i.test(text)) id = 'dynamic'
+    else if (opts?.style === 'documentary' || opts?.style === 'warm') id = 'calm'
+    else id = 'balanced'
+  }
+  const p = SUB_SHOT_PACING[id]
+  const beat = Number(beatSec) > 0.15 ? Number(beatSec) : 0.6
+  const capBeats = Math.max(p.minBeats, Math.min(p.capBeats, Math.floor(p.capSec / beat + 1e-6)))
+  const splitBeats = p.splitBeats.find((b) => b <= capBeats && b * beat <= p.splitSec + 1e-6) || Math.min(capBeats, p.splitBeats[p.splitBeats.length - 1])
+  return { id, capBeats, splitBeats: Math.max(1, splitBeats), capSec: Number((capBeats * beat).toFixed(3)) }
+}
+
+/**
+ * `scene.cuts` made safe for a scene of `durFrames` frames whatever edited its timing later: contiguous from 0 to
+ * durFrames, known framings, focus inside 0..1. Fewer than two usable sub-shots → [] (the scene is one picture).
+ */
+export function normalizeSceneCuts(cuts, durFrames) {
+  const dur = Math.round(Number(durFrames) || 0)
+  if (!Array.isArray(cuts) || cuts.length < 2 || dur < 2) return []
+  const unit = (v, d) => {
+    const n = Number(v)
+    return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : d
+  }
+  const items = cuts
+    .map((c) => ({ s: Math.round(Number(c?.start)), e: Math.round(Number(c?.end)), c }))
+    .filter((x) => Number.isFinite(x.s) && Number.isFinite(x.e) && x.e > x.s)
+    .sort((a, b) => a.s - b.s)
+  const out = []
+  for (const it of items) {
+    const start = out.length ? out[out.length - 1].end : 0
+    if (start >= dur - 1) break
+    const end = Math.min(dur, Math.max(start + 1, it.e))
+    const framing = CUT_FRAMINGS.includes(String(it.c?.framing)) ? String(it.c.framing) : 'wide'
+    const spec = CUT_FRAMING_SPEC[framing]
+    out.push({
+      start,
+      end,
+      framing,
+      focus: { x: unit(it.c?.focus?.x, spec.focus.x), y: unit(it.c?.focus?.y, spec.focus.y) },
+      text: typeof it.c?.text === 'string' ? it.c.text.trim() : '',
+    })
+  }
+  if (out.length) out[out.length - 1].end = dur
+  return out.length >= 2 ? out : []
+}
+
+const SUB_CJK_RX = new RegExp('[' + [[0x2e80, 0x9fff], [0xf900, 0xfaff], [0xff00, 0xffef], [0x3000, 0x303f]].map(([a, b]) => String.fromCharCode(a) + '-' + String.fromCharCode(b)).join('') + ']')
+const SUB_BREAK_AFTER_RX = /[，。！？；：、,.!?;:…—）)」』”》]/
+
+/** Atoms of a subtitle line: runs ending at punctuation or whitespace; `sep` is the text that preceded the atom. */
+function subtitleAtoms(text) {
+  const atoms = []
+  let cur = ''
+  let sep = ''
+  let pendingSep = ''
+  for (const ch of String(text || '')) {
+    if (/\s/.test(ch)) {
+      if (cur) {
+        atoms.push({ text: cur, sep })
+        cur = ''
+      }
+      pendingSep = ' '
+      continue
+    }
+    if (!cur) {
+      sep = atoms.length ? pendingSep : ''
+      pendingSep = ''
+    }
+    cur += ch
+    if (SUB_BREAK_AFTER_RX.test(ch)) {
+      atoms.push({ text: cur, sep })
+      cur = ''
+    }
+  }
+  if (cur) atoms.push({ text: cur, sep })
+  return atoms
+}
+
+const joinAtoms = (atoms) => atoms.map((a, i) => (i ? a.sep : '') + a.text).join('').trim()
+const subtitleUnits = (text) => {
+  const s = String(text || '')
+  return SUB_CJK_RX.test(s) ? s.replace(/\s+/g, '').length : s.length / 2.2
+}
+
+/**
+ * Split one subtitle line into readable chunks (≈ ≤ 16 CJK characters / ≈ 35 Latin characters), cutting only at
+ * spaces and punctuation — never inside a word. A clause longer than the limit stays whole.
+ */
+export function chunkSubtitleText(text, maxUnits = 16) {
+  const atoms = subtitleAtoms(text)
+  const chunks = []
+  let cur = []
+  for (const a of atoms) {
+    if (cur.length && subtitleUnits(joinAtoms([...cur, a])) > maxUnits) {
+      chunks.push(cur)
+      cur = []
+    }
+    cur.push(a)
+  }
+  if (cur.length) chunks.push(cur)
+  // a subtitle line does not end on a comma / full stop (question and exclamation marks stay)
+  return chunks.map((c) => joinAtoms(c).replace(/[，、,；;：:。]+$/, '').trim()).filter(Boolean)
+}
+
+/** Fit chunk texts to `n` sub-shots: merge the shortest neighbours when there are too many, split long ones (at atom
+ * boundaries only) when there are too few. Returns ≤ n chunks in reading order. */
+function fitSubtitleChunks(chunks, n) {
+  let out = chunks.map((c) => String(c || '').trim()).filter(Boolean)
+  while (out.length > n && out.length > 1) {
+    let best = 0
+    for (let i = 1; i < out.length - 1; i++) {
+      if (subtitleUnits(out[i] + out[i + 1]) < subtitleUnits(out[best] + out[best + 1])) best = i
+    }
+    const a = subtitleAtoms(out[best])
+    const b = subtitleAtoms(out[best + 1])
+    // two clauses become one line: a space stands in for the dropped comma (also between Chinese clauses)
+    const glue = /[，。！？；：、,.!?;:…]$/.test(out[best]) ? '' : ' '
+    out.splice(best, 2, joinAtoms([...a, ...b.map((x, i) => (i ? x : { ...x, sep: glue }))]))
+  }
+  for (let guard = 0; out.length < n && guard < 64; guard++) {
+    let longest = -1
+    for (let i = 0; i < out.length; i++) {
+      if (subtitleAtoms(out[i]).length >= 2 && subtitleUnits(out[i]) >= 8 && (longest < 0 || subtitleUnits(out[i]) > subtitleUnits(out[longest]))) longest = i
+    }
+    if (longest < 0) break
+    const atoms = subtitleAtoms(out[longest])
+    const total = subtitleUnits(out[longest])
+    let k = 1
+    let bestDiff = Infinity
+    for (let j = 1; j < atoms.length; j++) {
+      const d = Math.abs(subtitleUnits(joinAtoms(atoms.slice(0, j))) - total / 2)
+      if (d < bestDiff) {
+        bestDiff = d
+        k = j
+      }
+    }
+    const left = joinAtoms(atoms.slice(0, k))
+    const right = joinAtoms(atoms.slice(k))
+    if (subtitleUnits(left) < 3 || subtitleUnits(right) < 3) break
+    out.splice(longest, 1, left, right)
+  }
+  return out.map((c) => c.replace(/[，、,；;：:。]+$/, '').trim()).filter(Boolean)
+}
+
+// framing order after a scene's opening sub-shot: tight and loose alternate so every cut reads as a new picture
+const CUT_FRAMING_SEQ = ['close', 'wide', 'detail', 'medium', 'high', 'close', 'low', 'medium']
+
+function cutFocusFor(framing, occurrence, hint) {
+  const base = CUT_FRAMING_SPEC[framing]?.focus || { x: 0.5, y: 0.5 }
+  const r2 = (v) => Number(Math.max(0.05, Math.min(0.95, v)).toFixed(2))
+  // off-centre focus points: the zoom then also moves the composition sideways, so the cut reads as a new angle
+  if (framing === 'medium') return { x: occurrence % 2 ? 0.6 : 0.4, y: base.y }
+  if (framing === 'close') {
+    if (hint) return { x: r2(hint.x), y: r2(hint.y) }
+    return { x: occurrence % 2 ? 0.68 : 0.32, y: base.y }
+  }
+  if (framing === 'detail') {
+    if (hint) return { x: r2(hint.x + (occurrence % 2 ? 0.08 : -0.08)), y: r2(hint.y) }
+    const spots = [{ x: 0.26, y: 0.46 }, { x: 0.74, y: 0.5 }, { x: 0.5, y: 0.3 }]
+    const s = spots[occurrence % spots.length]
+    return { x: s.x, y: s.y }
+  }
+  return { x: base.x, y: base.y }
+}
+
+function sceneFocusHint(sc) {
+  const fx = Number(sc?.focus?.x ?? sc?.focusFx)
+  const fy = Number(sc?.focus?.y ?? sc?.focusFy)
+  return Number.isFinite(fx) && Number.isFinite(fy) && fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1 ? { x: fx, y: fy } : null
+}
+
+/**
+ * Sub-shot windows for one scene: cut points on whole beats from the scene's first beat, each sub-shot at most
+ * `splitBeats` long. `startPos` / `endPos` are the scene's start / end positions on the beat grid (fractional
+ * beats), `timeAt(pos)` maps a grid position to seconds. Returns null when the scene fits the cap.
+ */
+export function planSceneSubShots(sc, { idx = 0, startFrame, durFrames, startPos, endPos, timeAt, fps = 30, pacing, chunks = [] } = {}) {
+  const span = Number(endPos) - Number(startPos)
+  if (!pacing || !(span > pacing.capBeats + 0.25) || !(durFrames > 0) || typeof timeAt !== 'function') return null
+  const n = Math.max(2, Math.ceil((span - 0.25) / pacing.splitBeats))
+  const q = span / n
+  // count whole beats from the scene's first beat — or back from its last one when the scene starts off the grid
+  // (the opening shot before a late first beat) — so every cut lands on a beat
+  const near = (p, step) => {
+    const r = Math.round(Number(p) / step) * step
+    return Math.abs(r - Number(p)) < 0.15 ? r : null
+  }
+  const sBeat = near(startPos, 1)
+  const eBeat = near(endPos, 1)
+  const sHalf = near(startPos, 0.5)
+  const posOf = (j) =>
+    sBeat !== null ? sBeat + Math.round(j * q) : eBeat !== null ? eBeat - Math.round((n - j) * q) : (sHalf ?? Number(startPos)) + Math.round(j * q)
+  const bounds = [0]
+  for (let j = 1; j < n; j++) {
+    const pos = posOf(j)
+    const f = Math.round(timeAt(pos) * fps) - startFrame
+    if (f > bounds[bounds.length - 1] + 2 && f < durFrames - 2) bounds.push(f)
+  }
+  bounds.push(durFrames)
+  if (bounds.length < 3) return null
+  const cuts = []
+  const used = {}
+  let prev = ''
+  for (let j = 0; j < bounds.length - 1; j++) {
+    let framing = j === 0 ? (idx % 2 ? 'medium' : 'wide') : CUT_FRAMING_SEQ[(j - 1 + idx * 3) % CUT_FRAMING_SEQ.length]
+    if (framing === prev) framing = CUT_FRAMING_SEQ[(j + idx * 3) % CUT_FRAMING_SEQ.length]
+    if (framing === prev) framing = framing === 'wide' ? 'close' : 'wide'
+    const occ = used[framing] || 0
+    used[framing] = occ + 1
+    cuts.push({ start: bounds[j], end: bounds[j + 1], framing, focus: cutFocusFor(framing, occ, sceneFocusHint(sc)), text: '' })
+    prev = framing
+  }
+  // subtitle chunks over the sub-shots in reading order, longer chunks staying up for more of them
+  const fitted = fitSubtitleChunks(chunks, cuts.length)
+  if (fitted.length >= 2) {
+    const n = cuts.length
+    const w = fitted.map((c) => Math.max(2, subtitleUnits(c)))
+    const W = w.reduce((a, b) => a + b, 0)
+    const ideal = w.map((x) => (n * x) / W)
+    const alloc = ideal.map((x) => Math.max(1, Math.floor(x)))
+    let sum = alloc.reduce((a, b) => a + b, 0)
+    const order = ideal.map((x, i) => ({ i, rem: x - Math.floor(x) })).sort((a, b) => b.rem - a.rem || a.i - b.i)
+    for (let k = 0; sum < n && k < 4 * n; k++, sum++) alloc[order[k % order.length].i] += 1
+    for (let k = 0; sum > n && k < 4 * n; k++) {
+      let big = -1
+      for (let i = 0; i < alloc.length; i++) if (alloc[i] > 1 && (big < 0 || alloc[i] - ideal[i] > alloc[big] - ideal[big])) big = i
+      if (big < 0) break
+      alloc[big] -= 1
+      sum -= 1
+    }
+    let j = 0
+    fitted.forEach((text, ci) => {
+      for (let k = 0; k < alloc[ci] && j < n; k++, j++) cuts[j].text = text
+    })
+    for (; j < n; j++) cuts[j].text = fitted[fitted.length - 1]
+  }
+  return cuts
+}
+
+/** Subtitle items that change exactly on the cuts (one item per run of sub-shots sharing a chunk). */
+function subtitlesFromCuts(sc, cuts, fps) {
+  const out = []
+  for (let j = 0; j < cuts.length; j++) {
+    const text = String(cuts[j].text || '').trim()
+    if (!text) return null
+    const last = out[out.length - 1]
+    if (last && last.text === text) {
+      last.endF = cuts[j].end
+    } else {
+      out.push({ text, startF: cuts[j].start, endF: cuts[j].end })
+    }
+  }
+  const startFrame = Number(sc.startFrame) || 0
+  const startSec = Number(sc.startSec) || 0
+  return out.map((u, ci) => {
+    const l0 = Number((u.startF / fps).toFixed(3))
+    const l1 = Number((u.endF / fps).toFixed(3))
+    return {
+      index: ci + 1,
+      text: u.text,
+      startSec: l0,
+      endSec: l1,
+      startFrame: u.startF,
+      endFrame: u.endF,
+      sceneId: sc.id,
+      localStartSec: l0,
+      localEndSec: l1,
+      globalStartSec: Number((startSec + l0).toFixed(3)),
+      globalEndSec: Number((startSec + l1).toFixed(3)),
+      globalStartFrame: startFrame + u.startF,
+      globalEndFrame: startFrame + u.endF,
+      cutAligned: true,
+    }
+  })
+}
+
 /**
  * Quantize scenes & subtitles cleanly to measured BGM beat timestamps.
  * - `subtitle-mv`: scene cut points align cleanly to beat/downbeat boundaries matching total duration / beatCounts.
+ *   When the film needs more time than the planned shots provide, long scenes get beat-aligned sub-shots
+ *   (`scene.cuts`, see the contract above) instead of one picture held for many bars.
  * - `tts-beat-sync`: preserves spoken speech duration and pads trailing silence cleanly to the next musical beat/downbeat.
  */
 export function quantizeScenesToBeatGrid(scenes = [], beatMeta = {}, opts = {}) {
@@ -172,9 +510,10 @@ export function quantizeScenesToBeatGrid(scenes = [], beatMeta = {}, opts = {}) 
   const minBeatSpan = Math.max(0.5, Number(audioProf.minBeatMultiple) || (allowBlitzCut ? 0.5 : 1.0))
 
   if (mode === 'subtitle-mv') {
-    const usableBeats = normBeats.filter((b) => b.time <= capDur + 0.1)
-    const fallbackBeats = usableBeats.length >= scenes.length + 1 ? usableBeats : normBeats
     const totalAvailableBeats = Math.max(scenes.length, Math.round(capDur / beatStep))
+    // fractional beat positions over the measured (extended) grid: cut points and sub-shot points use the same map
+    const grid = createMusicalGrid({ ...beatMeta, beatSec: beatStep, beats: normBeats })
+    const pacing = resolveSubShotPacing({ ...opts, narrationMode: opts?.narrationMode || 'subtitle-mv' }, beatStep)
 
     // Allocate beat counts honoring explicit `beatCount` hints (0.5-beat blitzes when allowed by genre/AI audioProfile).
     // Counts planned on another tempo (the storyboard's planBpm) are converted by seconds onto this track's beats.
@@ -198,11 +537,21 @@ export function quantizeScenesToBeatGrid(scenes = [], beatMeta = {}, opts = {}) 
 
     const rawSum = rawCounts.reduce((a, b) => a + b, 0) || scenes.length
     const scale = targetDurationSec > 0 || rawSum > totalAvailableBeats ? totalAvailableBeats / rawSum : 1
+    // A plan sparser than the film: flash accents (< 2 beats on a fast film) keep their punch and the other shots take
+    // the extra time — those long shots get beat-aligned sub-shots below instead of one picture held for many bars.
+    let wantBeats = rawCounts.map((c) => c * scale)
+    if (scale > 1.05 && pacing.id === 'dynamic') {
+      const accentSum = rawCounts.reduce((a, c) => a + (c < 2 ? c : 0), 0)
+      const restSum = rawSum - accentSum
+      if (accentSum > 0 && restSum > 0 && totalAvailableBeats - accentSum > restSum) {
+        const restScale = (totalAvailableBeats - accentSum) / restSum
+        wantBeats = rawCounts.map((c) => (c < 2 ? c : c * restScale))
+      }
+    }
 
     // Whole-beat spans by largest-remainder rounding, so the spans add up to the beats the film needs (rounding every
     // shot on its own lost up to half a beat per shot). 0.5-beat blitz cuts stay 0.5.
     const minWhole = minBeatSpan >= 2 ? 2 : 1
-    const wantBeats = rawCounts.map((c) => c * scale)
     const spans = wantBeats.map((d) => (allowBlitzCut && d <= 0.72 ? 0.5 : Math.max(minWhole, Math.floor(d))))
     const targetBeats = scale !== 1 ? totalAvailableBeats : Math.round(rawSum * 2) / 2
     let spanSum = spans.reduce((a, b) => a + b, 0)
@@ -222,55 +571,45 @@ export function quantizeScenesToBeatGrid(scenes = [], beatMeta = {}, opts = {}) 
       spanSum -= 1
     }
 
-    let beatCursor = 0
-    let subBeatAcc = 0
-    // Start scene 0 at frame 0 while syncing scene 1+ cuts strictly onto real beat or half-beat hits
-    let curStartSec = 0
+    // Cut points from the cumulative plan on the beat grid. A shot of 4+ beats lands on the neighbouring strong
+    // downbeat (≤ 1 beat away); that moves one cut only and never accumulates, so the film keeps its planned length
+    // and a target length is met to the frame.
+    const phaseShift = Number(beatMeta.phaseSec) > 0.25 && Number(beatMeta.phaseSec) < beatStep * 1.2 ? 1 : 0
+    const isStrong = (k) => Number.isInteger(k) && k >= 0 && k < normBeats.length && Boolean(normBeats[k].strong)
+    const bounds = [{ sec: 0, pos: grid.posAt(0) }]
+    let cum = 0
+    for (let i = 0; i < updated.length; i++) {
+      const prev = bounds[bounds.length - 1]
+      const spanBeats = spans[i]
+      cum += spanBeats
+      let pos = cum - phaseShift
+      let sec
+      if (i === updated.length - 1) {
+        // a target duration is met exactly: the last shot ends on it (the spans above already add up to it)
+        sec = targetDurationSec > 0
+          ? Math.max(prev.sec + 0.27, capDur)
+          : Math.min(maxBgmDur, Math.max(prev.sec + 1.5, prev.sec + spanBeats * beatStep))
+        pos = grid.posAt(sec)
+      } else {
+        if (spanBeats >= 4 && Number.isInteger(pos) && !isStrong(pos)) {
+          if (isStrong(pos - 1) && pos - 1 - prev.pos >= 2) pos -= 1
+          else if (isStrong(pos + 1) && spans[i + 1] >= 2) pos += 1
+        }
+        sec = spanBeats < 1 ? prev.sec + Math.max(0.27, grid.timeAt(pos) - prev.sec) : grid.timeAt(pos)
+        // leave room for the shots still to come when the film has a fixed length
+        const room = targetDurationSec > 0 ? capDur - (updated.length - 1 - i) * 0.27 : Infinity
+        if (sec > room) sec = room
+        if (sec < prev.sec + 0.27) sec = prev.sec + 0.27
+        if (Math.abs(grid.timeAt(pos) - sec) > 0.002) pos = grid.posAt(sec)
+      }
+      bounds.push({ sec, pos })
+    }
+
+    let prevEndFrame = 0
     for (let i = 0; i < updated.length; i++) {
       const sc = updated[i]
-      const isLast = i === updated.length - 1
-      const spanBeats = spans[i]
-
-      if (spanBeats < 1) {
-        subBeatAcc += spanBeats
-        if (subBeatAcc >= 0.99) {
-          beatCursor += Math.floor(subBeatAcc + 0.01)
-          subBeatAcc = subBeatAcc - Math.floor(subBeatAcc + 0.01)
-        }
-      } else {
-        if (i === 0 && beatMeta.phaseSec > 0.25 && beatMeta.phaseSec < beatStep * 1.2) {
-          beatCursor = Math.max(1, Math.round(spanBeats) - 1)
-        } else {
-          beatCursor += Math.round(spanBeats)
-        }
-      }
-
-      let nextBoundarySec
-      if (isLast) {
-        // a target duration is met exactly: the last shot ends on it (the spans above already add up to it)
-        nextBoundarySec = targetDurationSec > 0
-          ? Math.max(curStartSec + 1.2, capDur)
-          : Math.min(maxBgmDur, Math.max(curStartSec + 1.5, curStartSec + spanBeats * beatStep))
-      } else if (spanBeats < 1) {
-        const halfSec = Math.max(0.27, spanBeats * beatStep)
-        nextBoundarySec = curStartSec + halfSec
-      } else {
-        // Snap cut to nearest strong downbeat when span >= 4 beats to feel ultra-locked
-        const candBeat = beatCursor < fallbackBeats.length ? fallbackBeats[beatCursor] : null
-        let cutSec = candBeat && candBeat.time > curStartSec + 0.3 ? candBeat.time : curStartSec + spanBeats * beatStep
-        if (spanBeats >= 4 && candBeat && !candBeat.strong) {
-          const nearbyStrong = fallbackBeats.find((b) => b.strong && Math.abs(b.time - cutSec) <= beatStep * 1.1 && b.time > curStartSec + 0.5)
-          if (nearbyStrong) {
-            cutSec = nearbyStrong.time
-            beatCursor = fallbackBeats.indexOf(nearbyStrong)
-            subBeatAcc = 0
-          }
-        }
-        nextBoundarySec = Math.max(curStartSec + 0.27, cutSec)
-      }
-
-      const startFrame = Math.round(curStartSec * safeFps)
-      const endFrame = Math.max(startFrame + 8, Math.round(nextBoundarySec * safeFps))
+      const startFrame = prevEndFrame
+      const endFrame = Math.max(startFrame + 8, Math.round(bounds[i + 1].sec * safeFps))
       const durFrames = endFrame - startFrame
       const durSec = Number((durFrames / safeFps).toFixed(4))
 
@@ -293,7 +632,25 @@ export function quantizeScenesToBeatGrid(scenes = [], beatMeta = {}, opts = {}) 
               ? [sc.narration]
               : []
 
-      if (chunks.length > 0) {
+      // Long scene → sub-shots on the beat grid, each no longer than the pacing cap (the picture re-frames per cut)
+      const cuts = planSceneSubShots(sc, {
+        idx: i,
+        startFrame,
+        durFrames,
+        startPos: bounds[i].pos,
+        endPos: bounds[i + 1].pos,
+        timeAt: grid.timeAt,
+        fps: safeFps,
+        pacing,
+        chunks: chunks.flatMap((c) => chunkSubtitleText(String(c || ''))),
+      })
+      if (cuts) sc.cuts = cuts
+      else delete sc.cuts
+      const cutSubs = cuts ? subtitlesFromCuts(sc, cuts, safeFps) : null
+
+      if (cutSubs) {
+        sc.subtitles = cutSubs
+      } else if (chunks.length > 0) {
         const totalW = chunks.reduce((acc, c) => acc + Math.max(1, String(c).length), 0)
         let subCur = 0
         sc.subtitles = chunks.map((text, ci) => {
@@ -320,7 +677,7 @@ export function quantizeScenesToBeatGrid(scenes = [], beatMeta = {}, opts = {}) 
         })
       }
 
-      curStartSec = sc.endSec
+      prevEndFrame = endFrame
     }
     return updated
   }
@@ -358,6 +715,8 @@ export function quantizeScenesToBeatGrid(scenes = [], beatMeta = {}, opts = {}) 
     sc.endSec = Number((endFrame / safeFps).toFixed(4))
     sc.durationSec = durSec
     sc.beatCutAligned = true
+    // voice-timed shots follow the narration; sub-shots from an earlier pure-music timing no longer fit
+    delete sc.cuts
 
     if (Array.isArray(sc.subtitles)) {
       sc.subtitles = sc.subtitles.map((sub) => {

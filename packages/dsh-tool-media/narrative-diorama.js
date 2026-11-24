@@ -5,8 +5,10 @@
  * bamboo scroll, battle slash, and beat-locked flash cut is parameterized cleanly from
  * AI-generated `stageSpec` scene metadata and real measured BGM beat timestamps.
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { writeFigureKitRemotionLib } from './figure-kit.js'
+import { detectContentFamily, isHistoricalContent } from './genre-router.js'
 
 export const NARRATIVE_DIORAMA_TSX_SOURCE = `/**
  * @dsh-video/narrative-diorama — Parameterized SVG Storytelling Primitives for Remotion
@@ -16,6 +18,8 @@ export const NARRATIVE_DIORAMA_TSX_SOURCE = `/**
 import React from 'react'
 import { AbsoluteFill, Easing, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion'
 import { FONT_MONO, FONT_SANS, FONT_SERIF } from './shotcraft'
+import { Figure, castLook } from './figure-kit'
+import type { FigureAction, FigureLook } from './figure-kit'
 
 const easeOutCubic = Easing.bezier(0.22, 1, 0.36, 1)
 
@@ -160,6 +164,20 @@ export function computeBeatSignal(tSec: number, beats: any[] = []): { pulse: num
     }
   }
   return { pulse, strongPulse, isHitFrame }
+}
+
+/** Active sub-shot of scene.cuts (scene-local frames, see beat-analyzer.js) or null for a single-picture scene. */
+export function dioramaCutAt(scene: any, localFrame: number): { index: number; count: number; start: number; end: number; framing: string } | null {
+  const cuts: any[] = Array.isArray(scene?.cuts) ? scene.cuts : []
+  if (cuts.length < 2) return null
+  let hit: { index: number; count: number; start: number; end: number; framing: string } | null = null
+  for (let k = 0; k < cuts.length; k++) {
+    const s = Number(cuts[k]?.start)
+    if (!Number.isFinite(s) || localFrame < s) continue
+    const e = Number(cuts[k]?.end)
+    hit = { index: k, count: cuts.length, start: s, end: Number.isFinite(e) && e > s ? e : s + 1, framing: String(cuts[k]?.framing || 'wide') }
+  }
+  return hit
 }
 
 const STARS = Array.from({ length: 48 }, (_, i) => ({
@@ -868,6 +886,313 @@ export const CalligraphyColumnPanel: React.FC<{
   )
 }
 
+// ================================================================================== modern diorama
+// Present-day topics (scene.dioramaTheme.era === 'modern': theory, education, science, product, lifestyle …): a city /
+// study backdrop, present-day people from the figure kit and info cards — never spears, plumes, beacon fires or bamboo
+// slips. The content family (genre-router.js) picks the person's look and the floating prop.
+type ModernProp = 'book' | 'orbit' | 'nodes' | 'chart' | 'device' | 'cup' | 'wave' | 'bulb'
+const MODERN_CAST: Record<string, { look: FigureLook; prop: ModernProp }> = {
+  theory: { look: { gender: 'male', outfit: 'coat', hair: 'short', props: { right: 'book' } }, prop: 'book' },
+  science: { look: { gender: 'female', outfit: 'lab-coat', hair: 'ponytail', props: { right: 'tablet' } }, prop: 'orbit' },
+  tech: { look: { gender: 'male', outfit: 'hoodie', hair: 'short', props: { right: 'laptop' } }, prop: 'nodes' },
+  data: { look: { gender: 'female', outfit: 'suit', hair: 'bob', props: { right: 'tablet' } }, prop: 'chart' },
+  tutorial: { look: { gender: 'female', outfit: 'casual', hair: 'ponytail', props: { right: 'tablet' } }, prop: 'nodes' },
+  product: { look: { gender: 'male', outfit: 'suit', hair: 'short', props: { right: 'phone' } }, prop: 'device' },
+  brand: { look: { gender: 'female', outfit: 'coat', hair: 'long', props: { right: 'bag' } }, prop: 'device' },
+  food: { look: { gender: 'female', outfit: 'apron', hair: 'bun', props: { right: 'cup' } }, prop: 'cup' },
+  vlog: { look: { gender: 'female', outfit: 'casual', hair: 'long', props: { right: 'phone' } }, prop: 'device' },
+  music: { look: { gender: 'male', outfit: 'casual', hair: 'spiky', props: { right: 'mic' } }, prop: 'wave' },
+  knowledge: { look: { gender: 'male', outfit: 'casual', hair: 'short', props: { right: 'book' } }, prop: 'bulb' },
+  story: { look: { gender: 'female', outfit: 'casual', hair: 'long' }, prop: 'bulb' },
+  general: { look: { gender: 'male', outfit: 'casual', hair: 'short' }, prop: 'bulb' },
+}
+const MODERN_ACTION: Record<string, FigureAction> = {
+  'hero-numeral': 'present',
+  'hero-stand': 'point',
+  'oath-break': 'raise',
+  'slash-climax': 'cheer',
+  'cavalry-rush': 'run',
+  'duel-confront': 'talk',
+  'farewell-tent': 'wave',
+  'strategic-map': 'point',
+  'scroll-calligraphy': 'read',
+  'bamboo-slips': 'read',
+  'plaque-summary': 'present',
+}
+const SKYLINE = Array.from({ length: 26 }, (_, i) => {
+  const w = 58 + Math.floor(hashDet(i * 3.1 + 1) * 70)
+  const h = 120 + Math.floor(hashDet(i * 7.7 + 2) * 300)
+  return { i, w, h, far: i % 2 === 1 }
+})
+
+const ModernSkyline: React.FC<{ pal: DioramaMoodPalette; frame: number; groundY: number }> = ({ pal, frame, groundY }) => {
+  let x = -40
+  const blocks: React.ReactNode[] = []
+  for (const b of SKYLINE) {
+    const bx = x
+    x += b.w + 8
+    const top = groundY - (b.far ? b.h * 1.15 : b.h)
+    const rows = Math.floor((groundY - top - 24) / 30)
+    const cols = Math.max(1, Math.floor((b.w - 16) / 18))
+    const wins: React.ReactNode[] = []
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const lit = hashDet(b.i * 97 + r * 13 + c * 7) > 0.58
+        if (!lit) continue
+        const tw = 0.55 + 0.45 * Math.sin(frame * 0.05 + b.i + r * 0.7 + c)
+        wins.push(<rect key={r + '-' + c} x={bx + 10 + c * 18} y={top + 16 + r * 30} width={9} height={14} fill={pal.sunCore} opacity={(b.far ? 0.22 : 0.38) * tw} />)
+      }
+    }
+    blocks.push(
+      <g key={b.i}>
+        <rect x={bx} y={top} width={b.w} height={groundY - top + 4} fill={b.far ? pal.ridgeFar : pal.ridgeNear} opacity={b.far ? 0.7 : 0.95} />
+        {wins}
+      </g>,
+    )
+  }
+  return (
+    <g>
+      {blocks}
+      <rect x={0} y={groundY} width={1920} height={1080 - groundY} fill={pal.ground} />
+      <rect x={0} y={groundY} width={1920} height={3} fill={pal.sunRim} opacity={0.35} />
+    </g>
+  )
+}
+
+const ModernProp: React.FC<{ kind: ModernProp; pal: DioramaMoodPalette; frame: number; progress: number; pulse: number; cx: number; cy: number }> = ({ kind, pal, frame, progress, pulse, cx, cy }) => {
+  const bob = Math.sin(frame * 0.06) * 10
+  const tf = 'translate(' + cx + ', ' + (cy + bob).toFixed(1) + ')'
+  const stroke = pal.accent
+  if (kind === 'book') {
+    const open = Math.min(1, 0.35 + progress * 1.4)
+    return (
+      <g transform={tf + ' scale(' + (1 + pulse * 0.03).toFixed(3) + ')'}>
+        <path d={'M0,0 Q-120,' + (-40 * open).toFixed(1) + ' -240,-10 L-240,150 Q-120,120 0,160 Z'} fill={pal.sunCore} opacity={0.9} />
+        <path d={'M0,0 Q120,' + (-40 * open).toFixed(1) + ' 240,-10 L240,150 Q120,120 0,160 Z'} fill={pal.sunCore} opacity={0.82} />
+        {[0, 1, 2, 3, 4].map((li) => (
+          <g key={li}>
+            <line x1={-210} y1={24 + li * 24} x2={-30} y2={34 + li * 24} stroke={pal.ridgeNear} strokeWidth={4} opacity={0.5} />
+            <line x1={30} y1={34 + li * 24} x2={210} y2={24 + li * 24} stroke={pal.ridgeNear} strokeWidth={4} opacity={0.5} />
+          </g>
+        ))}
+        <line x1={0} y1={0} x2={0} y2={160} stroke={pal.ridgeNear} strokeWidth={3} />
+      </g>
+    )
+  }
+  if (kind === 'orbit') {
+    return (
+      <g transform={tf}>
+        {[0, 60, 120].map((rot, oi) => (
+          <g key={oi} transform={'rotate(' + (rot + frame * 0.4).toFixed(1) + ')'}>
+            <ellipse cx={0} cy={0} rx={200} ry={64} fill="none" stroke={stroke} strokeWidth={4} opacity={0.75} />
+            <circle cx={200 * Math.cos(frame * 0.07 + oi * 2)} cy={64 * Math.sin(frame * 0.07 + oi * 2)} r={12} fill={pal.sunCore} />
+          </g>
+        ))}
+        <circle cx={0} cy={0} r={34 + pulse * 8} fill={pal.sunRim} />
+      </g>
+    )
+  }
+  if (kind === 'nodes' || kind === 'bulb') {
+    const pts = [[-220, -60], [-90, -150], [60, -90], [210, -150], [-160, 90], [20, 60], [190, 70]]
+    const links = [[0, 1], [1, 2], [2, 3], [0, 4], [4, 5], [5, 2], [5, 6], [6, 3]]
+    const grow = Math.min(1, progress * 1.6 + 0.15)
+    return (
+      <g transform={tf}>
+        {links.map(([a, b], k) => {
+          const f = Math.max(0, Math.min(1, grow * links.length - k))
+          const xa = pts[a][0]
+          const ya = pts[a][1]
+          return <line key={k} x1={xa} y1={ya} x2={xa + (pts[b][0] - xa) * f} y2={ya + (pts[b][1] - ya) * f} stroke={stroke} strokeWidth={4} opacity={0.7} />
+        })}
+        {pts.map(([px, py], k) => (
+          <circle key={k} cx={px} cy={py} r={(k === 5 ? 30 : 18) * (1 + (k === 5 ? pulse * 0.25 : 0))} fill={k === 5 ? pal.sunRim : pal.sunCore} opacity={0.92} />
+        ))}
+      </g>
+    )
+  }
+  if (kind === 'chart') {
+    const hs = [0.42, 0.66, 0.5, 0.86, 1]
+    return (
+      <g transform={tf}>
+        {hs.map((h, k) => {
+          const g = Math.max(0, Math.min(1, progress * 2.2 - k * 0.18))
+          const bh = 260 * h * g
+          return <rect key={k} x={-230 + k * 96} y={120 - bh} width={64} height={bh} rx={6} fill={k === hs.length - 1 ? pal.sunRim : pal.sunCore} opacity={0.88} />
+        })}
+        <line x1={-250} y1={122} x2={250} y2={122} stroke={stroke} strokeWidth={4} />
+      </g>
+    )
+  }
+  if (kind === 'device') {
+    return (
+      <g transform={tf + ' rotate(' + (Math.sin(frame * 0.03) * 4).toFixed(2) + ')'}>
+        <rect x={-110} y={-200} width={220} height={400} rx={30} fill={pal.ridgeNear} stroke={stroke} strokeWidth={5} />
+        <rect x={-92} y={-170} width={184} height={330} rx={12} fill={pal.sunRim} opacity={0.35 + pulse * 0.2} />
+        {[0, 1, 2, 3].map((k) => (
+          <rect key={k} x={-72} y={-140 + k * 70} width={144 * Math.min(1, progress * 2 + 0.3 - k * 0.12)} height={36} rx={8} fill={pal.sunCore} opacity={0.75} />
+        ))}
+      </g>
+    )
+  }
+  if (kind === 'cup') {
+    return (
+      <g transform={tf}>
+        {[0, 1, 2].map((k) => (
+          <path key={k} d={'M' + (-50 + k * 50) + ',-60 q-24,-40 0,-80 q24,-40 0,-80'} fill="none" stroke={pal.sunCore} strokeWidth={6} opacity={0.35 + 0.3 * Math.sin(frame * 0.08 + k)} />
+        ))}
+        <path d="M-110,-50 L110,-50 L90,140 L-90,140 Z" fill={pal.sunCore} opacity={0.9} />
+        <path d="M110,-10 q70,10 40,80 q-20,20 -50,20" fill="none" stroke={pal.sunCore} strokeWidth={14} opacity={0.9} />
+      </g>
+    )
+  }
+  // 'wave': audio bars on the beat
+  return (
+    <g transform={tf}>
+      {Array.from({ length: 13 }, (_, k) => {
+        const h = 40 + 160 * Math.abs(Math.sin(frame * 0.11 + k * 0.7)) * (0.6 + pulse * 0.5)
+        return <rect key={k} x={-260 + k * 42} y={-h / 2} width={24} height={h} rx={12} fill={k % 3 === 0 ? pal.sunRim : pal.sunCore} opacity={0.85} />
+      })}
+    </g>
+  )
+}
+
+export interface ModernDioramaStageProps {
+  scene: any
+  idx: number
+  pal: DioramaMoodPalette
+  spec: any
+  archetype: string
+  family: string
+  localFrame: number
+  fps: number
+  progress: number
+  pulse: number
+  strongPulse: number
+  cutStart: number
+  /** active sub-shot index (scene.cuts): the person and the prop swap sides per cut, like a reverse angle */
+  cutIndex?: number
+  transform: string
+  flashAlpha: number
+  heroItems: string[]
+}
+
+export const ModernDioramaStage: React.FC<ModernDioramaStageProps> = ({ scene, idx, pal, spec, archetype, family, localFrame, fps, progress, pulse, strongPulse, cutStart, cutIndex = 0, transform, flashAlpha, heroItems }) => {
+  const groundY = 880
+  const cfg = MODERN_CAST[family] || MODERN_CAST.general
+  const castList: any[] = Array.isArray(scene?.cast) ? scene.cast : []
+  const lead = castList.length ? castLook(scene, String(castList[0]?.id || castList[0]?.name || ''), cfg.look) : cfg.look
+  const action: FigureAction = MODERN_ACTION[archetype] || 'talk'
+  const heroX = Number(spec?.heroX) || ((idx + cutIndex) % 2 === 0 ? 560 : 1320)
+  const propX = heroX < 960 ? 1340 : 600
+  const cards = archetype === 'scroll-calligraphy' || archetype === 'plaque-summary' || archetype === 'bamboo-slips' ? heroItems.slice(0, 5) : []
+  const figStyle = { style: 'silhouette' as const, color: pal.silhouette, rim: pal.sunRim, light: -40 }
+  const quote: string[] = Array.isArray(spec?.calligraphy) ? spec.calligraphy.slice(0, 3).map((x: any) => String(x)) : []
+  return (
+    <AbsoluteFill style={{ overflow: 'hidden', background: pal.skyTop, transform, transformOrigin: 'center center' }}>
+      <svg viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+        <defs>
+          <linearGradient id={'msky-' + idx} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={pal.skyTop} />
+            <stop offset="55%" stopColor={pal.skyMid} />
+            <stop offset="100%" stopColor={pal.skyBot} />
+          </linearGradient>
+          <radialGradient id={'mglow-' + idx} cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={pal.sunCore} stopOpacity={0.85} />
+            <stop offset="100%" stopColor={pal.sunRim} stopOpacity={0} />
+          </radialGradient>
+        </defs>
+        <rect x={0} y={0} width={1920} height={1080} fill={'url(#msky-' + idx + ')'} />
+        <circle cx={1500} cy={300} r={260 + pulse * 30} fill={'url(#mglow-' + idx + ')'} opacity={0.55} />
+        <ModernSkyline pal={pal} frame={localFrame} groundY={groundY} />
+        {archetype !== 'channel-end' && cards.length === 0 ? (
+          <ModernProp kind={cfg.prop} pal={pal} frame={localFrame} progress={progress} pulse={pulse} cx={propX} cy={archetype === 'hero-numeral' ? 600 : 420} />
+        ) : null}
+        {archetype === 'hero-numeral' && spec?.heroNum ? (
+          <text x={960} y={330} textAnchor="middle" fill={pal.sunCore} stroke={pal.silhouette} strokeWidth={8} paintOrder="stroke" fontFamily={FONT_SANS} fontSize={280} fontWeight={900} transform={'scale(' + (1 + strongPulse * 0.04).toFixed(3) + ')'} style={{ transformOrigin: '960px 250px' }}>
+            {String(spec.heroNum) + (spec.heroUnit ? String(spec.heroUnit) : '')}
+          </text>
+        ) : null}
+        {archetype === 'cavalry-rush'
+          ? [0, 1, 2, 3].map((k) => (
+              <Figure key={k} look={k === 0 ? lead : { ...cfg.look, gender: k % 2 ? 'female' : 'male', props: {} }} x={((260 + k * 330 + localFrame * 6) % 2100) - 90} y={groundY} height={k === 0 ? 400 : 300 + k * 18} action="run" {...figStyle} phase={k * 0.37} />
+            ))
+          : archetype === 'duel-confront' || archetype === 'farewell-tent'
+            ? [
+                <Figure key="a" look={lead} x={700} y={groundY} height={410} facing={1} action={action} start={cutStart} {...figStyle} />,
+                <Figure key="b" look={{ ...cfg.look, gender: lead.gender === 'female' ? 'male' : 'female', props: {} }} x={1220} y={groundY} height={400} facing={-1} action={archetype === 'duel-confront' ? 'point' : 'wave'} start={cutStart + 6} {...figStyle} />,
+              ]
+            : archetype !== 'channel-end'
+              ? <Figure look={lead} x={heroX} y={groundY} height={cards.length ? 380 : 430} facing={heroX < 960 ? 1 : -1} action={action} start={cutStart} {...figStyle} />
+              : null}
+        {Array.from({ length: 26 }, (_, mi) => {
+          const mx = (hashDet(mi * 5.3) * 1920 + localFrame * (0.6 + hashDet(mi) * 1.4)) % 1920
+          const my = 120 + hashDet(mi * 9.1) * 720 - ((localFrame * (0.3 + hashDet(mi * 2) * 0.6)) % 200)
+          return <circle key={'m' + mi} cx={mx} cy={my} r={1.6 + hashDet(mi * 3) * 2.4} fill={pal.sunCore} opacity={0.25 + 0.25 * Math.sin(localFrame * 0.08 + mi)} />
+        })}
+      </svg>
+
+      {cards.length > 0 ? (
+        <div style={{ position: 'absolute', left: 0, right: 0, top: 210, display: 'flex', justifyContent: 'center', gap: 22, paddingLeft: heroX < 960 ? 420 : 0, paddingRight: heroX < 960 ? 0 : 420, pointerEvents: 'none' }}>
+          {cards.map((label: string, ci: number) => {
+            const sp = spring({ frame: Math.max(0, localFrame - ci * 4), fps, config: { damping: 14, stiffness: 160 } })
+            const active = Math.floor(progress * cards.length) === ci
+            return (
+              <div
+                key={ci}
+                style={{
+                  minWidth: 150,
+                  padding: '22px 26px',
+                  borderRadius: 18,
+                  background: active ? pal.accent : 'rgba(255,255,255,0.10)',
+                  border: '2px solid ' + (active ? pal.sunCore : pal.accent + '88'),
+                  color: active ? pal.silhouette : pal.sunCore,
+                  fontFamily: FONT_SANS,
+                  fontSize: 34,
+                  fontWeight: 800,
+                  textAlign: 'center',
+                  boxShadow: '0 18px 40px rgba(0,0,0,0.55)',
+                  opacity: interpolate(sp, [0, 1], [0, 1]),
+                  transform: 'translateY(' + interpolate(sp, [0, 1], [40, 0]).toFixed(1) + 'px) scale(' + (active ? 1.06 : 1) + ')',
+                }}
+              >
+                {String(label).slice(0, 8)}
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
+
+      {quote.length > 0 ? (
+        <div style={{ position: 'absolute', top: 96, left: 110, maxWidth: 820, pointerEvents: 'none' }}>
+          {quote.map((q, qi) => (
+            <div key={qi} style={{ fontFamily: FONT_SERIF, fontSize: 46, fontWeight: 900, lineHeight: 1.35, color: pal.sunCore, textShadow: '0 4px 18px rgba(0,0,0,0.85)', opacity: interpolate(localFrame - qi * 8, [0, 14], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }) }}>
+              {q}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {archetype === 'channel-end' ? (
+        <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', paddingBottom: 150, pointerEvents: 'none' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontFamily: FONT_SANS, fontSize: 100, fontWeight: 900, color: pal.accent, letterSpacing: 6, textShadow: '0 8px 32px rgba(0,0,0,0.96)' }}>
+              {spec?.headline || scene?.headline || scene?.title}
+            </div>
+            {spec?.subheadline ? (
+              <div style={{ fontFamily: FONT_SANS, fontSize: 28, fontWeight: 600, color: '#E2E8F0', marginTop: 18, letterSpacing: 3, textShadow: '0 4px 16px rgba(0,0,0,0.9)' }}>
+                {spec.subheadline}
+              </div>
+            ) : null}
+          </div>
+        </AbsoluteFill>
+      ) : null}
+
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 220, background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.68) 100%)', pointerEvents: 'none' }} />
+      {flashAlpha > 0.01 ? <AbsoluteFill style={{ backgroundColor: '#FFF6E8', opacity: flashAlpha, pointerEvents: 'none' }} /> : null}
+    </AbsoluteFill>
+  )
+}
+
 export interface NarrativeDioramaStageProps {
   scene: any
   idx: number
@@ -895,9 +1220,15 @@ export const NarrativeDioramaStage: React.FC<NarrativeDioramaStageProps> = ({ sc
   const sunY = Number(spec.sunY) || (archetype === 'hero-numeral' ? 565 : 530)
   const sunR = Number(spec.sunRadius) || (archetype === 'hero-numeral' ? 124 : 122)
 
+  // Sub-shots (scene.cuts): the composition re-frames at every cut (outer CutReframe), and the diorama's own camera
+  // drift + landing shake restart per sub-shot so each one reads as a new shot
+  const dCut = dioramaCutAt(scene, localFrame)
+  const cutAge = dCut ? localFrame - dCut.start : localFrame
+  const segProgress = dCut ? Math.min(1, Math.max(0, (localFrame - dCut.start) / Math.max(1, dCut.end - dCut.start - 1))) : progress
+  const camSeed = idx + (dCut ? dCut.index * 1.37 : 0)
   // Beat camera kick & cut shockwave shake
-  const cutShakeX = localFrame < 8 ? Math.sin(localFrame * 3.7) * (8 - localFrame) * 1.6 : 0
-  const cutShakeY = localFrame < 8 ? Math.cos(localFrame * 4.3) * (8 - localFrame) * 1.2 : 0
+  const cutShakeX = cutAge < 8 ? Math.sin(cutAge * 3.7) * (8 - cutAge) * 1.6 : 0
+  const cutShakeY = cutAge < 8 ? Math.cos(cutAge * 4.3) * (8 - cutAge) * 1.2 : 0
   // Event-driven combat VFX: when the choreographer has planned this shot (scene.actionMode), slash bursts fire
   // ONLY on real contact frames (scene.actionEvents) and the camera shake comes from the outer event rig;
   // clean / cavalry shots get no slash burst at all. Legacy scenes without action metadata keep the old timing.
@@ -916,9 +1247,9 @@ export const NarrativeDioramaStage: React.FC<NarrativeDioramaStageProps> = ({ sc
   }
   const showBurst = !hasActionPlan || burstProgress > 0.01
   const actionShake = !hasActionPlan && /slash|oath|cavalry|duel/i.test(archetype) && isHitFrame ? 11 : 0
-  const camPanX = Math.sin(idx * 1.7 + progress * Math.PI) * 30
-  const camPanY = Math.cos(idx * 2.1 + progress * Math.PI) * 10
-  const camZoom = 1.02 + progress * 0.068 + pulse * 0.032 + strongPulse * 0.02
+  const camPanX = Math.sin(camSeed * 1.7 + segProgress * Math.PI) * 30
+  const camPanY = Math.cos(camSeed * 2.1 + segProgress * Math.PI) * 10
+  const camZoom = 1.02 + segProgress * 0.068 + pulse * 0.032 + strongPulse * 0.02
 
   // scene.flashAllowed === false: the composition's photosensitivity budget dropped this shot's entry flash
   const flashAlpha = scene?.flashAllowed === false
@@ -940,6 +1271,38 @@ export const NarrativeDioramaStage: React.FC<NarrativeDioramaStageProps> = ({ sc
                 ? ['扫平六合', '书同文字', '车同轨道', '废分封制', '北筑长城', '千古一帝']
                 : ['破釜沉舟', '巨鹿大捷', '铁骑长驱', '逐鹿中原', '风云再起', '千古绝唱'])
         : []
+
+  // present-day topics (resolveDioramaTheme at generation time): modern people, city / study backdrop, info cards
+  const dioramaTheme = scene?.dioramaTheme || {}
+  if (dioramaTheme.era === 'modern') {
+    const modernItems: any[] = Array.isArray(spec.plaques) && spec.plaques.length > 0
+      ? spec.plaques
+      : Array.isArray(spec.slips) && spec.slips.length > 0
+        ? spec.slips
+        : Array.isArray(scene?.highlights)
+          ? scene.highlights
+          : []
+    return (
+      <ModernDioramaStage
+        scene={scene}
+        idx={idx}
+        pal={pal}
+        spec={spec}
+        archetype={archetype}
+        family={String(dioramaTheme.family || 'general')}
+        localFrame={localFrame}
+        fps={fps}
+        progress={segProgress}
+        pulse={pulse}
+        strongPulse={strongPulse}
+        cutStart={dCut ? dCut.start : 0}
+        cutIndex={dCut ? dCut.index : 0}
+        transform={'translate(' + (cutShakeX + camPanX).toFixed(1) + 'px, ' + (cutShakeY + camPanY).toFixed(1) + 'px) scale(' + camZoom.toFixed(4) + ')'}
+        flashAlpha={flashAlpha}
+        heroItems={modernItems.map((x: any) => String(x))}
+      />
+    )
+  }
 
   return (
     <AbsoluteFill
@@ -1362,5 +1725,49 @@ export function writeNarrativeDioramaRemotionLib(projectDir) {
   mkdirSync(libDir, { recursive: true })
   const outPath = join(libDir, 'narrative-diorama.tsx')
   writeFileSync(outPath, NARRATIVE_DIORAMA_TSX_SOURCE, 'utf8')
+  // the modern diorama draws its people with the figure kit ('./figure-kit' next to this file)
+  if (!existsSync(join(libDir, 'figure-kit.tsx'))) writeFigureKitRemotionLib(absDir)
   return outPath
+}
+
+// 20th-century history (民国 / 抗战 / 二战 …) is history without spears and plumes: it gets present-day people too
+// (bare 一战 is also 「巨鹿一战」, 建国 also 「刘邦建国」: only unambiguous names count)
+const MODERN_HISTORY_RX = /民国|抗战|抗日|(?<!第)二战|世界大战|解放战争|二万五千里长征|红军|八路军|新四军|新中国|改革开放|近代史|现代史|辛亥革命|五四运动|鸦片战争|甲午战争|冷战/
+
+/**
+ * Era and content family of the built-in diorama for a film: the ancient look (warrior silhouettes, beacon fires,
+ * bamboo slips) only for clearly historical content before the 20th century; modern / theory / education / science /
+ * product / lifestyle films get present-day people, a city / study backdrop and info cards ('modern'). The family
+ * (genre-router.js detectContentFamily) picks the person's look and the floating prop.
+ */
+export function resolveDioramaTheme(script = {}) {
+  const shots = Array.isArray(script?.scenes) ? script.scenes : []
+  const outline = Array.isArray(script?.contentOutline) ? script.contentOutline : []
+  const text = [
+    script?.title,
+    script?.displayTitle,
+    script?.topic,
+    script?.genreLabel,
+    ...outline.map((x) => (typeof x === 'string' ? x : `${x?.title || ''} ${x?.text || x?.summary || ''}`)),
+    ...shots.slice(0, 48).map((s) => `${s?.title || ''} ${s?.narration || s?.subtitleText || ''}`),
+  ]
+    .filter(Boolean)
+    .join(' ')
+  // the film's own title / topic decide first (shot lines may be generic filler); the shots' words decide the rest
+  const head = [script?.title, script?.displayTitle, script?.topic, script?.genreLabel].filter(Boolean).join(' ')
+  const headFamily = detectContentFamily(head)
+  const family = detectContentFamily(text)
+  const genre = String(script?.genre || '').toLowerCase()
+  const modernHistory = MODERN_HISTORY_RX.test(text)
+  const historical =
+    isHistoricalContent(head) ||
+    headFamily === 'war-epic' ||
+    headFamily === 'history-lecture' ||
+    family === 'war-epic' ||
+    family === 'history-lecture' ||
+    ((family === 'general' || family === 'story') && isHistoricalContent(text))
+  // a history film whose title names no other family keeps the classic look
+  const ancient = !modernHistory && (historical || (genre === 'history-theater' && headFamily === 'general'))
+  const modernFamily = headFamily !== 'general' && headFamily !== 'war-epic' && headFamily !== 'history-lecture' ? headFamily : family
+  return { era: ancient ? 'ancient' : 'modern', family: ancient ? family : modernFamily === 'war-epic' || modernFamily === 'history-lecture' ? 'general' : modernFamily }
 }

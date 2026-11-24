@@ -170,6 +170,7 @@ interface WarRoomState {
     aiBadgeEnabled: boolean; aiBadgePosition: string; aiBadgeText: string; visual3dMode: 'auto' | 'on' | 'off'
     useDraftReference: boolean
     visualReview: boolean             // 画面自检 (AI-coded runs: keyframes are reviewed by the model, flagged shots rewritten once)
+    visualReviewFine: boolean         // 逐个机位看图 (default true): one still per sub-shot / ~4 s, cropped 机位 loosened locally, rewritten shots re-checked
     figureStyleChoice: 'auto' | 'silhouette' | 'papercut' | 'puppet' | 'ink' | 'flat' | 'stick' | 'custom' // 人物画风 pick
     figureStyleChoiceNote: string     // with 'custom': the character look in ≤ 40 characters (e.g. Q版萌系，圆脸大眼)
   }
@@ -190,6 +191,8 @@ interface WarRoomState {
   }
   status: {
     llm: { configured: boolean; label: string }       // e.g. "gpt-6.2-sol"
+    // 由当前智能体代写 (llm mode 'host-agent'): + mode: 'host-agent', pending: number (writing tasks waiting for the
+    // agent); label "由 OpenAI Codex 代写" or "有 N 个写作任务在等智能体处理" (re-read every 5 s, only in that mode)
     tts: { ready: boolean; label: string }            // e.g. "IndexTTS-2.5"
     gpu: { label: string; lowSpecMode: string }       // e.g. "RTX 5070 Ti · 12 GB"
     lipsync: { ready: boolean; label: string }        // e.g. "MuseTalk 1.5"
@@ -260,8 +263,19 @@ Preview playback (play/pause/seek of `preview.mp4Url`) is local to the skin's ow
   `data: { status, body }` (body = parsed JSON, or `{ ok, text }`). Only allow-listed routes (see `KIT_API_GET` /
   `KIT_API_POST` in `../client.js` and `kit/KIT.md`); anything else fails with `面板接口未开放`. After a mutating POST the host
   applies `autoBound` results and refreshes its data (`state.rev` bumps).
-* `upload` `{ path: 'assets/upload'|'bgm/upload'|'reference/upload'|'skin/upload', query?: object, name, type, data: ArrayBuffer }`
+* `upload` `{ path: 'assets/upload'|'bgm/upload'|'reference/upload'|'skin/upload'|'anime/upload', query?: object, name, type, data: ArrayBuffer }`
   (send `data` as a transferable) → raw `application/octet-stream` POST → `data: { status, body }`.
+* Route families added for the newer panels (all allow-listed in `client.js`; long work returns `{ jobId }` for `PK.job`):
+  `asr/status` · `asr/install` (local speech engine) · `talk/state` · `talk/roughcut` · `talk/build` · `talk/transcribe` ·
+  `talk/pack` (AI 剪辑 · 口播) · `footage/state` · `footage/index` (看懂素材库) · `highlight/state` · `highlight/build`
+  (Vlog 高光) · `plaza/slots` · `plaza/fill` · `plaza/fill-suggest` (模板填空) · `connection-test` · `cloud-media/test`
+  (测试连接, no cost) · `llm-vision` (看图能力) · `delivery/save-as` (另存为) · `anime/characters` · `anime/character` ·
+  `anime/upload` · `anime/create` · `anime/update` · `anime/rebuild` · `anime/delete` · `anime/estimate` · `anime/local` ·
+  `anime/local/install` · `anime/cloud` · `anime/cloud/test` (我的动漫形象 + its cloud keys, key test is free; `anime/file`
+  is a plain GET for `<img>` via `PK.routeUrl`). The
+  `run` action accepts `presenterConfirmedRmb` (a cloud anime presenter's cost the user confirmed for this 口播剪辑 run;
+  passed as `talkEdit.presenterConfirmedRmb`, never stored). Handlers: `lib/routes-talk.js`, `lib/routes-anime.js`,
+  `lib/routes-connection-test.js`, `lib/routes-delivery.js`, `lib/index.js`.
 
 Host behaviour worth knowing: `run` fails with `ok:false, code:'need-llm'` when the creation mode is `ai-coded` and no
 LLM is configured, or with a plain error when a run is already live; `importFiles` names are sanitised (no path separators);

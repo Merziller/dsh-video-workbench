@@ -47,6 +47,7 @@ import {
   AVATAR_TEMPLATES,
   executeGenerateAvatar,
   getAvatarProviderSummary,
+  getLipsyncHardwareGate,
   getLipsyncInstallerCatalog,
   getLipsyncStatus,
   installLipsyncEngine,
@@ -133,6 +134,8 @@ import {
   taskManager,
 } from '../../dsh-tool-media/index.js'
 import { getVibeToolkitStatus } from '../../dsh-tool-media/vibe-toolkit-lib.js'
+import { formatLlmWait, getLlmTimeoutMs, saveVisionSettings } from '../../dsh-tool-media/llm-client.js'
+import { checkVisionCapability } from '../../dsh-tool-media/vision-capability.js'
 import {
   applyStyleDecision,
   deleteStylePreset,
@@ -149,6 +152,10 @@ import { DELIVERY_ROUTES, handleDeliveryApiRequest, isDeliveryRoute } from './ro
 import { handleProjectApiRequest, isProjectRoute, PROJECT_ROUTES } from './routes-project.js'
 import { COVER_ROUTES, handleCoverApiRequest, isCoverRoute } from './routes-cover.js'
 import { handlePlazaCommunityApiRequest, isPlazaCommunityRoute, PLAZA_COMMUNITY_ROUTES } from './routes-plaza.js'
+import { handleTalkApiRequest, isTalkRoute, TALK_ROUTES } from './routes-talk.js'
+import { ANIME_ROUTES, handleAnimeApiRequest, isAnimeRoute } from './routes-anime.js'
+import { CONNECTION_TEST_ROUTES, handleConnectionTestApiRequest, isConnectionTestRoute } from './routes-connection-test.js'
+import { buildPolishContext, buildPolishRequest, buildPolishUserPayload, renderPolishResult } from './polish-brief.js'
 
 function describeStyleForPrompt(v) {
   const s = String(v || '').trim()
@@ -358,9 +365,11 @@ function collectSceneThumbMap(projectDir) {
 }
 
 /**
- * Expand a short user video idea into a STRUCTURED creative brief (genre-routed).
+ * Expand a short user video idea into a STRUCTURED creative brief (routed by content family and genre).
  * The output separates what the audience sees/hears (displayTitle, contentOutline) from AI-only production
- * directives (directorNotes) so that instructions can never be rendered or narrated in the final video.
+ * directives (directorNotes: look, palette, type, character style, cast bible, time-coded segment plan with the people
+ * each segment must show, music and voice) so that instructions can never be rendered or narrated in the final video.
+ * Prompt building and reply rendering live in polish-brief.js.
  */
 export async function polishTopicPrompt(body = {}, { fetchImpl } = {}) {
   const rawPrompt = String(body.rawPrompt || body.topic || '').trim()
@@ -403,78 +412,54 @@ export async function polishTopicPrompt(body = {}, { fetchImpl } = {}) {
     body.narrationMode === 'tts-beat-sync' ||
     /(?:踩死|踩准|踩拍|踩点|卡点|卡拍|高潮突降|主高潮|突降|重拍|切镜|同步节拍)/i.test(rawPrompt)
   const effectivePolishNarrationMode = wantsPureMusic ? 'subtitle-mv' : (wantsBeatSync && musicList.length > 0 ? 'tts-beat-sync' : (body.narrationMode || 'tts'))
-  const guessedGenre = refStyle?.genre && refStyle.genre !== 'other' ? refStyle.genre : detectGenre(`${rawPrompt} ${noteSnippets.join(' ')}`, visualList.length > 0)
-  const durationPolicy = resolveTargetDurationPolicy({
+  // the analysed upload (bound to script.json when the music was imported): its real tempo, length and drops
+  const bgmSnap = musicItems.length > 0 && projectScriptSnap?.bgm?.analyzed ? projectScriptSnap.bgm : null
+  // content family, genre guess, pacing, duration plan and beat grid (see polish-brief.js)
+  const polishCtx = buildPolishContext({
+    rawPrompt,
+    noteSnippets,
+    refStyle,
     durationMode: body.durationMode || 'auto',
     targetDurationSec: Number(body.targetDurationSec) || 0,
-    text: rawPrompt,
-    narrationMode: effectivePolishNarrationMode,
-    hasVisualAssets: visualList.length > 0,
-    bgmDurationSec: Number(musicItems[0]?.durationSec) || 0,
-    referenceShotCount: Number(refStyle?.pacingSignature?.targetShotCount || refStyle?.shotCount || 0),
-    referenceDurationSec: Number(refStyle?.durationSec || 0),
-  })
-  const durationRuleLine = durationPolicy.enforced
-    ? `6. **目标时长硬要求**：用户明确指定目标时长为 **${durationPolicy.label}**（底线 ${durationPolicy.minSec} 秒）！请务必把 \`contentOutline\` 拆解为 **${durationPolicy.outlineCountMin}~${durationPolicy.outlineCountMax} 条** 扎实充实的内容章节要点（保证后续分镜可自然展开到 **${durationPolicy.targetSec} 秒**${effectivePolishNarrationMode === 'subtitle-mv' ? `、共 **${durationPolicy.targetShotsMin}~${durationPolicy.targetShotsMax} 个高密度卡点分镜**` : `、约 ${durationPolicy.requiredCharsMin}~${durationPolicy.requiredCharsMax} 字口播`}），并在 \`directorNotes\` 中明确写明按 **${durationPolicy.targetSec} 秒** 完整铺陈，绝不能缩水！`
-    : `6. **时长策略**：当前为「AI 自由匹配时长」，请按题材和素材丰富度自由给出最合适的章节条数与节奏安排。`
-  const bgmRuleLine = musicList.length > 0
-    ? `\n7. **已上传 BGM 配乐**：用户已上传背景音乐 ${musicList.join('、')}，请在 \`directorNotes\` 中明确要求全程使用上传的 BGM 并贴合其真实节拍与高潮突降点${wantsPureMusic ? '（纯音乐高燃卡点免 TTS 旁白，强调动画人物剪影/动作、刀光斩击特效、转场闪切与鼓点打击音效）' : ''}。`
-    : ''
-  const refRuleLine = refStyle?.replicationPrompt
-    ? `\n8. **已挂载参考视频复刻基因（必须严格沿用同款视觉与节奏！）**：参考视频「${refStyle.sourceName || '参考样片'}」实测 **${refStyle.shotCount || 0} 镜 / ${refStyle.bpm || '?'} BPM / ${refStyle.narrationMode || 'subtitle-mv'}**。风格基因：${String(refStyle.replicationPrompt).slice(0, 700)}。请把这套视觉与节奏要求完美迁移到用户的新主题中！`
-    : ''
-
-  const systemPrompt = `你是全品类视频创作总导演，擅长把一句大白话想法扩写成 AI 制作团队可直接执行的结构化创作方案。
-先判断体裁：**没有任何题材限制**！下列只是 11 种常见写法参考，如果用户需求属于美食探店、机甲机械拆解、修仙/都市漫剧、游戏攻略、建筑空间漫游、影视解说、财经宏观、实验视觉艺术等任何未列出的题材，直接设 \`"genre": "other"\`（或简短英文 slug）并在 \`genreLabel\` 填写准确的新体裁名称：
-${listGenresForPrompt()}
-
-严格只输出一个 JSON 对象（不要 Markdown、不要代码围栏、不要寒暄），字段如下：
-{
-  "genre": "常见体裁 id，或自创题材填 other",
-  "genreLabel": "精准的体裁中文名（支持无限自创新体裁，例如：科幻机甲拆解、美食教程、财经宏观分析等）",
-  "displayTitle": "观众可见的作品标题，≤16 个字，只写作品名本身，不含任何制作要求",
-  "logline": "一句话说明这部片子讲什么（给导演看）",
-  "contentOutline": ["观众将看到/听到的内容要点 1", "要点 2", "..."],
-  "directorNotes": "仅供 AI 制作团队阅读：视觉语言/运镜/动画技法/节奏/配乐/配音音色与情绪方案/素材使用方式。120~320 字。",
-  "voiceStyle": "配音音色与情绪取向，如：富有张力史诗浑厚的纪录片男声 / 清亮亲切节奏明快的科技解说",
-  "suggestedStyle": "tech|cinematic|documentary|energetic|warm|emerald 之一"
-}
-硬性规则：
-1. directorNotes 里的任何文字都不会出现在视频中；displayTitle 与 contentOutline 才是观众可接触的信息。
-2. contentOutline 写事实/情节/步骤的要点（名词短语或短句），不要写成"本视频要求…""请制作…"之类指令。
-3. 结合 uploadedVisualAssets / uploadedNotes / uploadedMusic：有素材就写明如何使用；没有素材就由代码动画自由绘制（Three.js / SVG / Canvas，不受固定模板限制）。
-4. 严禁虚构不存在的数据；用户给出的产品名、网址须原样保留在 contentOutline 中。
-5. 数字用阿拉伯数字书写（206 年、3000 人）。
-${durationRuleLine}${bgmRuleLine}${refRuleLine}`
-
-  const userMsg = JSON.stringify({
-    userInput: rawPrompt,
-    guessedGenre,
-    // 'auto' / 'user:<id>' in words the model understands (the director plan later picks / keeps the real style)
-    style: describeStyleForPrompt(body.style),
-    aspectRatio: body.aspectRatio || 'auto',
-    targetPlatform: body.targetPlatform || 'universal',
     pacingMode: body.pacingMode || 'auto',
-    creationMode: body.creationMode || 'ai-coded',
-    narrationMode: body.narrationMode || 'tts',
-    durationPolicy: durationPolicy.enforced
-      ? { mode: durationPolicy.mode, targetSec: durationPolicy.targetSec, minSec: durationPolicy.minSec, outlineCount: `${durationPolicy.outlineCountMin}~${durationPolicy.outlineCountMax}` }
-      : { mode: 'auto', hint: 'AI自由匹配最佳时长' },
-    uploadedVisualAssets: visualList,
-    uploadedMusic: musicList,
-    uploadedSfx: sfxList,
-    uploadedSpecialRoles: specialList,
-    uploadedNotes: noteSnippets,
+    style: body.style,
+    aspectRatio: body.aspectRatio || 'auto',
+    narrationMode: effectivePolishNarrationMode,
+    pureMusic: wantsPureMusic,
+    beatSync: wantsBeatSync,
+    hasVisuals: visualList.length > 0,
+    musicList,
+    bgm: {
+      bpm: Number(bgmSnap?.bpm) || 0,
+      measured: Boolean(bgmSnap?.bpm),
+      durationSec: Number(bgmSnap?.durationSec || musicItems[0]?.durationSec) || 0,
+      drops: (Array.isArray(bgmSnap?.drops) ? bgmSnap.drops : []).map((d) => (typeof d === 'number' ? d : Number(d?.time))).filter((d) => Number.isFinite(d)),
+    },
   })
+  const polishRequest = buildPolishRequest(
+    polishCtx,
+    buildPolishUserPayload(polishCtx, {
+      // 'auto' / 'user:<id>' in words the model understands (the director plan later picks / keeps the real style)
+      style: describeStyleForPrompt(body.style),
+      aspectRatio: body.aspectRatio || 'auto',
+      targetPlatform: body.targetPlatform || 'universal',
+      creationMode: body.creationMode || 'ai-coded',
+      uploadedVisualAssets: visualList,
+      uploadedMusic: musicList,
+      uploadedSfx: sfxList,
+      uploadedSpecialRoles: specialList,
+      uploadedNotes: noteSnippets,
+    }),
+  )
 
   const reply = await callLlmChat({
     ...(overrideConfig ? { overrideConfig } : {}),
     ...(fetchImpl ? { fetchImpl } : {}),
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userMsg }],
+    system: polishRequest.system,
+    messages: [{ role: 'user', content: polishRequest.user }],
     temperature: 0.45,
-    maxTokens: 4096,
-    timeoutMs: 600_000,
+    maxTokens: polishRequest.maxTokens,
+    timeoutMs: getLlmTimeoutMs(),
   })
   const rawText = String(reply?.text || '')
     .replace(/^```[\w]*\r?\n?/, '')
@@ -485,72 +470,12 @@ ${durationRuleLine}${bgmRuleLine}${refRuleLine}`
     err.status = 502
     throw err
   }
-
-  let parsed = null
-  try {
-    parsed = extractJsonFromLlmText(rawText)
-  } catch {}
-
-  const model = reply.model || overrideConfig?.model || llmSummary.model
-  const str = (v) => String(v ?? '').trim()
-  if (!parsed || typeof parsed !== 'object') {
-    // Legacy / free-text reply: keep it strictly as director notes, never as a title.
-    const split = splitDirectorBrief({ topic: rawText })
-    const title = deriveDisplayTitle(rawPrompt, '') || split.displayTitle
-    return {
-      ok: true,
-      polishedTopic: `【作品标题】${title}\n【体裁】${getGenreProfile(guessedGenre).label}\n【导演备注（仅供 AI 制作，不会出现在视频里）】\n${stripMetaFree(rawText)}`,
-      displayTitle: title,
-      genre: guessedGenre,
-      genreLabel: getGenreProfile(guessedGenre).label,
-      directorNotes: rawText,
-      contentOutline: [],
-      model,
-    }
-  }
-
-  const rawParsedGenre = str(parsed.genre)
-  const matchedProfile = rawParsedGenre ? GENRE_PROFILES.find((g) => g.id === rawParsedGenre || g.label === rawParsedGenre) : null
-  const genreId = matchedProfile ? matchedProfile.id : rawParsedGenre ? 'other' : guessedGenre
-  const genreLabel =
-    str(parsed.genreLabel) ||
-    (genreId === 'other' && rawParsedGenre && rawParsedGenre !== 'other' ? rawParsedGenre : getGenreProfile(genreId).label)
-  const outline = (Array.isArray(parsed.contentOutline) ? parsed.contentOutline : str(parsed.contentOutline).split(/\n+/))
-    .map((x) => str(x).replace(/^[-\d.、\s]+/, ''))
-    .filter((x) => x && !isMetaInstructionText(x))
-  const displayTitle = str(parsed.displayTitle).slice(0, 24) || deriveDisplayTitle(rawPrompt, '作品')
-  const directorNotes = str(parsed.directorNotes)
-  const voiceStyle = str(parsed.voiceStyle)
-  const durationLine = durationPolicy.enforced
-    ? `【目标时长】${durationPolicy.targetSec} 秒（${formatDurationLabel(durationPolicy.targetSec)}）`
-    : ''
-  const polishedTopic = [
-    `【作品标题】${displayTitle}`,
-    `【体裁】${genreLabel}`,
-    durationLine,
-    str(parsed.logline) ? `【一句话】${str(parsed.logline)}` : '',
-    outline.length ? `【内容要点】\n${outline.map((x, i) => `${i + 1}. ${x}`).join('\n')}` : '',
-    `【导演备注（仅供 AI 制作，不会出现在视频里）】\n${directorNotes}${voiceStyle ? `\n配音取向：${voiceStyle}` : ''}`,
-  ]
-    .filter(Boolean)
-    .join('\n')
+  // structured reply → full brief (cast bible + segment plan); the older one-paragraph JSON and free text still work
   return {
-    ok: true,
-    polishedTopic,
-    displayTitle,
-    genre: genreId,
-    genreLabel,
-    durationMode: durationPolicy.enforced ? 'custom' : 'auto',
-    targetDurationSec: durationPolicy.enforced ? durationPolicy.targetSec : 0,
-    durationLabel: durationPolicy.label,
-    logline: str(parsed.logline),
-    contentOutline: outline,
-    directorNotes: `${directorNotes}${voiceStyle ? `\n配音取向：${voiceStyle}` : ''}`,
-    voiceStyle,
-    suggestedStyle: str(parsed.suggestedStyle) || (refStyle?.style || ''),
+    ...renderPolishResult(rawText, polishCtx),
     suggestedNarrationMode: effectivePolishNarrationMode,
-    suggestedPacingMode: wantsPureMusic || refStyle?.pacingSignature?.recommendedPacingMode === 'dynamic' ? 'dynamic' : (body.pacingMode || 'auto'),
-    model,
+    suggestedPacingMode: polishCtx.pacingMode,
+    model: reply.model || overrideConfig?.model || llmSummary.model,
   }
 }
 
@@ -618,10 +543,6 @@ async function autoBindUploadedAssets(projectDir, targetItems = [], uploadRole =
   return autoBound
 }
 
-function stripMetaFree(text) {
-  return String(text || '').replace(/\s+/g, ' ').trim()
-}
-
 /**
  * Stream a file cleanly with HTTP Byte-Range support so HTML5 `<video>` and `<audio>` can seek smoothly.
  */
@@ -684,8 +605,17 @@ function createBackgroundJob(initialMessage, runner, { doneMessage } = {}) {
   const job = { id, status: 'running', stage: 'init', progress: 4, message: initialMessage, result: null, error: '' }
   ASYNC_JOBS.set(id, job)
   if (ASYNC_JOBS.size > 40) {
-    const firstKey = ASYNC_JOBS.keys().next().value
-    if (firstKey) ASYNC_JOBS.delete(firstKey)
+    // drop the oldest FINISHED job: a model call may legitimately run for 10 minutes while many short jobs come and go,
+    // and evicting it would make its poller report "Job not found"
+    let evict = ''
+    for (const [k, j] of ASYNC_JOBS) {
+      if (j.status !== 'running') {
+        evict = k
+        break
+      }
+    }
+    if (!evict && ASYNC_JOBS.size > 200) evict = ASYNC_JOBS.keys().next().value
+    if (evict) ASYNC_JOBS.delete(evict)
   }
   const handleProgress = (payload) => {
     if (!payload) return
@@ -717,6 +647,8 @@ function createBackgroundJob(initialMessage, runner, { doneMessage } = {}) {
     .catch((err) => {
       job.status = 'error'
       job.error = err?.message || String(err)
+      // keep a machine-readable code (e.g. 'need-llm') so the panel can offer the right fix after an async job too
+      if (err?.code && typeof err.code === 'string') job.code = err.code
       job.message = job.error
     })
   return job
@@ -904,6 +836,37 @@ export async function handleWorkbenchApiRequest(req) {
       const body = await parseRequestJson(req)
       const testRes = await testLlmConnection(body)
       return jsonResponse({ ok: true, ...testRes })
+    }
+    // 1c-2. POST /api/video-workbench/llm-vision — 看图能力 (参考复刻 · 画面自检 · 截图定位):
+    //   { action: 'save', vision: { support: 'auto'|'yes'|'no', model, baseUrl, apiKey, format, provider } } saves only
+    //   the 看图 settings; { action: 'check' } shows the 看图 model a tiny probe picture and reports what it can do
+    if (pathname === '/api/video-workbench/llm-vision' && req.method === 'POST') {
+      const body = await parseRequestJson(req)
+      const action = String(body.action || 'check')
+      if (action === 'save') {
+        const config = saveVisionSettings(body.vision && typeof body.vision === 'object' ? body.vision : {})
+        return jsonResponse({ ok: true, config, vision: config.vision })
+      }
+      if (action === 'check') {
+        const c = await checkVisionCapability({})
+        const config = getSafeLlmConfigSummary()
+        const check = {
+          ok: Boolean(c.ok),
+          code: c.code,
+          short: c.short,
+          reason: c.reason,
+          fix: c.fix,
+          detail: c.detail || '',
+          answer: c.answer || '',
+          model: c.model,
+          protocol: c.protocol,
+          dedicated: Boolean(c.dedicated),
+          latencyMs: c.latencyMs || 0,
+          checkedAt: c.checkedAt,
+        }
+        return jsonResponse({ ok: true, check, config, vision: config.vision })
+      }
+      return jsonResponse({ ok: false, error: `未知的看图设置操作：${action}` }, 400)
     }
 
     // 1d. GET / POST /api/video-workbench/tts-config & POST /tts-test
@@ -1709,6 +1672,9 @@ export async function handleWorkbenchApiRequest(req) {
         if (!scene) {
           return jsonResponse({ ok: false, error: 'Scene not found' }, 404)
         }
+        if (scene.voiceSource === 'host') {
+          return jsonResponse({ ok: false, code: 'HOST_VOICE_LOCKED', error: '这一幕用的是你本人的原声（口播剪辑），不能用 AI 重新配音。要改说的内容，请到「AI 剪辑」面板调整剪辑后重新生成剪辑工程。' }, 409)
+        }
         const outWav = join(projectDir, 'audio', `${scene.id}.wav`)
         const result = await executeGenerateSpeech({
           text: body.text || scene.narration,
@@ -1738,7 +1704,14 @@ export async function handleWorkbenchApiRequest(req) {
       if (action === 'tts-all') {
         const runTtsAll = async (onProgress) => {
           const { data } = readScriptJson(projectDir)
-          const scenes = data.scenes || []
+          // 口播剪辑 scenes keep the person's own voice: never dubbed over
+          const allScenes = data.scenes || []
+          const scenes = allScenes.filter((sc) => sc.voiceSource !== 'host')
+          if (scenes.length === 0 && allScenes.length > 0) {
+            const err = new Error('这个工程用的是你本人的原声（口播剪辑），不需要 AI 配音。')
+            err.status = 409
+            throw err
+          }
           const results = []
           for (let i = 0; i < scenes.length; i++) {
             const scene = scenes[i]
@@ -1876,8 +1849,10 @@ export async function handleWorkbenchApiRequest(req) {
           ...(body.pacingMode ? { pacingMode: body.pacingMode } : {}),
           ...(body.visual3dMode ? { visual3dMode: body.visual3dMode } : {}),
           ...(body.visualReview !== undefined ? { visualReview: body.visualReview !== false } : {}),
+          ...(body.visualReviewFine !== undefined ? { visualReviewFine: body.visualReviewFine !== false } : {}),
           ...(['auto', 'silhouette', 'papercut', 'puppet', 'ink', 'flat', 'stick', 'custom'].includes(body.figureStyleChoice) ? { figureStyleChoice: body.figureStyleChoice } : {}),
           ...(body.figureStyleChoiceNote !== undefined ? { figureStyleChoiceNote: String(body.figureStyleChoiceNote ?? '').replace(/["“”'`]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40) } : {}),
+          ...(['ai-film', 'talk-edit'].includes(body.productionType) ? { productionType: body.productionType } : {}),
           ...(body.durationMode !== undefined ? { durationMode: body.durationMode === 'custom' ? 'custom' : 'auto' } : {}),
           ...(body.targetDurationSec !== undefined ? { targetDurationSec: Math.max(0, Math.min(600, Math.round(Number(body.targetDurationSec) || 0))) } : {}),
           ...(styleFields || {}),
@@ -2221,7 +2196,7 @@ export async function handleWorkbenchApiRequest(req) {
             ],
             temperature: 0.45,
             maxTokens: 1200,
-            timeoutMs: 45_000,
+            timeoutMs: getLlmTimeoutMs(),
           })
           spokenText = String(reply.text || '').trim()
           modelUsed = reply.model || llmSummary.model
@@ -2305,8 +2280,16 @@ export async function handleWorkbenchApiRequest(req) {
     }
 
     // 6h-2c. POST /api/video-workbench/avatar/lipsync/install (optional one-click MuseTalk installer, background job)
+    //       { force: true } = 「仍要安装」 on a computer without a suitable NVIDIA GPU (refused with 409 otherwise)
     if (pathname === '/api/video-workbench/avatar/lipsync/install' && req.method === 'POST') {
       const body = await parseRequestJson(req)
+      const force = body.force === true
+      if (!force) {
+        const gate = getLipsyncHardwareGate()
+        if (!gate.suitable) {
+          return jsonResponse({ ok: false, code: 'LIPSYNC_GPU_UNSUITABLE', error: `${gate.title}：${gate.message}`, hardware: gate }, 409)
+        }
+      }
       const job = createBackgroundJob('📦 正在安装本地唇形同步引擎 (MuseTalk 1.5)...', async (onProgress) => {
         return await installLipsyncEngine({
           engineId: body.engineId || 'musetalk',
@@ -2317,6 +2300,7 @@ export async function handleWorkbenchApiRequest(req) {
           reuseTorch: body.reuseTorch === false ? 'no' : 'auto',
           withEvalModels: body.withEvalModels !== false,
           writeEnv: body.writeEnv !== false,
+          force,
           onProgress,
         })
       })
@@ -2327,7 +2311,7 @@ export async function handleWorkbenchApiRequest(req) {
     if (pathname === '/api/video-workbench/polish-topic' && req.method === 'POST') {
       const body = await parseRequestJson(req)
       if (body.async) {
-        const job = createBackgroundJob('✨ AI 大模型正在深度分析素材与需求并润色专业导演指令（支持最长 10 分钟）...', async () => {
+        const job = createBackgroundJob(`✨ AI 大模型正在深度分析素材与需求并润色专业导演指令（最长等待 ${formatLlmWait(getLlmTimeoutMs())}）...`, async () => {
           return await polishTopicPrompt(body)
         })
         return jsonResponse({ ok: true, async: true, jobId: job.id, job })
@@ -2723,6 +2707,9 @@ export async function handleWorkbenchApiRequest(req) {
     if (isProjectRoute(pathname)) return await handleProjectApiRequest(req, url, { createBackgroundJob })
     if (isCoverRoute(pathname)) return await handleCoverApiRequest(req, url, { createBackgroundJob })
     if (isPlazaCommunityRoute(pathname)) return await handlePlazaCommunityApiRequest(req, url, { createBackgroundJob })
+    if (isTalkRoute(pathname)) return await handleTalkApiRequest(req, url, { createBackgroundJob, renderProject: (a) => executeVideoRender({ ...a, engine: 'remotion' }) })
+    if (isConnectionTestRoute(pathname)) return await handleConnectionTestApiRequest(req, url)
+    if (isAnimeRoute(pathname)) return await handleAnimeApiRequest(req, url, { createBackgroundJob })
     return jsonResponse({ ok: false, error: `Route not found: ${pathname}` }, 404)
   } catch (err) {
     return jsonResponse({ ok: false, error: err?.message || String(err) }, 500)
@@ -2747,6 +2734,7 @@ export function apply(ctx) {
       { path: '/api/video-workbench/jobs', methods: ['GET'] },
       { path: '/api/video-workbench/llm-config', methods: ['GET', 'POST'] },
       { path: '/api/video-workbench/llm-test', methods: ['POST'] },
+      { path: '/api/video-workbench/llm-vision', methods: ['POST'] },
       { path: '/api/video-workbench/tts-config', methods: ['GET', 'POST'] },
       { path: '/api/video-workbench/tts-test', methods: ['POST'] },
       { path: '/api/video-workbench/voices/preview', methods: ['GET'] },
@@ -2823,6 +2811,9 @@ export function apply(ctx) {
       ...PROJECT_ROUTES,
       ...COVER_ROUTES,
       ...PLAZA_COMMUNITY_ROUTES,
+      ...TALK_ROUTES,
+      ...CONNECTION_TEST_ROUTES,
+      ...ANIME_ROUTES,
     ]
     for (const r of routes) {
       try {
@@ -2836,10 +2827,11 @@ export function apply(ctx) {
     }
   })
 
-  // Optional native DSH Jobs bridge (never listed in mandatory `inject` so standalone/self-test works cleanly)
+  // Optional native DSH Jobs bridge (never listed in mandatory `inject` so standalone/self-test works cleanly).
+  // Always through `ctx.inject`: newer Cordis hosts throw on reading an un-injected service (`ctx.jobs`), which used to
+  // abort this block before the inject fallback was reached.
   try {
-    if (ctx.jobs) taskManager.attachDshJobs(ctx.jobs)
-    else if (typeof ctx.inject === 'function') {
+    if (typeof ctx.inject === 'function') {
       ctx.inject(['jobs'], (innerCtx) => {
         if (innerCtx?.jobs) taskManager.attachDshJobs(innerCtx.jobs)
       })

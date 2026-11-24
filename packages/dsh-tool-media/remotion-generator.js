@@ -18,8 +18,9 @@ import { resolvePalette } from './html-generator.js'
 import { readAssets } from './asset-manager.js'
 import { writeFigureKitRemotionLib } from './figure-kit.js'
 import { isEpicCombatContext } from './genre-router.js'
-import { writeNarrativeDioramaRemotionLib } from './narrative-diorama.js'
+import { resolveDioramaTheme, writeNarrativeDioramaRemotionLib } from './narrative-diorama.js'
 import { writeShotcraftRemotionLib } from './shotcraft-lib.js'
+import { writeTalkKitRemotionLib } from './talk-kit.js'
 import { buildMediaDimsMap } from './vision-grounding.js'
 
 function syncFileToPublic(absSrc, absDest) {
@@ -54,6 +55,7 @@ export function syncRemotionPublicAssets(projectDir, script) {
     const extraRelPaths = [
       scene.brandMark,
       scene.avatarClip?.path,
+      scene.presenter?.path,
       ...(Array.isArray(scene.cards) ? scene.cards.map((c) => c?.image || c?.path) : []),
       ...(Array.isArray(scene.steps) ? scene.steps.map((st) => st?.image || st?.path) : []),
       ...(Array.isArray(scene.windows) ? scene.windows.map((w) => w?.image || w?.path) : []),
@@ -65,7 +67,11 @@ export function syncRemotionPublicAssets(projectDir, script) {
       syncFileToPublic(srcEx, join(pubDir, relEx))
     }
   }
-  for (const globalAsset of [script?.avatarClip?.path, script?.brandMark]) {
+  const talkBroll = Array.isArray(script?.talkPack?.broll) ? script.talkPack.broll.map((b) => b?.path) : []
+  // 「我的动漫形象」 free tier: the mouth / blink pictures drawn over the presenter portrait
+  const presenterSprites = script?.talkPack?.mascot?.sprites
+  const spritePaths = presenterSprites ? [...Object.values(presenterSprites.mouths || {}), presenterSprites.blink] : []
+  for (const globalAsset of [script?.avatarClip?.path, script?.brandMark, ...talkBroll, script?.talkPack?.mascot?.path, ...spritePaths]) {
     if (!globalAsset || typeof globalAsset !== 'string') continue
     const srcGl = isAbsolute(globalAsset) ? globalAsset : resolve(absDir, globalAsset)
     const relGl = globalAsset.replace(/^\/+/, '').replace(/\\/g, '/')
@@ -90,6 +96,7 @@ export function writeRemotionProjectFiles(projectDir, script, { rebuildTemplate 
   writeShotcraftRemotionLib(absDir)
   writeNarrativeDioramaRemotionLib(absDir)
   writeFigureKitRemotionLib(absDir)
+  writeTalkKitRemotionLib(absDir)
   // battle-epic treatment (slash wipes only, diorama fallback) for history films and history-themed MVs only
   const epicContext = isEpicCombatContext({
     genre: script?.genre || '',
@@ -178,6 +185,7 @@ import {
   Img,
   OffthreadVideo,
   Sequence,
+  getInputProps,
   interpolate,
   spring,
   staticFile,
@@ -187,12 +195,15 @@ import {
 import scriptData from '../script.json';
 import { AIBadge, AppWindow, AvatarOverlay, BeatSpringPhysicsRig, BeforeAfterWipe, buildSmoothSvgPath, computeBeatSpring, describeSvgArc, EndNotice, FocusShot, FreeformThreeStage, HudDataDashboard, HudTelemetryOverlay, MetricPanel, SceneTransitionOverlay, SvgArchitectureDiagram, ThreeCyberStage, THREE_STAGE_PRESETS, WorkflowBar, FONT_SANS, FONT_MONO, FONT_SERIF } from './lib/shotcraft';
 import { NarrativeDioramaStage } from './lib/narrative-diorama';
+import { PresenterStage, TalkCaption, TalkPackLayer, talkCaptionReserve } from './lib/talk-kit';
 import { scheduleFlashBudget } from './lib/flash-budget';
 import { CameraMotionBlur } from '@remotion/motion-blur';
 ${hasCustomRegistry ? "import { CUSTOM_SCENE_MAP } from './scenes';" : 'const CUSTOM_SCENE_MAP: Record<string, React.ComponentType<any>> = {};'}
 
 const PALETTE: any = ${JSON.stringify(theme)};
 const EPIC_CONTEXT: boolean = ${epicContext ? 'true' : 'false'};
+// built-in diorama era / content family (narrative-diorama.js resolveDioramaTheme): ancient warriors only for history
+const DIORAMA_THEME: { era: string; family: string } = ${JSON.stringify(resolveDioramaTheme(script))};
 const SANS = FONT_SANS;
 const MONO = FONT_MONO;
 const DEFAULT_SUBTITLE_BOTTOM = ${safeZone.subtitleBottomPx};
@@ -601,6 +612,107 @@ const FLASH_GATE: SceneFlashGate[] = (() => {
 function guardFlashTx(kind: string, gate: SceneFlashGate): string {
   return !gate.inFlash && FLASH_WIPE_KINDS.includes(kind) ? 'zoom-punch' : kind;
 }
+
+// Sub-shots inside a scene (scene.cuts, written by beat-analyzer.js quantizeScenesToBeatGrid): every cut is a hard
+// re-frame of the whole scene picture (an instant zoom about the cut's focus point, never a flash) and the gentle
+// in-shot camera restarts inside each sub-shot. AI-coded scenes also receive the active sub-shot as scene.cut.
+const CUT_FRAMING_SPEC: Record<string, { scale: number; fx: number; fy: number }> = {
+  wide: { scale: 1.0, fx: 0.5, fy: 0.5 },
+  medium: { scale: 1.18, fx: 0.5, fy: 0.48 },
+  close: { scale: 1.36, fx: 0.5, fy: 0.42 },
+  detail: { scale: 1.56, fx: 0.5, fy: 0.5 },
+  low: { scale: 1.26, fx: 0.5, fy: 0.8 },
+  high: { scale: 1.26, fx: 0.5, fy: 0.22 },
+};
+interface SceneCut {
+  index: number;
+  count: number;
+  start: number;
+  end: number;
+  framing: string;
+  focus: { x: number; y: number };
+  text: string;
+}
+const SCENE_CUTS_CACHE = new WeakMap<object, { dur: number; cuts: SceneCut[] }>();
+/** scene.cuts made safe for any timing: contiguous, inside [0, dur), known framings, focus in 0..1 (≥ 2 or none). */
+function sceneCutsOf(scene: any, dur: number): SceneCut[] {
+  const raw: any[] = Array.isArray(scene?.cuts) ? scene.cuts : [];
+  if (raw.length < 2) return [];
+  const hit = SCENE_CUTS_CACHE.get(raw);
+  if (hit && hit.dur === dur) return hit.cuts;
+  const unit = (v: any, d: number): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : d;
+  };
+  const items = raw
+    .map((c: any) => ({ s: Math.round(Number(c?.start)), e: Math.round(Number(c?.end)), c }))
+    .filter((x: any) => Number.isFinite(x.s) && Number.isFinite(x.e) && x.e > x.s)
+    .sort((a: any, b: any) => a.s - b.s);
+  const out: SceneCut[] = [];
+  for (const it of items) {
+    const start = out.length ? out[out.length - 1].end : 0;
+    if (start >= dur - 1) break;
+    const end = Math.min(dur, Math.max(start + 1, it.e));
+    const framing = CUT_FRAMING_SPEC[String(it.c?.framing)] ? String(it.c.framing) : 'wide';
+    const spec = CUT_FRAMING_SPEC[framing];
+    out.push({
+      index: out.length,
+      count: 0,
+      start,
+      end,
+      framing,
+      focus: { x: unit(it.c?.focus?.x, spec.fx), y: unit(it.c?.focus?.y, spec.fy) },
+      text: typeof it.c?.text === 'string' ? it.c.text.trim() : '',
+    });
+  }
+  if (out.length) out[out.length - 1].end = dur;
+  const cuts = out.length >= 2 ? out : [];
+  cuts.forEach((c) => {
+    c.count = cuts.length;
+  });
+  SCENE_CUTS_CACHE.set(raw, { dur, cuts });
+  return cuts;
+}
+/** The sub-shot active at a scene-local frame, or null for a scene without cuts. */
+function resolveSceneCut(scene: any, localFrame: number, dur: number): SceneCut | null {
+  const cuts = sceneCutsOf(scene, dur);
+  if (!cuts.length) return null;
+  for (let k = cuts.length - 1; k >= 0; k--) if (localFrame >= cuts[k].start) return cuts[k];
+  return cuts[0];
+}
+// Scene-motion check (scene-keyframes.js measureSceneMotion): the input prop dshSceneOnly renders the scene code alone
+// (no compositor re-frame, beat camera or subtitles), so a held picture cannot hide behind the compositor's motion.
+function sceneOnlyRender(): boolean {
+  try {
+    return Boolean((getInputProps() as any)?.dshSceneOnly);
+  } catch {
+    return false;
+  }
+}
+/** Hard re-frame per sub-shot, wrapped around any scene (built-in layouts, the diorama and AI-coded components). */
+const CutReframe: React.FC<{ scene: any; children: React.ReactNode }> = ({ scene, children }) => {
+  const localFrame = useCurrentFrame();
+  const dur = Math.max(8, Number(scene?.durationInFrames) || 90);
+  const cut = resolveSceneCut(scene, localFrame, dur);
+  let transform: string | undefined;
+  let origin = '50% 50%';
+  if (cut && !sceneOnlyRender()) {
+    const spec = CUT_FRAMING_SPEC[cut.framing] || CUT_FRAMING_SPEC.wide;
+    const age = localFrame - cut.start;
+    // the camera lands on the new framing with a short settle — a re-frame, not a flash
+    const settle = cut.index > 0 && age >= 0 && age < 8 ? Math.exp(-age * 0.5) * 0.03 : 0;
+    const s = spec.scale * (1 + settle);
+    if (s > 1.0005) {
+      transform = 'scale(' + s.toFixed(4) + ')';
+      origin = (cut.focus.x * 100).toFixed(2) + '% ' + (cut.focus.y * 100).toFixed(2) + '%';
+    }
+  }
+  return (
+    <AbsoluteFill style={{ overflow: 'hidden' }}>
+      <AbsoluteFill style={{ transform, transformOrigin: origin }}>{children}</AbsoluteFill>
+    </AbsoluteFill>
+  );
+};
 /**
  * True Timeline Keyframe Camera Rig (Pan X/Y + Punch-In/Zoom-Out + Full-Screen Combat Shake + Strobe Flash).
  * Flashes follow the scene's photosensitivity gate (FLASH_GATE).
@@ -617,6 +729,9 @@ function evaluateSceneCameraRig(
   gate: SceneFlashGate = NO_FLASH_GATE,
 ) {
   const p = Math.max(0, Math.min(1, localFrame / Math.max(1, dur - 1)));
+  // inside a sub-shot (scene.cuts) the gentle travel restarts and changes direction with every cut
+  const rigCut = resolveSceneCut(scene, localFrame, dur);
+  const segP = rigCut ? Math.max(0, Math.min(1, (localFrame - rigCut.start) / Math.max(1, rigCut.end - rigCut.start - 1))) : p;
   const actionMode = String(scene?.actionMode || '').toLowerCase();
   const actionEvents: any[] = Array.isArray(scene?.actionEvents) ? scene.actionEvents : [];
   const isClashScene = actionMode === 'clash-flurry' || actionMode === 'single-clash';
@@ -656,24 +771,24 @@ function evaluateSceneCameraRig(
     kfFlash = Number(a.flash || 0) + (Number(b.flash || 0) - Number(a.flash || 0)) * eu;
   } else if (intensity > 0.05) {
     // Smooth alternating directional camera travel (pan X/Y + slow cinematic push/pull)
-    const pattern = idx % 5;
+    const pattern = (idx + (rigCut ? rigCut.index * 3 : 0)) % 5;
     // calm shots keep a living camera (≈ 4.5 % push, ±12 px pan at intensity 1) — no shake, no flash
     const travel = intensity * (isClashScene ? 0.95 : isCavalryScene ? 0.85 : 0.72);
     if (pattern === 0) {
-      kfScale = interpolate(p, [0, 1], [1.0, 1.0 + 0.065 * travel]);
-      kfX = interpolate(p, [0, 1], [-16 * travel, 16 * travel]);
+      kfScale = interpolate(segP, [0, 1], [1.0, 1.0 + 0.065 * travel]);
+      kfX = interpolate(segP, [0, 1], [-16 * travel, 16 * travel]);
     } else if (pattern === 1) {
-      kfScale = interpolate(p, [0, 1], [1.0 + 0.07 * travel, 1.0]);
-      kfX = interpolate(p, [0, 1], [18 * travel, -18 * travel]);
+      kfScale = interpolate(segP, [0, 1], [1.0 + 0.07 * travel, 1.0]);
+      kfX = interpolate(segP, [0, 1], [18 * travel, -18 * travel]);
     } else if (pattern === 2) {
-      kfScale = interpolate(p, [0, 0.5, 1], [1.01, 1.0 + 0.06 * travel, 1.02]);
-      kfY = interpolate(p, [0, 1], [10 * travel, -10 * travel]);
+      kfScale = interpolate(segP, [0, 0.5, 1], [1.01, 1.0 + 0.06 * travel, 1.02]);
+      kfY = interpolate(segP, [0, 1], [10 * travel, -10 * travel]);
     } else if (pattern === 3) {
-      kfScale = interpolate(p, [0, 1], [1.0, 1.0 + 0.055 * travel]);
-      kfY = interpolate(p, [0, 1], [-10 * travel, 10 * travel]);
+      kfScale = interpolate(segP, [0, 1], [1.0, 1.0 + 0.055 * travel]);
+      kfY = interpolate(segP, [0, 1], [-10 * travel, 10 * travel]);
     } else {
-      kfScale = interpolate(p, [0, 0.35, 1], [1.0 + 0.075 * travel, 1.01, 1.0 + 0.04 * travel]);
-      kfX = interpolate(p, [0, 1], [-12 * travel, 12 * travel]);
+      kfScale = interpolate(segP, [0, 0.35, 1], [1.0 + 0.075 * travel, 1.01, 1.0 + 0.04 * travel]);
+      kfX = interpolate(segP, [0, 1], [-12 * travel, 12 * travel]);
     }
   }
 
@@ -929,15 +1044,18 @@ const MediaTile: React.FC<{
   if (isVid) {
     const regMap: Record<string, any> = (globalThis as any).__DSH_MEDIA_DIMS || {};
     const clipSec = Number(media.durationSec || regMap[rel]?.durationSec || 0);
-    const safeEndF = clipSec > 0.2 ? Math.max(4, Math.floor((clipSec - 0.14) * Math.max(1, tileFps || 30))) : 0;
+    const vfps = Math.max(1, tileFps || 30);
+    // the chosen window of a long upload (素材库镜头分析 / 手动入点出点): play from its in point, hold its last frame
+    const trimStart = Math.max(0, Number(media.trimStartSec) || 0);
+    const trimEnd = Number(media.trimEndSec) > trimStart + 0.1 ? Number(media.trimEndSec) : 0;
+    const segSec = trimEnd > 0 ? trimEnd - trimStart : clipSec > 0 ? Math.max(0, clipSec - trimStart) : 0;
+    const trimBefore = Math.round(trimStart * vfps);
+    const safeEndF = segSec > 0.2 ? Math.max(4, Math.floor((segSec - 0.14) * vfps)) : 0;
+    const vid = <OffthreadVideo src={staticFile(rel)} style={style} muted trimBefore={trimBefore > 0 ? trimBefore : undefined} />;
     if (safeEndF > 0 && localF >= safeEndF) {
-      return (
-        <Freeze frame={Math.max(0, safeEndF - 1)}>
-          <OffthreadVideo src={staticFile(rel)} style={style} muted />
-        </Freeze>
-      );
+      return <Freeze frame={Math.max(0, safeEndF - 1)}>{vid}</Freeze>;
     }
-    return <OffthreadVideo src={staticFile(rel)} style={style} muted />;
+    return vid;
   }
   return <Img src={staticFile(rel)} style={style} />;
 };
@@ -1073,6 +1191,7 @@ const SceneStage: React.FC<{
   const ryScale = height / 1080;
   const dur = Math.max(8, Number(scene.durationInFrames) || 90);
   const progress = Math.min(1, localFrame / Math.max(1, dur - 1));
+  const activeCut = resolveSceneCut(scene, localFrame, dur);
   const absFrame = (Number(scene.startFrame) || 0) + localFrame;
   const absTimeSec = absFrame / Math.max(1, fps);
   const bp = getBeatPulse(absTimeSec, beats);
@@ -1129,6 +1248,11 @@ const SceneStage: React.FC<{
       flashAllowed: flashGate.inFlash,
       // the film's cast (演员表): castLook(scene, 'id') in the figure kit reads it, so a person looks the same in every shot
       cast: Array.isArray((scriptData as any)?.cast) ? (scriptData as any).cast : [],
+      // the active sub-shot (scene.cuts): { index, count, start, end, framing, focus, text } or null — the outer
+      // CutReframe already re-frames the picture at every cut; the scene code may also change its composition per cut
+      cut: activeCut ? { index: activeCut.index, count: activeCut.count, start: activeCut.start, end: activeCut.end, framing: activeCut.framing, focus: activeCut.focus, text: activeCut.text } : null,
+      // a NarrativeDioramaStage used by the scene code draws the film's era (no spears / beacons on a modern topic)
+      dioramaTheme: scene?.dioramaTheme || DIORAMA_THEME,
     };
     const audioCamIntensity = Number((scriptData as any)?.audioProfile?.cameraBeatIntensity);
     const resolvedCamIntensity = Number.isFinite(audioCamIntensity)
@@ -1140,7 +1264,7 @@ const SceneStage: React.FC<{
           : beats.length > 0
             ? 0.36
             : 0;
-    const applyBeatCamera = !isLightCustom && resolvedCamIntensity > 0.02 && (isBeatEnergyVideo || beats.length > 0 || Array.isArray(scene.cameraKeyframes));
+    const applyBeatCamera = !isLightCustom && !sceneOnlyRender() && resolvedCamIntensity > 0.02 && (isBeatEnergyVideo || beats.length > 0 || Array.isArray(scene.cameraKeyframes));
     const camRig = applyBeatCamera
       ? evaluateSceneCameraRig(scene, localFrame, dur, fps, bp, idx, resolvedCamIntensity, effectiveTxKind, flashGate)
       : { tx: 0, ty: 0, scale: 1, rotate: 0, flashAlpha: 0, flashColor: '#FFFFFF', isCombat: false };
@@ -1203,7 +1327,17 @@ const SceneStage: React.FC<{
             transformOrigin: 'center center',
           }}
         >
-          <NarrativeDioramaStage scene={flashGate.inFlash ? scene : { ...scene, flashAllowed: false }} idx={idx} total={total} beats={beats} />
+          <NarrativeDioramaStage
+            scene={{
+              ...scene,
+              ...(flashGate.inFlash ? {} : { flashAllowed: false }),
+              dioramaTheme: scene?.dioramaTheme || DIORAMA_THEME,
+              cast: Array.isArray((scriptData as any)?.cast) ? (scriptData as any).cast : [],
+            }}
+            idx={idx}
+            total={total}
+            beats={beats}
+          />
           <ActionBeatClashOverlay scene={scene} localFrame={localFrame} width={width} height={height} />
         </AbsoluteFill>
         {dioramaRig.flashAlpha > 0.01 ? (
@@ -2306,22 +2440,37 @@ export const VideoComposition: React.FC = () => {
     return frame >= sf && frame < ef;
   });
 
+  // on a shared boundary frame the line that starts there wins, so a chunk changes exactly on its cut
+  const lastMatch = (list: any[], test: (sub: any) => number): any => {
+    let best: any;
+    let bestStart = -Infinity;
+    for (const sub of list) {
+      const sf = test(sub);
+      if (sf >= bestStart && Number.isFinite(sf)) {
+        best = sub;
+        bestStart = sf;
+      }
+    }
+    return best;
+  };
   const activeSub =
-    subtitles.find((sub) => {
+    lastMatch(subtitles, (sub) => {
       const sf = Number(sub.globalStartFrame ?? sub.startFrame ?? Math.round((sub.globalStartSec ?? sub.startSec ?? 0) * fps));
       const ef = Number(sub.globalEndFrame ?? sub.endFrame ?? Math.round((sub.globalEndSec ?? sub.endSec ?? 0) * fps));
-      return frame >= sf && frame <= ef;
+      return frame >= sf && frame <= ef ? sf : NaN;
     }) ||
     (Array.isArray(activeScene?.subtitles)
-      ? activeScene.subtitles.find((sub: any) => {
+      ? lastMatch(activeScene.subtitles, (sub: any) => {
           const base = Number(activeScene.startFrame || 0);
           const sf = base + Number(sub.startFrame ?? Math.round((sub.startSec || 0) * fps));
           const ef = base + Number(sub.endFrame ?? Math.round((sub.endSec || 0) * fps));
-          return frame >= sf && frame <= ef;
+          return frame >= sf && frame <= ef ? sf : NaN;
         })
       : undefined);
+  // a sub-shot's own subtitle chunk (scene.cuts[].text) when no timed line covers this frame
+  const activeSceneCut = activeScene ? resolveSceneCut(activeScene, frame - Number(activeScene.startFrame || 0), Math.max(8, Number(activeScene.durationInFrames) || 90)) : null;
 
-  const subText = activeSub?.text || (Array.isArray(activeScene?.subtitles) && activeScene.subtitles[0]?.text) || activeScene?.subtitleLine || '';
+  const subText = sceneOnlyRender() ? '' : activeSub?.text || activeSceneCut?.text || (Array.isArray(activeScene?.subtitles) && activeScene.subtitles[0]?.text) || activeScene?.subtitleLine || '';
   const activeGenreLower = String((sData as any)?.genre || '').toLowerCase();
   const isLightFrame = activeScene?.windowTheme === 'light' || activeGenreLower === 'ui-tutorial';
   const isCinematicSub =
@@ -2357,13 +2506,22 @@ export const VideoComposition: React.FC = () => {
           from={Number(scene.startFrame) || 0}
           durationInFrames={Math.max(8, Number(scene.durationInFrames) || 90)}
         >
-          <SceneMotionBlur scene={scene}>
-            <PipSafeStage reserveX={pipOn && !isPortrait && scene?.pipAvoid !== false ? pipReserveX : 0} onLeft={pipOnLeft}>
-              <SceneStage scene={scene} idx={idx} total={scenes.length} beats={beats} />
-            </PipSafeStage>
-          </SceneMotionBlur>
+          {scene?.presenter?.path ? (
+            <PresenterStage scene={scene} />
+          ) : (
+            <SceneMotionBlur scene={scene}>
+              <PipSafeStage reserveX={pipOn && !isPortrait && scene?.pipAvoid !== false ? pipReserveX : 0} onLeft={pipOnLeft}>
+                <CutReframe scene={scene}>
+                  <SceneStage scene={scene} idx={idx} total={scenes.length} beats={beats} />
+                </CutReframe>
+              </PipSafeStage>
+            </SceneMotionBlur>
+          )}
         </Sequence>
       ))}
+
+      {/* 口播包装: B-roll cutaways (the voice goes on), progress bar, chapter banners, keyword pops, lower third */}
+      {sData.talkPack ? <TalkPackLayer pack={sData.talkPack} totalFrames={Number(sData.totalDurationInFrames || sData.totalFrames) || 1} fontFamily={SANS} /> : null}
 
       {activeAvatar?.path && avatarLayout !== 'off' ? (
         <AvatarOverlay
@@ -2397,8 +2555,13 @@ export const VideoComposition: React.FC = () => {
         />
       ) : null}
 
-      {/* Clean Single-Line Broadcast Subtitles (Platform Safe-Zone Aligned) */}
-      {subText ? (
+      {/* Clean Single-Line Broadcast Subtitles (Platform Safe-Zone Aligned); 口播剪辑: real captions, word-by-word */}
+      {sData.subtitleStyle === 'talk' ? (
+        // 口播剪辑: captions can be switched off (录屏讲解); a 卡通讲解员 in a corner keeps the caption lane clear
+        activeSub?.text && !(sData.talkPack && sData.talkPack.captions === false) ? (
+          <TalkCaption sub={activeSub} bottom={subBottomBase} fontFamily={SANS} maxWidth={Math.max(Math.round(width * 0.42), subMaxW - 2 * talkCaptionReserve(sData.talkPack, width, height))} />
+        ) : null
+      ) : subText ? (
         <AbsoluteFill
           style={{
             justifyContent: 'flex-end',

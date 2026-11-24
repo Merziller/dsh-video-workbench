@@ -22,11 +22,11 @@ import {
   readScriptJson,
   REPO_ROOT,
   resolveBinaries,
-  resolveBrowserExecutable,
   resolveEnvPath,
   runCommandRedirected,
   writeScriptJson,
 } from '../shared/index.js'
+import { CAPTURE_BROWSER_FLAGS, resolveHtmlCaptureBrowser } from '../dsh-tool-video-suite/frame-renderer.js'
 import { cloneRecordedVoice, executeGenerateSpeech } from '../dsh-tool-local-tts/index.js'
 import { IMAGE_EXT_RX, LipsyncUnavailableError, resolveLipsyncConfig, runLipsync } from './lipsync-engine.js'
 
@@ -346,7 +346,7 @@ async function renderAiPresenterToAlphaWebm({
   onProgress,
 }) {
   const template = AVATAR_TEMPLATES.find((t) => t.id === presetId) || AVATAR_TEMPLATES[0]
-  const browserBin = resolveBrowserExecutable()
+  const browserBin = resolveHtmlCaptureBrowser()
   const { ffmpeg } = resolveBinaries()
   const totalFrames = rmsEnvelope.length
   const totalSec = Number((totalFrames / fps).toFixed(3))
@@ -451,6 +451,7 @@ async function renderAiPresenterToAlphaWebm({
         '--no-sandbox',
         '--hide-scrollbars',
         '--disable-dev-shm-usage',
+        ...CAPTURE_BROWSER_FLAGS,
         `--window-size=${width},${height}`,
         'about:blank',
       ],

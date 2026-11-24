@@ -1578,12 +1578,12 @@ export async function castVoicesWithLlm({
     2,
   )
 
+  // no own timeout: the injected model call applies the shared limit (llm-client getLlmTimeoutMs, 10 min by default)
   const reply = await callLlmChatFn({
     system,
     messages: [{ role: 'user', content: user }],
     temperature: 0.35,
     maxTokens: 3200,
-    timeoutMs: 90_000,
   })
 
   const parsed = extractVoiceCastJson(reply?.text || '')

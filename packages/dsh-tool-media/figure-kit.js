@@ -219,19 +219,34 @@ export function normalizeCast(rawCast, { max = 8 } = {}) {
   return out
 }
 
-/** Ids of cast members a shot shows: the director's per-shot list first, otherwise names / aliases found in the shot text. */
+// a shot whose own text says nobody is on screen (empty shot, title card, pure data / map) — named people are not drawn
+const NO_PEOPLE_SHOT_RX = /空镜|无人物|没有人物|无人出镜|不出现人物|人物不出镜|不出现任何人|纯文字|字卡|片名卡|标题卡|只有(?:风景|景物|文字|地图|数据|图表)/
+
+/** True when a shot's own text says it shows nobody (空镜, 字卡, 无人物 …). */
+export function sceneSaysNoPeople(scene = {}) {
+  return NO_PEOPLE_SHOT_RX.test(`${scene.title || ''} ${scene.visualBlueprint || ''} ${scene.motionNotes || ''}`)
+}
+
+/**
+ * Ids of the cast members a shot must show: the director's per-shot list (`cast` or `castIds`, by id, name or alias),
+ * plus every cast member the shot's title, narration, subtitles or picture text names (name or declared alias such as
+ * 你) — a person written into a shot is a person on screen. A shot that says it shows nobody (空镜, 字卡 …) keeps only the
+ * director's list.
+ */
 export function castIdsForScene(scene = {}, cast = []) {
   const ids = new Set(cast.map((c) => c.id))
-  const explicit = Array.isArray(scene.cast) ? scene.cast.map((x) => String(x).trim()) : []
+  const explicitRaw = Array.isArray(scene.cast) ? scene.cast : Array.isArray(scene.castIds) ? scene.castIds : []
+  const explicit = explicitRaw.map((x) => String(x ?? '').trim()).filter(Boolean)
   const hits = []
   for (const x of explicit) {
-    const byId = cast.find((c) => c.id === x.toLowerCase())
+    const byId = cast.find((c) => c.id === x || c.id === x.toLowerCase())
     const byName = cast.find((c) => c.name === x || (c.aliases || []).includes(x))
     const id = byId?.id || byName?.id
     if (id && !hits.includes(id)) hits.push(id)
   }
-  if (hits.length) return hits
-  const text = `${scene.title || ''} ${scene.visualBlueprint || ''} ${scene.motionNotes || ''} ${scene.narration || ''}`
+  if (sceneSaysNoPeople(scene)) return hits
+  const subs = Array.isArray(scene.subChunks) ? scene.subChunks.join(' ') : ''
+  const text = `${scene.title || ''} ${scene.visualBlueprint || ''} ${scene.motionNotes || ''} ${scene.narration || ''} ${scene.subtitleText || ''} ${subs}`
   for (const c of cast) {
     const keys = [c.name, ...(c.aliases || [])].filter((k) => k && k.length >= 1)
     if (keys.some((k) => text.includes(k)) && ids.has(c.id) && !hits.includes(c.id)) hits.push(c.id)
@@ -469,8 +484,14 @@ export function enrichScenesForVisuals(script = {}) {
     sc.atmosphere = normalizeAtmosphere(sc.atmosphere) || inferAtmosphere(sc, genre)
     sc.ambience = normalizeAmbience(sc.ambience) || inferAmbience(sc, genre)
     const ids = castIdsForScene({ ...sc, cast: Array.isArray(sc.castIds) ? sc.castIds : undefined }, cast)
-    if (ids.length) sc.castIds = ids
-    else delete sc.castIds
+    if (ids.length) {
+      sc.castIds = ids
+      // names of the people this shot must show (画面自检 checks them on the rendered keyframes)
+      sc.castNames = ids.map((id) => cast.find((c) => c.id === id)?.name).filter(Boolean)
+    } else {
+      delete sc.castIds
+      delete sc.castNames
+    }
   }
   const userText = `${script.topic || ''} ${script.goal || ''} ${script.displayTitle || script.title || ''}`
   const notesText = `${script.genreLabel || ''} ${script.directorNotes || ''}`
@@ -603,6 +624,10 @@ export function buildFigureKitCoderGuide({ cast = [], combat = false, figureStyl
       const fig = c.figure || c.rig || {}
       lines.push(`     · ${q}${c.id}${q} = ${c.name}${c.role ? `（${c.role}）` : ''}${c.look ? `：${c.look}` : ''}${describeFigure(fig) ? ` [${describeFigure(fig)}]` : ''}`)
     }
+    // a person written into a shot is a person on screen: the per-shot list is a must, checked by 画面自检
+    lines.push(
+      `  - **每镜 JSON 里的 ${q}cast${q} 就是这一镜必须出镜的人物（分镜文案里写到的人都在里面）**：每个人都要画成清楚可辨的完整人物（站在画面主要位置、不出画、不被遮挡，远景里也要看得出是谁），一眼能认出是谁——服装、发型、配色和道具按上面的演员表，全片同一形象；不能只用图标、文字、剪影小点、背影、手部局部或画外暗示代替。${q}cast${q} 里有几个人就画几个人；演员表以外的人只能做背景路人或群像，不要另编新的主角。`,
+    )
   }
   return lines.join('\n')
 }

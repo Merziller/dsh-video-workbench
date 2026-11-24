@@ -5,13 +5,15 @@
  * 1. Loading pixel-exact DOM bounding-box sidecar files (`<name>.anchors.json`) whenever captured from a browser/recorder;
  * 2. Automatically inspecting uploaded screenshots via the configured multimodal Vision LLM (`callLlmChat`)
  *    with a lightweight resized JPEG preview to extract `visualSummary` and real `[0..1]` `uiAnchors[]`.
- * Gracefully degrades (never breaks the pipeline) when the user configures a text-only LLM.
+ * Gracefully degrades (never breaks the pipeline) when the user configures a text-only LLM: the shared 看图能力 check
+ * (vision-capability.js) decides once, and the result's `visionSkipped` says why in plain Chinese.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { resolveBinaries, runCommandRedirected } from '../shared/index.js'
 import { readAssets, writeAssets } from './asset-manager.js'
 import { extractJsonFromLlmText } from './llm-client.js'
+import { noteVisionOutcome, prepareVisionCall, visionStatusLine } from './vision-capability.js'
 
 const clamp01 = (v, fallback = 0.5) => {
   const n = Number(v)
@@ -116,6 +118,8 @@ export async function groundVisualAssets({
   callLlmChatFn = null,
   enableVision = true,
   maxVisionAssets = 12,
+  llmConfig = null,
+  fetchImpl,
   signal,
   onProgress,
 } = {}) {
@@ -149,13 +153,24 @@ export async function groundVisualAssets({
   }
 
   // Pass 2: Multimodal Vision grounding for remaining raw UI/screenshots without anchors
+  let visionSkipped = ''
+  let visionCode = ''
   if (enableVision && typeof callLlmChatFn === 'function') {
     const tmpDir = join(absDir, '.tmp-vision')
     const needVision = visuals
       .filter((it) => !(Array.isArray(it.uiAnchors) && it.uiAnchors.length > 0))
       .slice(0, Math.max(0, Number(maxVisionAssets) || 12))
 
-    let visionRejected = false
+    // the shared 看图能力 check first: a model that cannot see is skipped once, with its reason, instead of per asset
+    const gate = needVision.length ? await prepareVisionCall({ mainConfig: llmConfig, fetchImpl, signal }) : null
+    if (gate && !gate.ok) {
+      visionSkipped = visionStatusLine(gate)
+      visionCode = gate.code
+    }
+    // a dedicated 看图模型 answers the picture calls; otherwise the caller's own model (billing guard, retries) does
+    const callVision = (p) => callLlmChatFn(gate?.dedicated ? { ...p, overrideConfig: gate.config } : p)
+    let visionRejected = !gate || !gate.ok
+    let lookedOnce = false
     for (let i = 0; i < needVision.length; i++) {
       if (signal?.aborted || visionRejected) break
       const it = needVision[i]
@@ -169,7 +184,7 @@ export async function groundVisualAssets({
       try {
         const b64 = await encodePreviewJpegBase64(absFile, it.type === 'video', tmpDir)
         if (!b64) continue
-        const reply = await callLlmChatFn({
+        const reply = await callVision({
           system: `你是高精度 UI 界面坐标视觉定位专家。请仔细观察这张完整截图（左上角为 (0.00, 0.00)，右下角为 (1.00, 1.00)），精确识别画面内容与主要可交互按钮/输入框/开关/卡片的中心归一化坐标 (fx, fy) 及宽高 (fw, fh)。
 严格只输出 JSON（无 Markdown 围栏）：
 {
@@ -190,7 +205,6 @@ export async function groundVisualAssets({
           ],
           temperature: 0.1,
           maxTokens: 1600,
-          timeoutMs: 45_000,
           signal,
         })
         const parsed = extractJsonFromLlmText(reply?.text || '')
@@ -202,19 +216,18 @@ export async function groundVisualAssets({
           it.anchorSource = 'vision-llm'
           visionCount++
           changed = true
+          if (!lookedOnce) noteVisionOutcome(gate, { ok: true })
+          lookedOnce = true
         }
       } catch (err) {
-        const msg = String(err?.message || '').toLowerCase()
-        if (
-          msg.includes('vision') ||
-          msg.includes('image') ||
-          msg.includes('multimodal') ||
-          msg.includes('unsupported') ||
-          msg.includes('invalid_request') ||
-          msg.includes('400')
-        ) {
-          // Configured model is text-only — stop attempting vision calls cleanly without breaking pipeline
+        if (signal?.aborted) break
+        // a model / gateway that refuses pictures (remembered), a timeout, balance or key problem: stop cleanly with the
+        // reason; anything else only skips this asset
+        const c = noteVisionOutcome(gate, { error: err })
+        if (c.conclusive || ['timeout', 'billing', 'auth', 'model-missing'].includes(c.code)) {
           visionRejected = true
+          visionSkipped = visionStatusLine(c)
+          visionCode = c.code
         }
       }
     }
@@ -230,6 +243,9 @@ export async function groundVisualAssets({
     sidecarCount,
     visionCount,
     totalVisuals: visuals.length,
+    // why screenshots were not looked at ('' = they were, or none needed it)
+    visionSkipped,
+    visionCode,
   }
 }
 

@@ -13,7 +13,9 @@ import {
   VIDEO_STYLES,
 } from '../shared/index.js'
 import { buildGenreGuidance, detectGenre, getGenreProfile, isHistoricalContent, resolveGenreSelection } from './genre-router.js'
-import { buildFigureStylePlanDirective, FIG_BUILDS, FIG_HAIR, FIG_HEADWEAR, FIG_OUTFITS, FIG_PROPS, FIG_STYLES, normalizeAmbience, normalizeAtmosphere, normalizeCast, normalizeFigureStyle, normalizeFigureStyleNote } from './figure-kit.js'
+import { buildFigureStylePlanDirective, castIdsForScene, FIG_BUILDS, FIG_HAIR, FIG_HEADWEAR, FIG_OUTFITS, FIG_PROPS, FIG_STYLES, mergeFigureLooks, normalizeAmbience, normalizeAtmosphere, normalizeCast, normalizeFigureLook, normalizeFigureStyle, normalizeFigureStyleNote, sceneSaysNoPeople } from './figure-kit.js'
+import { briefCastLook, matchBriefCastName, parseBriefCast } from './brief-cast.js'
+import { describeFootageForPrompt } from './footage-index.js'
 import { applyStyleDecision, buildStylePlanDirective, decidePlanStyle, effectiveStyleMode } from './style-presets.js'
 import { extractBriefBeats } from './brief-beats.js'
 import { isBillingError } from './cloud-ledger.js'
@@ -896,36 +898,567 @@ export function resolvePlanSchedule(plan, baseScript = {}) {
   }
 }
 
-function safeExtractJson(text) {
+/**
+ * Close a JSON object that was cut off mid-way (output limit): keep everything up to the last complete object item of
+ * an array near the top level (shots / scenes / appendShots / inserts / segments …) and close the open brackets.
+ * null when no complete item exists.
+ */
+function closeTruncatedJson(src) {
+  const stack = []
+  let inStr = false
+  let esc = false
+  let best = null
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (ch === '\\') esc = true
+      else if (ch === '"') inStr = false
+      continue
+    }
+    if (ch === '"') {
+      inStr = true
+      continue
+    }
+    if (ch === '{' || ch === '[') {
+      stack.push(ch)
+      continue
+    }
+    if (ch === '}' || ch === ']') {
+      const open = stack.pop()
+      if (!open || (open === '{') !== (ch === '}')) return null
+      if (!stack.length) return src.slice(0, i + 1)
+      // a whole item of an array directly under the top-level object (or one object deeper) just closed
+      if (ch === '}' && stack[stack.length - 1] === '[' && stack.length <= 3) best = { cut: i + 1, stack: stack.slice() }
+    }
+  }
+  if (!best) return null
+  return src.slice(0, best.cut) + best.stack.reverse().map((c) => (c === '[' ? ']' : '}')).join('')
+}
+
+/**
+ * Parse a model's JSON reply → { json, salvaged }. A reply cut off mid-way is rebuilt from its complete array items
+ * (`salvaged: true`: the reply was NOT complete and must not be trusted as a whole plan).
+ */
+export function extractPlanJson(text) {
   const s = String(text || '').trim()
   const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  const raw = fenced ? fenced[1].trim() : s
+  const raw = fenced ? fenced[1].trim() : s.replace(/^```(?:json)?\s*/i, '')
   try {
-    return JSON.parse(raw)
-  } catch {
-    const a = raw.indexOf('{')
-    const b = raw.lastIndexOf('}')
-    if (a >= 0 && b > a) {
-      try {
-        return JSON.parse(raw.slice(a, b + 1))
-      } catch {
-        // Recover partial truncated shots/scenes array cleanly if relay clipped tail
-        const slice = raw.slice(a)
-        const shotsIdx = slice.indexOf('"shots"') >= 0 ? slice.indexOf('"shots"') : slice.indexOf('"scenes"')
-        if (shotsIdx >= 0) {
-          const lastObjEnd = slice.lastIndexOf('}')
-          if (lastObjEnd > shotsIdx) {
-            for (let cut = lastObjEnd; cut > shotsIdx; cut = slice.lastIndexOf('}', cut - 1)) {
-              try {
-                return JSON.parse(slice.slice(0, cut + 1) + ']}')
-              } catch {}
-            }
-          }
-        }
+    return { json: JSON.parse(raw), salvaged: false }
+  } catch {}
+  const a = raw.indexOf('{')
+  if (a < 0) return { json: null, salvaged: false }
+  const b = raw.lastIndexOf('}')
+  if (b > a) {
+    try {
+      return { json: JSON.parse(raw.slice(a, b + 1)), salvaged: false }
+    } catch {}
+  }
+  const rebuilt = closeTruncatedJson(raw.slice(a))
+  if (rebuilt) {
+    try {
+      return { json: JSON.parse(rebuilt), salvaged: true }
+    } catch {}
+  }
+  return { json: null, salvaged: false }
+}
+
+function safeExtractJson(text) {
+  return extractPlanJson(text).json
+}
+
+/** Structured figure look derived from a brief's appearance / costume / actions text (fills what the director left out). */
+function figureFromBriefEntry(entry = {}) {
+  const app = String(entry.appearance || '')
+  const costume = String(entry.costume || '')
+  const hex = (costume.match(/#[0-9a-f]{6}\b|#[0-9a-f]{3}\b/i) || [])[0]
+  return normalizeFigureLook({
+    gender: app,
+    build: app,
+    hair: app,
+    outfit: costume,
+    headwear: costume,
+    props: { right: `${costume} ${(entry.actions || []).join(' ')}` },
+    ...(hex ? { colors: { top: hex } } : {}),
+  })
+}
+
+const sameCastMember = (c = {}, entry = {}) => {
+  const names = [c.name, ...(c.aliases || [])].filter(Boolean).map(String)
+  const want = [entry.name, ...(entry.aliases || [])].filter(Boolean).map(String)
+  if (names.some((n) => want.includes(n))) return true
+  return names.some((n) => n.length >= 2 && want.some((w) => w.length >= 2 && (w.includes(n) || n.includes(w))))
+}
+
+/**
+ * The brief's 人物设定 is the source of truth for the film's cast: every character keeps its brief name verbatim, its
+ * appearance and costume become the look (the director's structured figure fields fill only what the text leaves open),
+ * and characters the director forgot are added. The director's other characters stay after them. Mutates `plan.cast`.
+ * → { changed, names }
+ */
+export function applyBriefCastToPlan(plan, brief = null) {
+  const bible = Array.isArray(brief?.cast) ? brief.cast.filter((b) => b && b.name) : []
+  if (!plan || typeof plan !== 'object' || !bible.length) return { changed: false, names: [] }
+  const current = normalizeCast(Array.isArray(plan.cast) ? plan.cast : [])
+  const used = new Set(current.map((c) => c.id))
+  const out = []
+  for (const b of bible) {
+    const match = current.find((c) => !out.includes(c) && sameCastMember(c, b))
+    const look = briefCastLook(b)
+    const derived = figureFromBriefEntry(b)
+    if (match) {
+      const aliases = [...new Set([...(match.aliases || []), ...(b.aliases || []), match.name !== b.name ? match.name : ''].filter((a) => a && a !== b.name))].slice(0, 6)
+      out.push({ ...match, name: b.name, role: b.role || match.role, aliases, look: look || match.look, figure: mergeFigureLooks(match.figure || {}, derived) })
+    } else {
+      let id = `cast${used.size + 1}`
+      for (let k = used.size + 1; used.has(id); k++) id = `cast${k + 1}`
+      used.add(id)
+      out.push({ id, name: b.name, role: b.role || undefined, aliases: (b.aliases || []).slice(0, 6), look, figure: derived })
+    }
+  }
+  for (const c of current) if (!out.some((o) => o.id === c.id)) out.push(c)
+  plan.cast = normalizeCast(out)
+  return { changed: true, names: bible.map((b) => b.name) }
+}
+
+/**
+ * Who must be on screen in every shot: the director's per-shot list, plus every cast member a shot's title / narration
+ * / subtitles / picture names (or a declared alias such as 你), plus — for shots that name nobody and are not people-free
+ * (空镜, 字卡 …) — the 出镜 list of the brief segment whose time range the shot falls in (the plan's timeline is mapped
+ * onto the brief's clock). Mutates `plan.shots[].castIds`; returns the plan.
+ */
+export function enforcePlanShotCast(plan, brief = null) {
+  const cast = Array.isArray(plan?.cast) ? plan.cast : []
+  const shots = Array.isArray(plan?.shots) ? plan.shots : []
+  if (!cast.length || !shots.length) return plan
+  const segs = (Array.isArray(brief?.segments) ? brief.segments : []).filter((g) => Number(g.endSec) > Number(g.startSec))
+  const briefEnd = segs.length ? Math.max(...segs.map((g) => Number(g.endSec))) : 0
+  const planTotal = shots.reduce((a, s) => a + Math.max(0, Number(s.durationSec) || 0), 0)
+  const byName = (name) => {
+    const n = matchBriefCastName(name, cast.map((c) => ({ name: c.name, aliases: c.aliases || [] })))
+    return cast.find((c) => c.name === n || (c.aliases || []).includes(n)) || null
+  }
+  let t = 0
+  for (const s of shots) {
+    const dur = Math.max(0, Number(s.durationSec) || 0)
+    const mid = planTotal > 0 && briefEnd > 0 ? ((t + dur / 2) / planTotal) * briefEnd : -1
+    t += dur
+    const sceneLike = { ...s, cast: Array.isArray(s.castIds) ? s.castIds : Array.isArray(s.cast) ? s.cast : undefined, subtitleText: Array.isArray(s.subChunks) ? s.subChunks.join(' ') : s.subtitleText }
+    const ids = castIdsForScene(sceneLike, cast)
+    const namedInText = castIdsForScene({ ...sceneLike, cast: undefined, castIds: undefined }, cast).length > 0
+    if (mid >= 0 && !namedInText && !sceneSaysNoPeople(sceneLike)) {
+      const seg = segs.find((g) => mid >= Number(g.startSec) && mid < Number(g.endSec)) || (mid >= briefEnd ? segs[segs.length - 1] : null)
+      for (const name of seg?.cast || []) {
+        const c = byName(name)
+        if (c && !ids.includes(c.id)) ids.push(c.id)
       }
     }
-    return null
+    if (ids.length) s.castIds = ids.slice(0, 8)
   }
+  return plan
+}
+
+/** Shot list of a model reply ({ shots } / { scenes } / { storyboard } / { appendShots } / a bare array). */
+function planShotsOf(json) {
+  if (Array.isArray(json)) return json.filter((s) => s && typeof s === 'object')
+  const list = json?.shots || json?.scenes || json?.storyboard || json?.appendShots
+  return Array.isArray(list) ? list.filter((s) => s && typeof s === 'object') : []
+}
+
+// shots one reply is trusted to hold (≈ 7k output tokens; existing plans cost 300–450 tokens per shot) and the page size
+// of a paged storyboard (8 shots ≈ 3.5k tokens: fits even a 4k-token output cap)
+const SINGLE_REPLY_TOKEN_BUDGET = 7000
+export const PLAN_PAGE_SHOTS = 8
+
+/**
+ * How many shots a storyboard needs. Beat-driven films (高燃卡点 / 纯音乐 MV / tts-beat-sync) cut on the music, so the
+ * shot count is the cut rate: they need the duration policy's range (a 135 s 高燃 film 46–62). Other films only need
+ * enough shots that no shot runs longer than the pacing allows, so calm / TTS films already in range stay untouched.
+ * → { needMin, needMax, target, beatDriven }
+ */
+export function resolvePlanShotNeeds({ policyMin = 0, policyMax = 0, targetSec = 0, pacingProfile = null, beatDriven = false } = {}) {
+  const lo = Math.max(2, Math.round(Number(policyMin) || 0))
+  const hi = Math.max(lo, Math.round(Number(policyMax) || lo))
+  const maxDur = Number(pacingProfile?.maxDurSec) || 12
+  const needMin = beatDriven ? lo : Math.min(lo, Math.max(3, Math.ceil((Number(targetSec) || 60) / maxDur)))
+  const target = beatDriven ? Math.max(needMin, Math.min(hi, Math.round((lo + hi) / 2))) : Math.max(needMin, lo)
+  return { needMin, needMax: hi, target, beatDriven: Boolean(beatDriven) }
+}
+
+/** 「计划 N 镜 / 需要 X–Y 镜」 */
+export function formatShotPlanLine(count, needs = {}) {
+  return `计划 ${count} 镜 / 需要 ${needs.needMin}–${needs.needMax} 镜`
+}
+
+/** Split `total` into integer shares by weight (largest remainder), every share ≥ 1 and ≤ its cap when possible. */
+function allocateByWeights(weights, total, caps = []) {
+  const n = weights.length
+  if (!n) return []
+  const cap = (i) => Math.max(1, Math.floor(Number(caps[i]) || Infinity))
+  const out = new Array(n).fill(1)
+  let left = Math.max(n, Math.round(total)) - n
+  const w = weights.map((x) => Math.max(0.0001, Number(x) || 0.0001))
+  for (let guard = 0; left > 0 && guard < 8; guard++) {
+    const open = out.map((c, i) => (c < cap(i) ? i : -1)).filter((i) => i >= 0)
+    if (!open.length) break
+    const wSum = open.reduce((a, i) => a + w[i], 0)
+    const want = open.map((i) => ({ i, d: (left * w[i]) / wSum }))
+    let given = 0
+    for (const x of want) {
+      const add = Math.min(cap(x.i) - out[x.i], Math.floor(x.d))
+      out[x.i] += add
+      given += add
+    }
+    const byRem = want.map((x) => ({ i: x.i, r: x.d - Math.floor(x.d) })).sort((a, b) => b.r - a.r || a.i - b.i)
+    for (const x of byRem) {
+      if (given >= left) break
+      if (out[x.i] < cap(x.i)) {
+        out[x.i]++
+        given++
+      }
+    }
+    left -= given
+    if (!given) break
+  }
+  return out
+}
+
+/**
+ * Split narration / subtitle text into at most `n` readable parts: sentences first, then clauses, never inside a word
+ * run shorter than 4 characters. Fewer parts come back when the text is too short.
+ */
+export function splitTextParts(text = '', n = 2) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!s || n <= 1) return s ? [s] : []
+  const bareLen = (p) => p.replace(/[，,、。！？!?；;：:…\s]/g, '').length
+  // sentences, then clauses, then words: the first level that still gives n parts once fragments too short to stand
+  // alone (< 4 characters) are glued onto their neighbour
+  let merged = []
+  for (const rx of [/(?<=[。！？!?；;…])/, /(?<=[。！？!?；;…，,、：:])/, /(?<=[。！？!?；;…，,、：:\s])/]) {
+    merged = []
+    for (const p of s.split(rx).filter((x) => x.trim())) {
+      if (merged.length && (bareLen(p) < 4 || bareLen(merged[merged.length - 1]) < 4)) merged[merged.length - 1] += p
+      else merged.push(p)
+    }
+    if (merged.length >= n) break
+  }
+  merged = merged.map((p) => p.trim()).filter(Boolean)
+  if (merged.length <= n) return merged
+  // more parts than wanted: group neighbours into n runs of similar length
+  const total = merged.reduce((a, p) => a + p.length, 0)
+  const groups = []
+  let cur = ''
+  let acc = 0
+  for (let i = 0; i < merged.length; i++) {
+    cur += (cur && /[A-Za-z0-9]$/.test(cur) && /^[A-Za-z0-9]/.test(merged[i]) ? ' ' : '') + merged[i]
+    acc += merged[i].length
+    const groupsLeft = n - groups.length
+    const partsLeft = merged.length - i - 1
+    if (groupsLeft > 1 && (acc >= (total * (groups.length + 1)) / n || partsLeft < groupsLeft)) {
+      groups.push(cur)
+      cur = ''
+    }
+  }
+  if (cur) groups.push(cur)
+  return groups
+}
+
+const DENSIFY_FRAMINGS = ['远景全貌', '中景', '近景', '特写', '俯拍', '仰拍', '侧面跟拍', '过肩视角']
+const DENSIFY_CAMERAS = ['镜头缓推', '横移跟拍', '镜头拉远', '环绕运镜', '跟随主体', '急推特写']
+const DENSIFY_ARCHETYPES = ['hero-stand', 'cavalry-rush', 'duel-confront', 'strategic-map', 'slash-climax', 'bamboo-slips', 'hero-numeral', 'scroll-calligraphy', 'farewell-tent', 'oath-break']
+const DENSIFY_RECIPES = ['push_in', 'pan_across', 'pull_out', 'face_focus', 'pan_down', 'impact', 'hold']
+
+/**
+ * Local densifier (no model call) for a storyboard with far too few shots: the longest shots are split into
+ * beat-length sub-shots in story order. Sub-shots share the parent's cast, title, mood and assets; narration is split
+ * into its sentences / clauses (spoken films never repeat a line, so a shot splits at most into its text parts); camera,
+ * framing, archetype and recipe vary from sub-shot to sub-shot; the closing shot stays last. Ids are renumbered.
+ * → { shots, densified, from, to }
+ */
+export function densifyPlanShots(shots = [], { needShots = 0, spoken = true, beatDriven = false, historical = false, pacingId = 'balanced', onlySeeds = false } = {}) {
+  const list = Array.isArray(shots) ? shots.filter((s) => s && typeof s === 'object') : []
+  const from = list.length
+  const want = Math.round(Number(needShots) || 0)
+  if (!from || want <= from) return { shots: list, densified: false, from, to: from }
+  const isBlitz = (s) => Number(s.beatCount) > 0 && Number(s.beatCount) <= 0.5
+  const seedCount = (s) => Math.max(1, Math.round(Number(s.seedShots) || 1))
+  const weightOf = (s) => {
+    if (onlySeeds) return seedCount(s)
+    const beats = Number(s.beatCount)
+    if (beatDriven && beats > 0) return beats
+    const d = Number(s.durationSec)
+    if (d > 0) return d
+    return Math.max(1, String(s.narration || '').length / 4)
+  }
+  const textOf = (s) => String(s.narration || s.title || '').trim()
+  // spoken films: one sub-shot per sentence / clause at most (a repeated line would be spoken twice); `onlySeeds` splits
+  // just the seed shots of a paged storyboard into the shots they stand for
+  const caps = list.map((s) => {
+    if (onlySeeds && !(Number(s.seedShots) > 1)) return 1
+    const own = isBlitz(s) ? 1 : spoken ? Math.max(1, splitTextParts(textOf(s), 64).length) : 64
+    return onlySeeds ? Math.min(own, seedCount(s)) : own
+  })
+  const counts = allocateByWeights(list.map(weightOf), want, caps)
+  const quick = pacingId === 'dynamic' || beatDriven
+  const txPool = quick ? (historical ? ['flash-cut', 'slash-wipe', 'zoom-punch'] : ['flash-cut', 'slash-wipe', 'zoom-punch', 'glitch-cut']) : ['cut', 'light-wipe']
+  const out = []
+  list.forEach((s, si) => {
+    const m = counts[si] || 1
+    if (m <= 1) {
+      out.push({ ...s })
+      return
+    }
+    const isClosing = si === list.length - 1
+    let parts = splitTextParts(textOf(s), m)
+    if (!spoken && parts.length < m) {
+      // subtitle films: extra captions from the shot's own key words, then the lines are held across quick cuts
+      const extra = [...(Array.isArray(s.highlights) ? s.highlights : []), ...(Array.isArray(s.accentWords) ? s.accentWords : [])]
+        .map((x) => String(x || '').trim())
+        .filter((x) => x && !parts.some((p) => p.includes(x)))
+      parts = [...parts, ...extra].slice(0, m)
+    }
+    const nParts = Math.max(1, parts.length)
+    // a spoken line is never said twice: a spoken shot splits into at most its text parts
+    const subCount = spoken ? Math.min(m, nParts) : m
+    if (subCount <= 1) {
+      out.push({ ...s })
+      return
+    }
+    const totalChars = parts.reduce((a, p) => a + p.length, 0) || 1
+    const parentBeats = Number(s.beatCount)
+    const parentDur = Number(s.durationSec) || 0
+    const parentMotion = String(s.motionNotes || '').trim()
+    const seed = si * 3
+    for (let k = 0; k < subCount; k++) {
+      const partIdx = Math.min(nParts - 1, Math.floor((k * nParts) / subCount))
+      const text = parts[partIdx] || textOf(s)
+      const repeatOfPrev = k > 0 && Math.min(nParts - 1, Math.floor(((k - 1) * nParts) / subCount)) === partIdx
+      const share = spoken ? (parts[partIdx]?.length || 1) / totalChars : 1 / subCount
+      const isLastSub = k === subCount - 1
+      // the closing shot's last part stays the closing shot (recipe, archetype, headline); every other part varies
+      const keepsClosing = isClosing && isLastSub
+      const varies = isClosing ? !isLastSub : k > 0
+      const framing = DENSIFY_FRAMINGS[(seed + k) % DENSIFY_FRAMINGS.length]
+      const camera = DENSIFY_CAMERAS[(seed + k * 2) % DENSIFY_CAMERAS.length]
+      const sub = {
+        ...s,
+        narration: text,
+        subChunks: deriveVerbalSubtitleParts(text, null, '', 16),
+        accentWords: (Array.isArray(s.accentWords) ? s.accentWords : []).filter((w) => text.includes(String(w))),
+        visualBlueprint: `（第 ${k + 1}/${subCount} 段：${framing}，${camera}）${String(s.visualBlueprint || s.title || '').trim()}`,
+        motionNotes: `${framing}，${camera}${repeatOfPrev ? '，承接上一镜的动作继续推进' : ''}${parentMotion ? `；${parentMotion}` : ''}`.slice(0, 200),
+        splitFrom: s.id,
+        impactBeats: k === 0 && Array.isArray(s.impactBeats) ? s.impactBeats : undefined,
+      }
+      if (Number.isFinite(parentBeats) && parentBeats > 0) sub.beatCount = Number(((parentBeats * share) || 1).toFixed(3))
+      if (parentDur > 0) sub.durationSec = Number(Math.max(0.3, parentDur * share).toFixed(3))
+      if (k > 0) {
+        sub.transition = txPool[(seed + k) % txPool.length]
+        delete sub.cursors
+        delete sub.marks
+        delete sub.clickLabel
+        if (s.actionMode === 'drop-impact') sub.actionMode = 'clean'
+      }
+      if (varies) sub.recipe = DENSIFY_RECIPES[(seed + k) % DENSIFY_RECIPES.length]
+      if (historical && s.stageSpec && typeof s.stageSpec === 'object' && varies && !keepsClosing) {
+        const prevArch = out[out.length - 1]?.stageSpec?.archetype
+        const pool = DENSIFY_ARCHETYPES.filter((a) => a !== prevArch && a !== s.stageSpec.archetype)
+        sub.stageSpec = { ...s.stageSpec, archetype: pool[(seed + k) % pool.length] }
+        delete sub.stageSpec.headline
+        delete sub.stageSpec.subheadline
+      }
+      out.push(sub)
+    }
+  })
+  // only relative beat weights matter to the beat grid; a sub-shot below one beat would read as a 0.5-beat flash cut,
+  // so every beat weight except the director's own flash cuts is scaled up together
+  if (beatDriven) {
+    const subs = out.filter((s) => s.splitFrom && Number(s.beatCount) > 0)
+    const minBeat = subs.length ? Math.min(...subs.map((s) => Number(s.beatCount))) : 1
+    if (minBeat < 1) {
+      const f = Math.min(16, 1 / minBeat)
+      for (const s of out) if (s.splitFrom ? Number(s.beatCount) > 0 : Number(s.beatCount) > 0.5) s.beatCount = Number((Number(s.beatCount) * f).toFixed(3))
+    }
+  }
+  return { shots: renumberShotIds(out), densified: out.length > from, from, to: out.length }
+}
+
+/** scene-01 … scene-NN in story order. */
+export function renumberShotIds(shots = []) {
+  return shots.map((s, i) => ({ ...s, id: `scene-${String(i + 1).padStart(2, '0')}` }))
+}
+
+const shotTextKey = (s) => `${String(s?.title || '').replace(/\s+/g, '')}|${String(s?.narration || '').replace(/\s+/g, '')}`
+
+/**
+ * Put model-written extra shots into a finished storyboard in story order: `inserts` ({ afterId, shot }) go after the
+ * named shot, `splits` ({ id, into: [...] }) replace a shot, plain new shots go right before the closing shot. Nothing is
+ * ever placed after the closing shot, and shots that repeat an existing one are dropped. → { shots, added }
+ */
+export function mergeShotInserts(shots = [], reply = {}) {
+  const list = shots.map((s) => ({ ...s }))
+  if (!list.length) return { shots: list, added: 0 }
+  const closingId = list[list.length - 1].id
+  const known = new Set(list.map(shotTextKey))
+  let added = 0
+  const fresh = (s) => {
+    if (!s || typeof s !== 'object') return false
+    const key = shotTextKey(s)
+    if (key === '|' || known.has(key)) return false
+    known.add(key)
+    return true
+  }
+  for (const sp of Array.isArray(reply?.splits) ? reply.splits : []) {
+    const idx = list.findIndex((s) => s.id === String(sp?.id || '').trim())
+    const into = (Array.isArray(sp?.into) ? sp.into : Array.isArray(sp?.shots) ? sp.shots : []).filter((s) => s && typeof s === 'object')
+    if (idx < 0 || into.length < 2) continue
+    const keepCast = list[idx].castIds || list[idx].cast
+    const parts = into.map((s) => ({ ...s, ...(keepCast && !s.cast && !s.castIds ? { castIds: keepCast } : {}) }))
+    list.splice(idx, 1, ...parts)
+    added += parts.length - 1
+  }
+  const lastByAnchor = new Map()
+  const plain = []
+  for (const ins of Array.isArray(reply?.inserts) ? reply.inserts : []) {
+    const shot = ins?.shot && typeof ins.shot === 'object' ? ins.shot : ins
+    if (!fresh(shot)) continue
+    const anchor = String(ins?.afterId || ins?.after || '').trim()
+    const at = anchor && anchor !== closingId ? list.findIndex((s) => s.id === anchor || lastByAnchor.get(anchor) === s) : -1
+    if (at < 0) {
+      plain.push(shot)
+      continue
+    }
+    const ref = lastByAnchor.get(anchor) || list[at]
+    const pos = list.indexOf(ref) + 1
+    const placed = { ...shot }
+    list.splice(Math.min(pos, list.length - 1), 0, placed)
+    lastByAnchor.set(anchor, placed)
+    added++
+  }
+  for (const s of [...plain, ...planShotsOf(reply).filter(fresh)]) {
+    list.splice(list.length - 1, 0, { ...s })
+    added++
+  }
+  return { shots: list, added }
+}
+
+/** Compact view of a shot for follow-up prompts (continuity without resending the whole storyboard). */
+function compactShot(s = {}) {
+  return {
+    id: s.id,
+    title: s.title,
+    narration: String(s.narration || '').slice(0, 60),
+    visualBlueprint: String(s.visualBlueprint || '').slice(0, 90) || undefined,
+    cast: s.cast || s.castIds || undefined,
+    beatCount: s.beatCount,
+    archetype: s.stageSpec?.archetype || undefined,
+  }
+}
+
+/**
+ * Beat sheet of a paged storyboard: the outline's segments with shot counts scaled to `target` (each ≥ 1), in order.
+ * → [{ n, title, summary, shots, cast }]
+ */
+export function normalizeOutlineSegments(rawSegments = [], target = 0) {
+  const list = (Array.isArray(rawSegments) ? rawSegments : []).filter((s) => s && typeof s === 'object').slice(0, 40)
+  if (list.length < 2) return []
+  const segs = list.map((s, i) => ({
+    n: i + 1,
+    title: normalizeNumeralsForDisplay(stripMetaInstructions(String(s.title || s.name || s.segment || `第 ${i + 1} 段`))).slice(0, 24),
+    summary: String(s.summary || s.picture || s.description || s.content || '').replace(/\s+/g, ' ').trim().slice(0, 160),
+    shots: Math.max(1, Math.round(Number(s.shots ?? s.shotCount ?? s.count) || 0)),
+    cast: (Array.isArray(s.cast) ? s.cast : typeof s.cast === 'string' ? s.cast.split(/[、，,\s]+/) : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 8),
+  }))
+  const counts = allocateByWeights(segs.map((s) => s.shots), Math.max(segs.length, Math.round(Number(target) || 0)))
+  return segs.map((s, i) => ({ ...s, shots: counts[i] }))
+}
+
+/** Pages of ≤ `pageShots` shots over the beat sheet (a long segment continues on the next page). */
+export function buildPlanPages(segments = [], pageShots = PLAN_PAGE_SHOTS) {
+  const pages = []
+  let cur = { items: [], shots: 0 }
+  for (const seg of segments) {
+    let left = seg.shots
+    let part = 0
+    while (left > 0) {
+      const room = pageShots - cur.shots
+      const take = Math.min(left, room)
+      cur.items.push({ n: seg.n, title: seg.title, summary: seg.summary, cast: seg.cast, shots: take, ...(seg.shots > take || part ? { part: part + 1 } : {}) })
+      cur.shots += take
+      left -= take
+      part++
+      if (cur.shots >= pageShots) {
+        pages.push(cur)
+        cur = { items: [], shots: 0 }
+      }
+    }
+  }
+  if (cur.shots) pages.push(cur)
+  let at = 1
+  for (const p of pages) {
+    p.from = at
+    p.to = at + p.shots - 1
+    at = p.to + 1
+  }
+  return pages
+}
+
+/** The page items still to write after the first `done` shots of the page came back. */
+export function remainingPageItems(items = [], done = 0) {
+  let skip = Math.max(0, Math.round(Number(done) || 0))
+  const out = []
+  for (const it of items) {
+    if (skip >= it.shots) {
+      skip -= it.shots
+      continue
+    }
+    out.push(skip ? { ...it, shots: it.shots - skip, continued: true } : it)
+    skip = 0
+  }
+  return out
+}
+
+/**
+ * Shots of one page in beat-sheet order. A segment the model never reached (cut-off or failed page) becomes one
+ * simplified seed shot that stands for its planned shots (`seedShots`), so no story beat is lost. → { shots, seeds }
+ */
+export function fillPageShots(page = { items: [], shots: 0 }, got = [], { spoken = true } = {}) {
+  const items = Array.isArray(page.items) ? page.items : []
+  if (got.length >= page.shots || !items.length) return { shots: got.slice(), seeds: 0 }
+  const buckets = items.map(() => [])
+  const tagged = got.some((s) => items.some((it) => it.n === Number(s?.segment)))
+  let cur = 0
+  for (const s of got) {
+    if (tagged) {
+      const at = items.findIndex((it) => it.n === Number(s?.segment))
+      if (at >= 0) cur = at
+    } else {
+      while (cur < items.length - 1 && buckets[cur].length >= items[cur].shots) cur++
+    }
+    buckets[cur].push(s)
+  }
+  let seeds = 0
+  const shots = []
+  items.forEach((it, i) => {
+    if (buckets[i].length) {
+      shots.push(...buckets[i])
+      return
+    }
+    seeds++
+    shots.push({
+      title: it.title,
+      // a spoken film speaks the beat's summary; a subtitle film shows the short segment title instead of a description
+      narration: spoken ? it.summary || it.title : it.title,
+      visualBlueprint: it.summary || it.title,
+      ...(Array.isArray(it.cast) && it.cast.length ? { cast: it.cast } : {}),
+      segment: it.n,
+      seedShots: it.shots,
+      beatCount: Math.max(1, it.shots) * 2,
+      durationSec: Math.max(1, it.shots) * 2.5,
+    })
+  })
+  return { shots, seeds }
 }
 
 /**
@@ -959,6 +1492,12 @@ export async function runSchemaDirectorWithDegradation({
   // one extra Tier-1 attempt after a transient failure (rate limit / gateway busy); tests pass 0
   transientRetryDelayMs = 45_000,
   onLlmWait = null,
+  // plain-Chinese progress lines while a long storyboard is written page by page (the pipeline logs them)
+  onProgress = null,
+  // 「出片时参考现有草稿」: true → the project's current storyboard (a local draft too) is the director's pacing
+  // reference; false → the old storyboard is ignored; undefined → earlier behaviour (an AI film's previous scenes are
+  // hinted, a local draft is not)
+  useDraftReference = undefined,
 }) {
   const effectiveRefStyle = referenceStyle || scriptData?.referenceStyle || null
   const trace = []
@@ -1011,6 +1550,16 @@ export async function runSchemaDirectorWithDegradation({
   )
   const cleanTopic = normalizeNumeralsForDisplay(stripMetaInstructions(topic || scriptData?.title || '')) || '主题短片'
   const effectiveDirectorNotes = String(directorNotes || scriptData?.directorNotes || '').trim()
+  // the AI-polished brief's 人物设定 (cast bible) and 分镜段落 (segments with their 出镜 lists); null for older briefs
+  const briefCastInfo = (() => {
+    for (const t of [effectiveDirectorNotes, scriptData?.goal, scriptData?.userPrompt, topic]) {
+      const info = parseBriefCast(t)
+      if (info.cast.length || info.segments.length) return info
+    }
+    return null
+  })()
+  // with 「参考现有草稿」 switched off, the old storyboard's scene fields never leak into the new shots by position
+  const repairBaseScript = useDraftReference === false && scriptData && typeof scriptData === 'object' ? { ...scriptData, scenes: [] } : scriptData
   const effectiveAuthoringMode = String(authoringMode || scriptData?.authoringMode || 'ai-coded').trim() || 'ai-coded'
   const isFreeformCoding = effectiveAuthoringMode.toLowerCase() !== 'schema-plan'
   const genreInfo = resolveGenreSelection({
@@ -1036,6 +1585,58 @@ export async function runSchemaDirectorWithDegradation({
     pacingMode: effectivePacingMode,
   })
 
+  // Duration policy and the shot counts the storyboard needs (shared by the Tier-1 prompt and every tier's final check)
+  const planNarrationMode = narrationMode || scriptData?.narrationMode || 'tts'
+  const planNoteSummaries = (assetsManifest?.notes || [])
+    .filter((n) => n?.text)
+    .map((n) => String(n.text).slice(0, 1400))
+    .join('\n')
+  const planBgm = bgmMeta?.analyzed ? bgmMeta : scriptData?.bgm?.analyzed ? scriptData.bgm : null
+  const planDurationPolicy = resolveTargetDurationPolicy({
+    durationMode: durationMode || scriptData?.durationMode || 'auto',
+    targetDurationSec: Number(targetDurationSec) || Number(scriptData?.targetDurationSec) || 0,
+    // the user's wording only: a plaza template's style recipe describes its source film
+    text: stripPlazaTemplateGuidance(`${cleanTopic} ${effectiveDirectorNotes} ${scriptData?.goal || ''} ${planNoteSummaries || ''}`),
+    pacingProfile,
+    narrationMode: planNarrationMode,
+    hasVisualAssets: mediaCheck.length > 0,
+    bgmDurationSec: Number(planBgm?.durationSec) || 0,
+    referenceShotCount: Number(effectiveRefStyle?.pacingSignature?.targetShotCount || effectiveRefStyle?.shotCount || 0),
+    referenceDurationSec: Number(effectiveRefStyle?.durationSec || 0),
+  })
+  const planZeroVisual = mediaCheck.length === 0
+  const planIsPureMusicMv = planNarrationMode === 'subtitle-mv'
+  const planComprehensive = planDurationPolicy.unlimited || planNoteSummaries.length >= 420 || mediaCheck.length >= 6
+  const planShotRange = (() => {
+    const p = planDurationPolicy
+    const zeroMin = p.enforced || planIsPureMusicMv || pacingProfile.id === 'dynamic'
+      ? p.targetShotsMin
+      : planComprehensive
+        ? Math.max(12, Math.min(p.hardMaxShots - 6, p.targetShotsMin))
+        : p.targetShotsMin
+    const uiMin = p.enforced
+      ? Math.max(p.targetShotsMin, Math.min(22, mediaCheck.length))
+      : planComprehensive
+        ? Math.max(14, Math.min(22, mediaCheck.length * 2))
+        : p.targetShotsMin
+    return { zeroMin, zeroMax: p.targetShotsMax, uiMin, uiMax: Math.max(uiMin + 4, p.targetShotsMax) }
+  })()
+  const shotNeeds = resolvePlanShotNeeds({
+    policyMin: planZeroVisual ? planShotRange.zeroMin : planShotRange.uiMin,
+    policyMax: planZeroVisual ? planShotRange.zeroMax : planShotRange.uiMax,
+    targetSec: planDurationPolicy.targetSec,
+    pacingProfile,
+    beatDriven: planIsPureMusicMv || pacingProfile.id === 'dynamic' || planNarrationMode === 'tts-beat-sync',
+  })
+  const progress = (msg) => {
+    try {
+      onProgress?.(String(msg))
+    } catch {}
+  }
+  // what happened to the storyboard on the way (shown to the user by the pipeline as plain-Chinese warnings)
+  const planCheck = { needMin: shotNeeds.needMin, needMax: shotNeeds.needMax, target: shotNeeds.target, mode: 'single', truncated: false, recovered: '', densified: false, pages: 0, modelShots: 0 }
+  const planWarnings = []
+
   // Tier 1: Full JSON Schema generation
   if (!forceTierForTest || forceTierForTest === 1) {
     if (typeof callLlmChatFn === 'function') {
@@ -1055,6 +1656,8 @@ export async function runSchemaDirectorWithDegradation({
             height: Number(it.editedHeight || it.height || 0),
             ...(Number(it.durationSec) > 0 ? { durationSec: it.durationSec } : {}),
             ...(it.visualSummary ? { visualSummary: it.visualSummary } : {}),
+            // an indexed long clip: its shots (time range, quality, motion, speech) so the director can pick moments
+            ...(it.type === 'video' && Array.isArray(it.footage?.shots) && it.footage.shots.length ? { footageShots: describeFootageForPrompt(it, { maxShots: 16 }) } : {}),
             ...(Array.isArray(it.uiAnchors) && it.uiAnchors.length > 0 ? { uiAnchors: it.uiAnchors.slice(0, 16) } : {}),
           }))
         const mediaNames = visualItemsCatalog.map((it) => it.path)
@@ -1093,7 +1696,7 @@ export async function runSchemaDirectorWithDegradation({
           ...(zeroVisualAssets && resolvedGenre === 'history-theater' ? { allowedStageArchetypes: VALID_STAGE_ARCHETYPES, allowedStageMoods: ['dawn-amber', 'crimson-war', 'indigo-night', 'ash-twilight', 'bronze-hall', 'jade-river', 'void-gold'], allowedStageSettings: ['palace-stairs', 'mountain-camp', 'city-siege', 'river-gorge', 'vast-plain'] } : {}),
           relativeAssets: mediaNames,
           assetsCatalog: visualItemsCatalog.length > 0 ? visualItemsCatalog : undefined,
-          scenesHint: scriptData?.authoringMode === 'local-draft'
+          scenesHint: useDraftReference === false || (useDraftReference !== true && scriptData?.authoringMode === 'local-draft')
             ? undefined
             : (scriptData?.scenes || []).map((s) => ({
                 id: s.id,
@@ -1102,35 +1705,31 @@ export async function runSchemaDirectorWithDegradation({
                 narration: s.narration,
                 highlights: s.highlights,
               })),
+          // 「出片时参考现有草稿」: the draft's order, key points and voice timing as the pacing baseline
+          draftReference:
+            useDraftReference === true && Array.isArray(scriptData?.scenes) && scriptData.scenes.length >= 2
+              ? {
+                  title: scriptData.title || undefined,
+                  sceneCount: scriptData.scenes.length,
+                  totalSec: Number(scriptData.totalDurationSec) || undefined,
+                  scenes: scriptData.scenes.slice(0, 80).map((s) => ({
+                    id: s.id,
+                    title: s.title,
+                    narration: String(s.narration || '').slice(0, 80) || undefined,
+                    durationSec: Number(s.durationSec) || undefined,
+                  })),
+                }
+              : undefined,
         }
         const rawGoalText = `${cleanTopic} ${effectiveDirectorNotes} ${scriptData?.goal || ''} ${noteSummaries || ''}`
-        const effectiveNarrationModeT1 = narrationMode || scriptData?.narrationMode || 'tts'
-        const isPureMusicMvT1 = effectiveNarrationModeT1 === 'subtitle-mv'
-        const durationPolicy = resolveTargetDurationPolicy({
-          durationMode: durationMode || scriptData?.durationMode || 'auto',
-          targetDurationSec: Number(targetDurationSec) || Number(scriptData?.targetDurationSec) || 0,
-          // the user's wording only: a plaza template's style recipe describes its source film
-          text: stripPlazaTemplateGuidance(rawGoalText),
-          pacingProfile,
-          narrationMode: effectiveNarrationModeT1,
-          hasVisualAssets: mediaNames.length > 0,
-          bgmDurationSec: Number(effectiveBgm?.durationSec) || 0,
-          referenceShotCount: Number(effectiveRefStyle?.pacingSignature?.targetShotCount || effectiveRefStyle?.shotCount || 0),
-          referenceDurationSec: Number(effectiveRefStyle?.durationSec || 0),
-        })
-        const isComprehensiveUnlimited = durationPolicy.unlimited || noteSummaries.length >= 420 || mediaNames.length >= 6
-        const desiredZeroShotsMin = durationPolicy.enforced || isPureMusicMvT1 || pacingProfile.id === 'dynamic'
-          ? durationPolicy.targetShotsMin
-          : isComprehensiveUnlimited
-            ? Math.max(12, Math.min(durationPolicy.hardMaxShots - 6, durationPolicy.targetShotsMin))
-            : durationPolicy.targetShotsMin
-        const desiredZeroShotsMax = durationPolicy.targetShotsMax
-        const desiredUiShotsMin = durationPolicy.enforced
-          ? Math.max(durationPolicy.targetShotsMin, Math.min(22, mediaNames.length))
-          : isComprehensiveUnlimited
-            ? Math.max(14, Math.min(22, mediaNames.length * 2))
-            : durationPolicy.targetShotsMin
-        const desiredUiShotsMax = Math.max(desiredUiShotsMin + 4, durationPolicy.targetShotsMax)
+        const effectiveNarrationModeT1 = planNarrationMode
+        const isPureMusicMvT1 = planIsPureMusicMv
+        const durationPolicy = planDurationPolicy
+        const isComprehensiveUnlimited = planComprehensive
+        const desiredZeroShotsMin = planShotRange.zeroMin
+        const desiredZeroShotsMax = planShotRange.zeroMax
+        const desiredUiShotsMin = planShotRange.uiMin
+        const desiredUiShotsMax = planShotRange.uiMax
         if (durationPolicy.enforced || isPureMusicMvT1) {
           prompt.targetDuration = {
             mode: durationPolicy.mode,
@@ -1181,7 +1780,15 @@ export async function runSchemaDirectorWithDegradation({
   2. 若某素材为静态截图且带有 \`uiAnchors\`，填写 \`focusFx\`、\`focusFy\`、\`clickLabel\` 时**必须直接照抄 \`uiAnchors\` 里的真实坐标（包括顶栏 \`fy≈0.03\` 等位置）**，严禁靠猜编造坐标！
   3. 严禁虚构与画面实际显示的文字不符的假案例（如画面显示工作台真实工程名却硬编无关示例）。`
             : ''
-        const pacingLabelHint = `当前选用节奏方案【${pacingProfile.label}】：${pacingProfile.ruleHint}${unlimitedDurationHint}\n${strictContentRules}${uiInteractiveRules}`
+        // the brief's cast bible is binding: names verbatim, looks from the brief, everyone named is drawn
+        const castBibleRules = briefCastInfo?.cast?.length
+          ? `\n【红线铁律 · 人物设定以用户方案为准】：导演备注里的「人物设定」（castBible）就是本片演员表：顶层 \`cast\` 必须逐一包含这些人物，\`name\` 逐字照抄（如「${briefCastInfo.cast[0].name}」），\`look\` 照抄他的外貌与服装要点，\`figure\` 按外貌服装选最接近的选项与 #hex 颜色；不要改名、不要合并、不要漏人。每镜 \`cast\` 必须列出本镜旁白、字幕、标题和 visualBlueprint 里点名或明显指代的每一个人物（写到谁就画谁）；分镜段落写了「出镜：某某」的时间段，这段里的镜头都要让这些人物清楚出现在画面上（cast 写上他们的 id），除非这一镜明确是空镜或字卡。`
+          : ''
+        if (briefCastInfo?.cast?.length) prompt.castBible = briefCastInfo.cast.map((c) => ({ name: c.name, role: c.role || undefined, look: briefCastLook(c) || undefined }))
+        const draftRules = prompt.draftReference
+          ? `\n【参考现有草稿】：用户要求参考现有草稿（draftReference，${prompt.draftReference.sceneCount} 镜）：沿用草稿的叙事顺序、要点和配音节奏作为基准，可以把草稿的一镜拆成多镜、补足细节；镜头数量仍按本次要求拆分，不要因为草稿镜头少就少拆。`
+          : ''
+        const pacingLabelHint = `当前选用节奏方案【${pacingProfile.label}】：${pacingProfile.ruleHint}${unlimitedDurationHint}\n${strictContentRules}${uiInteractiveRules}${castBibleRules}${draftRules}`
         const zeroLayoutExample = isFreeformCoding
           ? isHistoricalPrompt
             ? 'narrative-diorama|freeform-stage'
@@ -1198,7 +1805,7 @@ ${pacingLabelHint}
 1. **贴合题材的拆镜与节奏（严格音画合一，绝不乱加音效！）**：拆分为 **${desiredZeroShotsMin}~${desiredZeroShotsMax} 个镜头**，${pacingProfile.ruleHint}（单镜口播长度与时长严格匹配；每幕设置富有感染力的 \`emotion\` 与合理 \`speechRate\` \`0.92~1.14\`）；为每幕精准标注 \`actionMode\`：**只有真正刀剑/长矛短兵相接激战的镜头才标 \`clash-flurry\`（触发半拍连续急促刀剑金属碰撞），单次拔剑/迎击标 \`single-clash\`，真实骑兵冲锋标 \`cavalry\`，重拍高潮标 \`drop-impact\`，其余朝堂/人物肖像/地图/竹简/封禅/尾声一律标 \`clean\`（纯 BGM 呼吸，严禁乱加打斗音或叮咚铃！）**。${isHistoricalPrompt ? '**兵刃接触必须画出来并给出拍位**：凡标 \`clash-flurry\` / \`single-clash\` 的镜头，\`visualBlueprint\` 必须写清每一次可见的兵器相交（谁的矛/剑撞上谁的兵器、火星在哪里），并用 \`impactBeats\` 给出接触发生的拍位（从本镜切入点起算，0 = 切入点，可用 0.5 半拍、0.25 四分之一拍）：\`clash-flurry\` 每半拍一次可见格挡/劈砍，2~4 拍的镜头安排 5~8 次（如 [0,0.5,1,1.5,2,2.5,3.5]，最后一击最重），接触前写出蓄力挥砍；\`single-clash\` 只给 1 个拍位；只有冲锋、对峙、行军而没有兵刃相交的镜头不要标 clash（标 \`cavalry\` 或 \`clean\`）。**每一场真正的大战（首战、主战役、决战高潮）都要安排一组连续 2~3 个镜头的短兵交锋（\`clash-flurry\` 与半拍闪切 \`single-clash\` 交替，beatCount 用 0.5~4），像参考片一样急促激烈、刀刀踩在节拍上**；不该有打斗声的镜头在 \`visualBlueprint\` 里写明“无兵刃接触/不加打斗声”。' : ''}
 2. **零预设束缚，每镜写出独一无二的 \`visualBlueprint\`（下游 TSX 代码生成员直读！）**：严格遵循 ${resolvedGenreLabel} 的专属视觉审美自由造景（不要生搬硬套不相关的科技/电商卡片）。
 3. **按画面为每镜规划 Vibecoding 工具**：\`vibeTools\` 从 threejs（三维空间/纵深/粒子）、animejs（文字、书法、印章、图表的交错编排）、tweenjs（弹性缓动与镜头推拉曲线）、ammojs（真实物理坠落/碰撞/散落）、tsl-textures（水面、云层、玉石青铜等程序化材质）中选出本镜真正需要的 0~3 个——下游主程会被要求在该镜代码里真正实现并逐镜核对，所以只写画面确实需要的；人物/马匹镜头系统会自动建议剪影人物库，不必写进 vibeTools。
-3.2 **演员表 cast（任何题材通用）**：作品里出现的主要人物（≤6 个，古装将领、现代上班族、童话角色、讲解员都算；马匹由画面自动处理，猫狗等其他动物不进演员表）写进顶层 \`cast\`，外观 \`figure\` 字段只能从给出的选项里选、颜色用 #hex，同一角色全片外观一致；每镜 \`cast\` 列出该镜出镜的角色 id；没有人物的作品给 \`"cast": []\`。
+3.2 **演员表 cast（任何题材通用）**：作品里出现的主要人物（≤6 个，古装将领、现代上班族、童话角色、讲解员都算；马匹由画面自动处理，猫狗等其他动物不进演员表）写进顶层 \`cast\`，外观 \`figure\` 字段只能从给出的选项里选、颜色用 #hex，同一角色全片外观一致；每镜 \`cast\` 必须列出本镜旁白、字幕、标题和 visualBlueprint 里点名或明显指代（如“你”）的每一个角色 id——文案里写到谁，画面里就要清楚画出谁；没有人物的作品给 \`"cast": []\`。
 3.21 **人物画风 \`figureStyle\`（全片统一；按每部作品自己的气质选，不要所有作品都用同一种）**：用户需求里点名了画风就照用户的——是剪影 silhouette / 剪纸 papercut / 皮影 puppet / 水墨 ink / 扁平侧身 flat / 火柴人 stick 之一就填对应 id（这些有现成人物库），是其它画风（Q版萌系、日系动漫、美式卡通、绘本手绘、年画、像素风、低多边形、黏土、写实插画等）就填 custom 并在 \`figureStyleNote\` 写清楚（如：Q版大头萌系，圆脸大眼），主程会自己设计角色；用户没提时按作品气质选：历史史诗、战争常用 silhouette，民俗节日可用 papercut，戏曲传说可用 puppet，古诗词山水可用 ink，其它题材（现代生活、产品、科普、童话、职场、MV 等）想要鲜明的角色设计就填 custom 并写清楚，拿不准就填 auto（交给主程按画面决定）。
 3.3 **氛围与环境声**：每镜 \`atmosphere\`（none|dust|embers|snow|rain|petals|leaves|bokeh|motes|fireflies|mist）按画面里真实存在的空气/天气选择（篝火战火→embers，风沙→dust，雪→snow，霓虹夜景→bokeh，科技数据→motes，雾→mist，没有就 none）；\`ambience\`（none|wind|river|rain|fire|crowd|night|city|office|forest|sea|space|battle）按画面里应当听到的环境声选择（江边/渡船→river，战场→battle，宴会/集市/咖啡馆/餐厅→crowd，街道车流→city，办公室/教室→office，森林→forest，海边→sea，夜晚虫鸣→night，旷野风沙→wind，篝火壁炉→fire；界面演示、数据图表、纯文字镜头给 none）。
 3.1 **绝对禁止输出任何网址 URL、参考来源标注或制作指令词**：所有旁白纯正自然，禁用双引号，阿拉伯数字原样保留（系统会自动按语义切分字幕）。
@@ -1211,101 +1818,285 @@ ${pacingLabelHint}
 1. **依应用场景适配节奏与富有感情的配音演播**：拆分为 **${desiredUiShotsMin}~${desiredUiShotsMax} 个镜头**，${pacingProfile.ruleHint} 每幕标注生动 \`emotion\` 与节奏感 \`speechRate\`（\`1.05~1.12\`）。
 2. **精确对应文件名与内容，拒绝错配！**：每张截图引用 exact \`relativeAssets\` 路径并只解说该文件名真实对应的界面（例如 \`01b-drawer-open-light\` 讲工程抽屉，\`01c-new-project-modal\` 讲新建工程弹窗，\`02a/02b\` 讲硬件/低配保护）；开篇/原理/转折/结尾或自由视觉场景可置 \`assetRefs: []\` 并用 \`layout: "freeform-stage"\` 交由 AI 自由编码。
 3. **严禁网址参考来源注释与元指令词，禁用双引号且保留阿拉伯数字**。\`transition\` 仅允许 ${VALID_TRANSITIONS.join('/')}。`
-        const res = await tier1Llm({
-          system: systemPrompt + styleDirective,
-          messages: [{ role: 'user', content: JSON.stringify(prompt) }],
-          temperature: zeroVisualAssets ? 0.4 : 0.28,
-          maxTokens: desiredZeroShotsMin >= 30 || durationPolicy.targetSec >= 110 ? 15000 : isComprehensiveUnlimited || zeroVisualAssets ? 10000 : 7500,
-          timeoutMs: 420_000,
-          responseFormat: 'json',
-        })
-        const candidate = safeExtractJson(res?.text)
-        const candShots = candidate?.shots || candidate?.scenes || candidate?.storyboard
-        const hasExplicitCandidateShots = Array.isArray(candShots) && candShots.length >= 2
-        let repaired = hasExplicitCandidateShots
-          ? repairPromoPlanRules(candidate, { topic: cleanTopic, style, genre: resolvedGenre, genreLabel: resolvedGenreLabel, authoringMode: effectiveAuthoringMode, directorNotes: effectiveDirectorNotes, contentOutline, assetsManifest, existingScript: scriptData, bgmMeta: effectiveBgm, narrationMode, pacingMode: effectivePacingMode })
-          : null
+        const repairOpts = { topic: cleanTopic, style, genre: resolvedGenre, genreLabel: resolvedGenreLabel, authoringMode: effectiveAuthoringMode, directorNotes: effectiveDirectorNotes, contentOutline, assetsManifest, existingScript: repairBaseScript, bgmMeta: effectiveBgm, narrationMode, pacingMode: effectivePacingMode }
+        const fullSystem = systemPrompt + styleDirective
+        // follow-up calls get the same brief without the previous storyboard
+        const promptLite = { ...prompt, scenesHint: undefined }
+        const pad2 = (n) => String(n).padStart(2, '0')
+        const abortIfNeeded = () => {
+          if (signal?.aborted) throw signal.reason || Object.assign(new Error('Request aborted'), { name: 'AbortError' })
+        }
+        const planTemp = zeroVisualAssets ? 0.4 : 0.28
+        const rangeText = `${shotNeeds.needMin}~${shotNeeds.needMax}`
+        // A whole storyboard in one reply costs ~300–450 output tokens per shot: a long film (a 135 s 高燃 film needs
+        // 46–62 shots ≈ 14–28k tokens) cannot come back complete from one call of a fast / weak model, so it is written
+        // page by page — an outline (beat sheet) first, then ≤ 8 shots per call.
+        const shotTokens = zeroVisualAssets ? (isHistoricalPrompt ? 450 : 380) : 260
+        const usePaged = shotNeeds.target * shotTokens + 1500 > SINGLE_REPLY_TOKEN_BUDGET
+        let candidate = null
+        let rawShots = []
+        let cutOff = false
+        let cutFinish = ''
+        let seedShotCount = 0
+        let modelWrittenShots = 0
 
-        // Anti-shrink duration & anti-sparse shot-count guard:
-        // If duration falls short OR pure-music/dynamic beat-sync returned too few shots (e.g. 20 instead of 36+),
-        // automatically ask LLM to append continuation/climax shots so final video hits target density & duration!
-        const needsDensityBoost =
-          zeroVisualAssets &&
-          (isPureMusicMvT1 || pacingProfile.id === 'dynamic') &&
-          repaired &&
-          repaired.shots.length < Math.round(desiredZeroShotsMin * 0.85)
-        if (repaired && validatePromoPlan(repaired).ok && ((durationPolicy.enforced && durationPolicy.minSec >= 45) || needsDensityBoost)) {
-          const estSec = estimatePlanDurationSec(repaired.shots, { narrationMode: effectiveNarrationModeT1 })
-          const shortByDur = durationPolicy.enforced && estSec < durationPolicy.minSec * 0.84
-          if (shortByDur || needsDensityBoost) {
-            const missingSec = Math.max(20, Math.round(durationPolicy.targetSec - estSec))
-            const missingShots = Math.max(0, desiredZeroShotsMin - repaired.shots.length)
-            const extraShotsMin = Math.max(
-              4,
-              missingShots,
-              Math.round(missingSec / Math.max(2.2, pacingProfile.id === 'dynamic' || isPureMusicMvT1 ? 2.6 : 5.2)),
-            )
-            const extraCharsMin = effectiveNarrationModeT1 === 'subtitle-mv' ? 0 : Math.round(missingSec * 3.85)
+        if (usePaged) {
+          planCheck.mode = 'paged'
+          const segMin = Math.max(3, Math.ceil(shotNeeds.target / 10))
+          const segMax = Math.max(segMin + 2, Math.ceil(shotNeeds.target / 4))
+          progress(`分镜较长（${formatShotPlanLine(shotNeeds.target, shotNeeds)}），先写分镜大纲，再分页逐镜展开…`)
+          let outline = null
+          try {
+            const res = await tier1Llm({
+              system: `${fullSystem}\n\n【分页规划 · 第 1 步：先写分镜大纲】本片需要约 ${shotNeeds.target} 个镜头（允许 ${rangeText} 镜），一次写完会超出回复长度，所以分两步：这一步只写大纲，下一步再按大纲分页逐镜展开。
+只输出 JSON：{ 上面格式里除 shots 以外的全部顶层字段（version、genre、genreLabel、mode、beatSync、title、style、bpm、audioProfile、figureStyle、figureStyleNote、cast 等）, "segments": [{ "title": "段落标题（12 字以内）", "summary": "这一段讲什么：谁、在哪、做什么（20~50 字）", "shots": 本段镜头数, "cast": ["本段出镜的角色 id"] }] }
+- segments 按故事顺序写 ${segMin}~${segMax} 段，每段 3~10 镜，各段 shots 相加等于 ${shotNeeds.target}；最后一段是全片收尾。${briefCastInfo?.segments?.length >= 2 ? '\n- 导演备注里已经有「分镜段落」：segments 按它的顺序、标题和出镜人物来写，只按本次需要的总镜数调整每段 shots。' : ''}
+- 这一步不要写 shots 数组，也不要写逐镜旁白。`,
+              messages: [{ role: 'user', content: JSON.stringify(prompt) }],
+              temperature: planTemp,
+              maxTokens: 4000,
+              responseFormat: 'json',
+            })
+            const { json, salvaged } = extractPlanJson(res?.text)
+            let segs = normalizeOutlineSegments(json?.segments || json?.outline || json?.beats || json?.acts, shotNeeds.target)
+            // the brief's own 分镜段落 stand in for an unusable outline
+            if (segs.length < 2 && briefCastInfo?.segments?.length >= 2 && !planShotsOf(json).length) {
+              segs = normalizeOutlineSegments(briefCastInfo.segments.map((g) => ({ title: g.title, summary: g.picture || g.title, shots: g.shots, cast: g.cast })), shotNeeds.target)
+            }
+            if (segs.length >= 2) {
+              outline = { header: json && typeof json === 'object' && !Array.isArray(json) ? json : {}, segments: segs }
+            } else if (planShotsOf(json).length >= 1) {
+              // the model wrote the storyboard itself instead of an outline: treat it like a single reply
+              candidate = json
+              rawShots = planShotsOf(json)
+              cutOff = Boolean(res?.truncated) || salvaged
+              cutFinish = res?.finishReason || (salvaged ? 'json-cut-off' : '')
+              planCheck.mode = 'single'
+            }
+            trace.push({ tier: '1-outline', name: 'Paged Storyboard Outline', ok: Boolean(outline), ...(outline ? { segments: outline.segments.length, target: shotNeeds.target } : { reason: rawShots.length ? '模型直接给了分镜' : '大纲不可用' }) })
+          } catch (err) {
+            if (err?.name === 'AbortError' || signal?.aborted || isBillingError(err)) throw err
+            trace.push({ tier: '1-outline', name: 'Paged Storyboard Outline', ok: false, reason: String(err?.message || err).slice(0, 160) })
+            if (llmOutage) throw err
+          }
+          // without a usable outline the storyboard comes from one reply (continued below when it is cut off)
+          planCheck.mode = outline ? 'paged' : 'single'
+          if (outline) {
+            const pages = buildPlanPages(outline.segments, PLAN_PAGE_SHOTS)
+            planCheck.pages = pages.length
+            const headerCast = (Array.isArray(outline.header.cast) ? outline.header.cast : [])
+              .filter((c) => c && typeof c === 'object')
+              .map((c) => ({ id: c.id, name: c.name, look: c.look }))
+            const outlineView = outline.segments.map((s) => ({ n: s.n, title: s.title, shots: s.shots, ...(s.cast.length ? { cast: s.cast } : {}) }))
+            for (let pi = 0; pi < pages.length; pi++) {
+              abortIfNeeded()
+              const page = pages[pi]
+              let got = []
+              if (!llmOutage) {
+                progress(`分页写分镜：第 ${pi + 1}/${pages.length} 页（第 ${page.from}–${page.to} 镜）`)
+                // one more call for whatever a cut-off / short page left out
+                for (let attempt = 0; attempt < 2 && got.length < page.shots && !llmOutage; attempt++) {
+                  const from = page.from + got.length
+                  const k = page.to - from + 1
+                  const isLast = pi === pages.length - 1
+                  try {
+                    const res = await tier1Llm({
+                      system: `${fullSystem}\n\n【分页规划 · 第 2 步：按大纲逐页写分镜（第 ${pi + 1}/${pages.length} 页）】大纲见 pagedPlan.outline。这一页只写第 ${from}~${page.to} 镜（共 ${k} 镜），内容对应 pagedPlan.thisPage 里的段落与镜数，接着 pagedPlan.previousShot 按故事顺序往下写。
+只输出 JSON：{ "shots": [正好 ${k} 个镜头] }。每镜字段与上面格式里的 shots 完全相同，id 依次为 scene-${pad2(from)}~scene-${pad2(page.to)}，并多写一个 "segment": 所属段落的序号 n；每镜 cast 用 pagedPlan.cast 里的 id。
+不要输出 cast、audioProfile 等顶层字段，不要重写前面已经写过的镜头。${isLast ? '本页最后一镜就是全片的收尾镜头。' : '本页还没到全片结尾：不要写收尾、谢幕或总结镜头。'}`,
+                      messages: [
+                        {
+                          role: 'user',
+                          content: JSON.stringify({
+                            ...promptLite,
+                            pagedPlan: {
+                              title: outline.header.title || undefined,
+                              totalShots: pages[pages.length - 1].to,
+                              cast: headerCast.length ? headerCast : undefined,
+                              outline: outlineView,
+                              // a retry only asks for the part of the page the first reply did not reach
+                              thisPage: remainingPageItems(page.items, got.length),
+                              previousShot: rawShots.length || got.length ? compactShot(got[got.length - 1] || rawShots[rawShots.length - 1]) : undefined,
+                              nextSegment: pages[pi + 1]?.items?.[0]?.title || undefined,
+                            },
+                          }),
+                        },
+                      ],
+                      temperature: planTemp,
+                      maxTokens: Math.min(8000, k * 650 + 800),
+                      responseFormat: 'json',
+                    })
+                    const { json, salvaged } = extractPlanJson(res?.text)
+                    const shots = planShotsOf(json).slice(0, k + 2)
+                    if (res?.truncated || salvaged) trace.push({ tier: '1-page', name: 'Page Reply Cut Off', page: pi + 1, ok: false, shots: shots.length, finishReason: res?.finishReason || 'json-cut-off' })
+                    if (!shots.length) break
+                    got = got.concat(shots)
+                  } catch (err) {
+                    if (err?.name === 'AbortError' || signal?.aborted || isBillingError(err)) throw err
+                    trace.push({ tier: '1-page', name: 'Paged Storyboard Page', page: pi + 1, ok: false, reason: String(err?.message || err).slice(0, 160) })
+                  }
+                }
+              }
+              // a segment the model never reached keeps its beat as one simplified shot (split up locally below)
+              const filled = fillPageShots(page, got, { spoken: effectiveNarrationModeT1 !== 'subtitle-mv' })
+              seedShotCount += filled.seeds
+              modelWrittenShots += Math.min(got.length, filled.shots.length)
+              rawShots.push(...filled.shots)
+              trace.push({ tier: '1-page', name: 'Paged Storyboard Page', page: pi + 1, ok: got.length >= page.shots, shots: got.length, want: page.shots })
+            }
+            if (seedShotCount > 0) {
+              // each seed becomes the number of shots its segment was planned with (local split, no model call)
+              const want = rawShots.reduce((a, s) => a + Math.max(1, Math.round(Number(s.seedShots) || 1)), 0)
+              const d = densifyPlanShots(rawShots, { needShots: want, onlySeeds: true, spoken: effectiveNarrationModeT1 !== 'subtitle-mv', beatDriven: shotNeeds.beatDriven, historical: isHistoricalPrompt, pacingId: pacingProfile.id })
+              if (d.densified) {
+                planCheck.seedSplit = { fromShots: rawShots.length, toShots: d.to }
+                rawShots = d.shots
+              }
+            }
+            candidate = { ...outline.header }
+            delete candidate.segments
+            delete candidate.outline
+          }
+        }
+
+        if (!candidate) {
+          const res = await tier1Llm({
+            system: fullSystem,
+            messages: [{ role: 'user', content: JSON.stringify(prompt) }],
+            temperature: planTemp,
+            maxTokens: desiredZeroShotsMin >= 30 || durationPolicy.targetSec >= 110 ? 15000 : isComprehensiveUnlimited || zeroVisualAssets ? 10000 : 7500,
+            // no own timeout: the shared model-call limit applies (llm-client getLlmTimeoutMs, 10 min by default)
+            responseFormat: 'json',
+          })
+          const { json, salvaged } = extractPlanJson(res?.text)
+          candidate = json
+          rawShots = planShotsOf(json)
+          // cut off at the output limit (the provider says so, or the JSON had to be rebuilt from its complete shots)
+          cutOff = Boolean(res?.truncated) || salvaged
+          cutFinish = res?.finishReason || (salvaged ? 'json-cut-off' : '')
+        }
+        planCheck.modelShots = planCheck.mode === 'paged' ? modelWrittenShots : rawShots.length
+        if (cutOff) {
+          planCheck.truncated = true
+          trace.push({ tier: '1-cutoff', name: 'Reply Cut Off', ok: false, shots: rawShots.length, finishReason: cutFinish })
+        }
+        rawShots = renumberShotIds(rawShots)
+
+        // A reply cut off mid-story: continue from the cut, page by page, until the model writes the closing shot.
+        if (cutOff && rawShots.length >= 1 && rawShots.length < shotNeeds.needMax) {
+          let done = false
+          let added = 0
+          const maxCalls = Math.min(8, Math.ceil(Math.max(1, shotNeeds.target - rawShots.length) / PLAN_PAGE_SHOTS) + 1)
+          for (let c = 0; c < maxCalls && !done && rawShots.length < shotNeeds.needMax && !llmOutage; c++) {
+            abortIfNeeded()
+            const from = rawShots.length + 1
+            const k = Math.max(3, Math.min(PLAN_PAGE_SHOTS, shotNeeds.target - rawShots.length))
+            progress(`分镜回复被截断（写到第 ${rawShots.length} 镜），正在接着写第 ${from}–${from + k - 1} 镜…`)
             try {
-              const expandRes = await callLlmChatFn({
-                system: `${systemPrompt}\n\n【紧急补镜加密任务】：上一轮仅输出 ${repaired.shots.length} 镜（预估约 ${Math.round(estSec)} 秒），低于要求的 **${desiredZeroShotsMin}~${desiredZeroShotsMax} 镜 / ${durationPolicy.label}**！请紧接已有分镜继续深化战役高潮、人物动作特写、地图推进、竹简功绩与收束镜头，**仅输出需要追加补充的新分镜数组**（JSON: { "appendShots": [...] }），至少补充 **${extraShotsMin} 个高质量新分镜**${extraCharsMin > 0 ? `（新增总旁白至少 ${extraCharsMin} 字，每镜深入展开细节、案例、转折或高潮收束，严禁重复已有台词）` : `（每镜 1~4 拍紧贴 BGM 重拍与高潮突降点，带完整 stageSpec 与不同 archetype）`}！`,
+              const res = await tier1Llm({
+                system: `${fullSystem}\n\n【续写分镜】上一次回复只写到第 ${rawShots.length} 镜就被截断了（已写镜头的标题见 continuation.writtenTitles，不要重写）。请接着写第 ${from}~${from + k - 1} 镜（本次 ${k} 镜），按故事顺序往下推进；全片约 ${shotNeeds.target} 镜（允许 ${rangeText} 镜）。
+只输出 JSON：{ "shots": [...], "done": false }。每镜字段与上面格式里的 shots 完全相同，id 从 scene-${pad2(from)} 开始；写到全片的收尾镜头时把 "done" 设为 true。`,
                 messages: [
                   {
                     role: 'user',
                     content: JSON.stringify({
-                      topic: cleanTopic,
-                      targetDurationSec: durationPolicy.targetSec,
-                      targetShotsMin: desiredZeroShotsMin,
-                      currentShotCount: repaired.shots.length,
-                      currentEstimatedSec: estSec,
-                      missingSec,
-                      existingTitles: repaired.shots.map((s) => `${s.id}: ${s.title}`),
-                      lastShot: repaired.shots[repaired.shots.length - 1],
-                      relativeAssets: mediaNames,
+                      ...promptLite,
+                      continuation: {
+                        title: candidate?.title || undefined,
+                        cast: Array.isArray(candidate?.cast) ? candidate.cast.map((cm) => ({ id: cm?.id, name: cm?.name })) : undefined,
+                        writtenTitles: rawShots.map((s) => `${s.id}: ${s.title || ''}`),
+                        lastShot: compactShot(rawShots[rawShots.length - 1]),
+                        nextFrom: from,
+                        totalShots: shotNeeds.target,
+                      },
+                    }),
+                  },
+                ],
+                temperature: planTemp,
+                maxTokens: Math.min(8000, k * 650 + 800),
+                responseFormat: 'json',
+              })
+              const { json, salvaged } = extractPlanJson(res?.text)
+              const known = new Set(rawShots.map(shotTextKey))
+              const fresh = planShotsOf(json).filter((s) => !known.has(shotTextKey(s))).slice(0, k + 2)
+              if (!fresh.length) break
+              rawShots = renumberShotIds([...rawShots, ...fresh])
+              added += fresh.length
+              done = json?.done === true || (!res?.truncated && !salvaged && fresh.length < k)
+            } catch (err) {
+              if (err?.name === 'AbortError' || signal?.aborted || isBillingError(err)) throw err
+              trace.push({ tier: '1-continue', name: 'Cut-off Storyboard Continued', ok: false, reason: String(err?.message || err).slice(0, 160) })
+              break
+            }
+          }
+          if (added) planCheck.recovered = 'continue'
+          planCheck.storyFinished = done
+          trace.push({ tier: '1-continue', name: 'Cut-off Storyboard Continued', ok: done, added, shots: rawShots.length })
+        }
+
+        // A finished storyboard with too few shots (or, for a spoken film, too little narration for the target length):
+        // ask for extra shots placed in story order — between existing shots, never after the closing shot.
+        const spokenFilm = effectiveNarrationModeT1 !== 'subtitle-mv'
+        const estSecNow = estimatePlanDurationSec(rawShots, { narrationMode: effectiveNarrationModeT1 })
+        const shortByDur = spokenFilm && durationPolicy.enforced && durationPolicy.minSec >= 45 && rawShots.length >= 1 && estSecNow < durationPolicy.minSec * 0.84
+        if (rawShots.length >= 1 && (rawShots.length < shotNeeds.needMin || shortByDur)) {
+          let missing = Math.max(
+            rawShots.length < shotNeeds.needMin ? shotNeeds.target - rawShots.length : 0,
+            shortByDur ? Math.max(4, Math.round((durationPolicy.targetSec - estSecNow) / (shotNeeds.beatDriven ? 2.6 : 5.2))) : 0,
+          )
+          const before = rawShots.length
+          const maxCalls = Math.min(5, Math.ceil(missing / PLAN_PAGE_SHOTS))
+          for (let c = 0; c < maxCalls && missing > 0 && !llmOutage; c++) {
+            abortIfNeeded()
+            const k = Math.min(PLAN_PAGE_SHOTS, missing)
+            const closingId = rawShots[rawShots.length - 1].id
+            progress(`分镜只有 ${rawShots.length} 镜（需要 ${shotNeeds.needMin}–${shotNeeds.needMax} 镜），正在按故事顺序补 ${k} 镜…`)
+            try {
+              const res = await tier1Llm({
+                system: `${fullSystem}\n\n【补镜加密】上一版分镜只有 ${rawShots.length} 镜，少于需要的 ${rangeText} 镜${shortByDur ? `，旁白也不够撑满 ${durationPolicy.label}` : ''}。请在已有镜头之间插入 ${k} 个新镜头（动作细节、人物特写、转折、推进……），让叙事更密更连贯${spokenFilm ? '，每个新镜头写足新的旁白（不重复已有台词）' : ''}。不要改写已有镜头；最后一镜 ${closingId} 是全片收尾，新镜头一律插在它之前。
+只输出 JSON：{ "inserts": [{ "afterId": "插在哪个已有镜头之后（填它的 id）", "shot": { 字段与上面格式里的 shots 相同 } }] }`,
+                messages: [
+                  {
+                    role: 'user',
+                    content: JSON.stringify({
+                      ...promptLite,
+                      insertion: {
+                        title: candidate?.title || undefined,
+                        cast: Array.isArray(candidate?.cast) ? candidate.cast.map((cm) => ({ id: cm?.id, name: cm?.name })) : undefined,
+                        existingShots: rawShots.map((s) => ({ id: s.id, title: s.title, narration: String(s.narration || '').slice(0, 40), beatCount: s.beatCount })),
+                        closingShotId: closingId,
+                        newShots: k,
+                      },
                     }),
                   },
                 ],
                 temperature: 0.42,
-                maxTokens: 11000,
-                timeoutMs: 300_000,
+                maxTokens: Math.min(8000, k * 650 + 800),
                 responseFormat: 'json',
               })
-              const expJson = safeExtractJson(expandRes?.text)
-              const extraRaw = expJson?.appendShots || expJson?.shots || expJson?.scenes || []
-              if (Array.isArray(extraRaw) && extraRaw.length >= 2) {
-                const startIdx = repaired.shots.length
-                const normalizedExtra = extraRaw.map((s, k) => ({
-                  ...s,
-                  id: `scene-${String(startIdx + k + 1).padStart(2, '0')}`,
-                }))
-                const mergedCandidate = {
-                  ...candidate,
-                  shots: [...repaired.shots, ...normalizedExtra],
-                }
-                const mergedRepaired = repairPromoPlanRules(mergedCandidate, {
-                  topic: cleanTopic,
-                  style,
-                  genre: resolvedGenre,
-                  genreLabel: resolvedGenreLabel,
-                  authoringMode: effectiveAuthoringMode,
-                  directorNotes: effectiveDirectorNotes,
-                  contentOutline,
-                  assetsManifest,
-                  existingScript: scriptData,
-                  bgmMeta: effectiveBgm,
-                  narrationMode,
-                  pacingMode: effectivePacingMode,
-                })
-                if (mergedRepaired && validatePromoPlan(mergedRepaired).ok) {
-                  repaired = mergedRepaired
-                  trace.push({ tier: '1-expand', name: 'Duration Anti-Shrink Expansion', ok: true, fromSec: estSec, toSec: estimatePlanDurationSec(mergedRepaired.shots, { narrationMode: effectiveNarrationModeT1 }) })
-                }
-              }
-            } catch (expErr) {
-              trace.push({ tier: '1-expand', name: 'Duration Anti-Shrink Expansion', ok: false, reason: expErr?.message || String(expErr) })
+              const merged = mergeShotInserts(rawShots, extractPlanJson(res?.text).json || {})
+              if (!merged.added) break
+              rawShots = renumberShotIds(merged.shots)
+              missing -= merged.added
+            } catch (err) {
+              if (err?.name === 'AbortError' || signal?.aborted || isBillingError(err)) throw err
+              trace.push({ tier: '1-insert', name: 'Story-order Shot Inserts', ok: false, reason: String(err?.message || err).slice(0, 160) })
+              break
             }
           }
+          if (rawShots.length > before) {
+            planCheck.recovered = planCheck.recovered || 'insert'
+            trace.push({ tier: '1-insert', name: 'Story-order Shot Inserts', ok: true, fromShots: before, toShots: rawShots.length })
+          }
         }
+        planCheck.seedShots = seedShotCount
+
+        const repaired = rawShots.length >= 2 && candidate && typeof candidate === 'object' && !Array.isArray(candidate)
+          ? repairPromoPlanRules({ ...candidate, shots: rawShots }, repairOpts)
+          : rawShots.length >= 2
+            ? repairPromoPlanRules({ shots: rawShots }, repairOpts)
+            : null
+
         if (repaired && validatePromoPlan(repaired).ok) {
           for (const sh of repaired.shots) {
             sh._mediaDimMap = mediaDimMap
@@ -1313,9 +2104,9 @@ ${pacingLabelHint}
           chosenPlan = repaired
           degradationTier = 1
           styleAnswer = { style: candidate?.style, profile: candidate?.styleProfile || null }
-          trace.push({ tier: 1, name: 'Full JSON Schema', ok: true })
+          trace.push({ tier: 1, name: 'Full JSON Schema', ok: true, shots: repaired.shots.length, mode: planCheck.mode })
         } else {
-          trace.push({ tier: 1, name: 'Full JSON Schema', ok: false, reason: 'JSON 结构未通过约束' })
+          trace.push({ tier: 1, name: 'Full JSON Schema', ok: false, reason: rawShots.length < 2 ? `分镜不足 2 镜（${planCheck.truncated ? '回复被截断' : 'JSON 无法解析'}）` : 'JSON 结构未通过约束' })
         }
       } catch (err) {
         trace.push({ tier: 1, name: 'Full JSON Schema', ok: false, reason: err?.message || String(err) })
@@ -1494,6 +2285,70 @@ ${pacingLabelHint}
     trace.push({ tier: 4, name: briefShots ? `Deterministic Rule Engine Fallback (brief key points × ${briefBeats.length})` : 'Deterministic Rule Engine Fallback', ok: true })
   }
 
+  const finalRepairOpts = { topic: cleanTopic, style, genre: resolvedGenre, genreLabel: resolvedGenreLabel, authoringMode: effectiveAuthoringMode, directorNotes: effectiveDirectorNotes, contentOutline, assetsManifest, existingScript: repairBaseScript, bgmMeta: planBgm, narrationMode, pacingMode: effectivePacingMode }
+  const repairWholePlan = (shots) => {
+    const dims = (chosenPlan.shots || []).find((s) => s?._mediaDimMap)?._mediaDimMap
+    const next = repairPromoPlanRules({ ...chosenPlan, shots }, finalRepairOpts)
+    if (dims) for (const sh of next.shots) sh._mediaDimMap = dims
+    return next
+  }
+  // Every tier: a storyboard still far below the shots it needs (< ~85 %) is densified locally — no model call — so no
+  // picture has to be held for 10 seconds or more.
+  {
+    const n0 = chosenPlan.shots.length
+    if (n0 >= 1 && n0 < Math.round(shotNeeds.needMin * 0.85)) {
+      const d = densifyPlanShots(chosenPlan.shots, {
+        needShots: shotNeeds.needMin,
+        spoken: planNarrationMode !== 'subtitle-mv',
+        beatDriven: shotNeeds.beatDriven,
+        historical: resolvedGenre === 'history-theater' || isHistoricalContent(`${cleanTopic} ${effectiveDirectorNotes}`),
+        pacingId: pacingProfile.id,
+      })
+      if (d.densified && d.to > n0) {
+        chosenPlan = repairWholePlan(d.shots)
+        planCheck.densified = true
+        planCheck.densifiedFrom = n0
+        planCheck.densifiedTo = d.to
+        trace.push({ tier: 'densify', name: 'Local Shot Densify', ok: true, fromShots: n0, toShots: d.to })
+      }
+    }
+  }
+  // 演员表: the brief's 人物设定 is the source of truth for the cast; every shot lists everyone its text names, and a
+  // 分镜段落's 出镜 list covers the shots in its time range.
+  if (briefCastInfo) {
+    const castRes = applyBriefCastToPlan(chosenPlan, briefCastInfo)
+    if (castRes.changed) trace.push({ tier: 'cast', name: 'Brief Cast Bible', ok: true, cast: castRes.names })
+  }
+  enforcePlanShotCast(chosenPlan, briefCastInfo)
+  // the plan records that part of it was made locally (seed segments split, or the whole storyboard densified)
+  if (planCheck.densified || planCheck.seedSplit) {
+    chosenPlan.densified = {
+      fromShots: planCheck.densified ? planCheck.densifiedFrom : planCheck.seedSplit.fromShots,
+      toShots: chosenPlan.shots.length,
+      ...(planCheck.seedSplit ? { seedSegments: planCheck.seedShots } : {}),
+    }
+  }
+  planCheck.shots = chosenPlan.shots.length
+  planCheck.complete = planCheck.shots >= shotNeeds.needMin && !(planCheck.truncated && !planCheck.recovered) && !planCheck.densified && !planCheck.seedSplit
+  const shotPlanLine = formatShotPlanLine(planCheck.shots, shotNeeds)
+  if (degradationTier === 1) {
+    if (planCheck.truncated) {
+      planWarnings.push(
+        planCheck.recovered === 'continue'
+          ? `大模型的分镜回复被截断（只写到第 ${planCheck.modelShots} 镜），已让它接着续写到 ${planCheck.shots} 镜。`
+          : `大模型的分镜回复被截断（只写到第 ${planCheck.modelShots} 镜），只保留了写完整的镜头。`,
+      )
+    } else if (planCheck.recovered === 'insert') {
+      planWarnings.push(`大模型只写了 ${planCheck.modelShots} 镜（需要 ${shotNeeds.needMin}–${shotNeeds.needMax} 镜），已让它按故事顺序在镜头之间补镜。`)
+    }
+    if (planCheck.seedShots) planWarnings.push(`分页写分镜时有 ${planCheck.seedShots} 段大模型没有写出来，已按大纲补成简化镜头。`)
+  }
+  if (planCheck.densified) {
+    planWarnings.push(
+      `分镜镜头太少（只有 ${planCheck.densifiedFrom} 镜，需要 ${shotNeeds.needMin}–${shotNeeds.needMax} 镜），已在本地把长镜头拆成 ${planCheck.shots} 个短镜头（${planNarrationMode === 'subtitle-mv' ? '字幕' : '旁白'}按句拆开、景别和运镜轮换），画面会比大模型完整策划简单。`,
+    )
+  }
+
   // Final style: an auto project follows the model's pick / design (validated, contrast fixed up) or, without a usable
   // answer (rule tiers, weak models), the keyword rules — never an error. The decision is also written onto the passed
   // scriptData so callers that persist it (the pipeline director stage) keep it.
@@ -1529,21 +2384,36 @@ ${pacingLabelHint}
     writeFileSync(join(absDir, 'plan.resolved.json'), JSON.stringify(resolved, null, 2) + '\n', 'utf8')
   }
 
+  // honest labels: only a complete, untouched single reply is 「完整 JSON Schema」
+  const tierBase =
+    degradationTier === 1
+      ? planCheck.mode === 'paged'
+        ? `Tier 1 · 分页 JSON 分镜（大纲 + ${planCheck.pages} 页）`
+        : planCheck.truncated
+          ? planCheck.recovered === 'continue'
+            ? 'Tier 1 · 回复被截断，已续写补全'
+            : 'Tier 1 · 回复被截断，只保留完整镜头'
+          : planCheck.recovered === 'insert'
+            ? 'Tier 1 · 镜头不足，已按故事顺序补镜'
+            : 'Tier 1 · 完整 JSON Schema'
+      : degradationTier === 2
+        ? 'Tier 2 · 分段轻量化降级'
+        : degradationTier === 3
+          ? 'Tier 3 · A/B/C 选择题降级'
+          : 'Tier 4 · 纯规则代码引擎兜底'
   return {
     ok: validation.ok,
     plan: chosenPlan,
     resolved,
     degradationTier,
-    tierLabel:
-      degradationTier === 1
-        ? 'Tier 1 · 完整 JSON Schema'
-        : degradationTier === 2
-          ? 'Tier 2 · 分段轻量化降级'
-          : degradationTier === 3
-            ? 'Tier 3 · A/B/C 选择题降级'
-            : 'Tier 4 · 纯规则代码引擎兜底',
+    tierLabel: planCheck.densified || planCheck.seedSplit ? `${tierBase} + 本地加密补镜` : tierBase,
     trace,
     llmOutage: llmOutage ? String(llmOutage?.message || llmOutage).slice(0, 300) : '',
     briefBeatCount,
+    // { shots, needMin, needMax, target, mode: single|paged, pages, truncated, recovered: ''|continue|insert,
+    //   densified, densifiedFrom, densifiedTo, seedShots, modelShots, complete }
+    planCheck,
+    shotPlanLine,
+    planWarnings,
   }
 }

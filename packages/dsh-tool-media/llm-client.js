@@ -1,10 +1,70 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import https from 'node:https'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { loadEnv, resolveEnvPath } from '../shared/index.js'
 import { isBillingError } from './cloud-ledger.js'
+import { HOST_AGENT_MODE, listHostTasks, requestHostCompletion } from './host-llm-bridge.js'
+import { readJsonSafe, withFileLockSync, writeJsonAtomic } from './safe-json-store.js'
+
+/**
+ * 宿主智能体代写 (mode 'host-agent'): the agent the user is talking to (Codex, Claude Code …) writes the plugin's model
+ * answers with its own model through the `host_llm_task` MCP tool. An agent may be busy with something else when a task
+ * arrives, so it gets longer than an API call: 30 minutes unless `DSH_HOST_AGENT_TIMEOUT_MS` says otherwise.
+ */
+export const DEFAULT_HOST_AGENT_TIMEOUT_MS = 30 * 60_000
+/** A Latin agent name inside Chinese text gets spaces around it (由 OpenAI Codex 代写 / 由当前智能体代写). */
+const spacedName = (name) => (/[A-Za-z0-9]/.test(String(name)) ? ` ${String(name).trim()} ` : String(name))
+export function getHostAgentTimeoutMs() {
+  loadEnv()
+  const raw = Number(String(process.env.DSH_HOST_AGENT_TIMEOUT_MS ?? '').trim())
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_HOST_AGENT_TIMEOUT_MS
+  return Math.round(Math.min(6 * 3_600_000, Math.max(10_000, raw)))
+}
+
+/**
+ * One time limit for every text-model request the user starts — AI 润色 / AI 立即改 / AI 精修 / AI 协助 / 参考拆解 /
+ * 画面自检 / 封面提示词 / 一键出片 … — so slow reasoning models and busy relays get to finish. Call sites pass nothing
+ * (or `getLlmTimeoutMs()`) instead of their own numbers; the panels wait for the same limit (`llmConfig.timeoutMs`).
+ * `DSH_LLM_TIMEOUT_MS` (milliseconds) overrides the 10-minute default.
+ */
+export const DEFAULT_LLM_TIMEOUT_MS = 600_000
+export function getLlmTimeoutMs() {
+  loadEnv()
+  const raw = Number(String(process.env.DSH_LLM_TIMEOUT_MS ?? '').trim())
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_LLM_TIMEOUT_MS
+  return Math.round(Math.min(7_200_000, Math.max(1_000, raw)))
+}
+
+/** Plain-Chinese duration: 600000 → "10 分钟", 90000 → "1 分 30 秒", 45000 → "45 秒". */
+export function formatLlmWait(ms) {
+  const sec = Math.max(0, Math.round(Number(ms) / 1000) || 0)
+  if (sec < 60) return `${sec} 秒`
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return s ? `${m} 分 ${s} 秒` : `${m} 分钟`
+}
+
+/** The error text of a timed-out model call (keeps the "LLM 请求超时 (Ns)" tag that logs and older callers match on). */
+export function llmTimeoutMessage(ms) {
+  return `大模型在 ${formatLlmWait(ms)}内没有返回结果（LLM 请求超时 (${Math.round(Number(ms) / 1000)}s)）。可以稍后重试，或在「设置 · 模型与密钥」换一个响应更快的模型。`
+}
+
+/**
+ * The runtime's own fetch (Node's bundled undici, or a native one) — only that one is swapped for node:http on long
+ * calls. A fetch a caller or test installed on globalThis keeps handling the request (with the 10-minute default every
+ * call is "long", so mocked fetches would otherwise be bypassed).
+ */
+function isBuiltinFetch(fn) {
+  if (typeof fn !== 'function' || fn !== globalThis.fetch) return false
+  try {
+    return /undici|\[native code\]/.test(Function.prototype.toString.call(fn))
+  } catch {
+    return false
+  }
+}
 
 /**
  * Node built-in http/https POST helper used when `timeoutMs > 240_000` so long-running
@@ -64,7 +124,7 @@ function postJsonLongTimeout(endpoint, headers, bodyStr, timeoutMs, signal) {
       signal.addEventListener('abort', onAbort, { once: true })
     }
     req.setTimeout(timeoutMs, () => {
-      const err = new Error(`LLM 请求超时 (${Math.round(timeoutMs / 1000)}s)`)
+      const err = new Error(llmTimeoutMessage(timeoutMs))
       try { req.destroy(err) } catch {}
       done(rejectPromise, err)
     })
@@ -192,6 +252,8 @@ export function maskSecretKey(rawKey) {
   const key = String(rawKey || '').trim()
   if (!key) return ''
   if (key.length <= 8) return '*'.repeat(key.length)
+  // short keys keep only 2 + 2 characters visible (a 10-character key must never be shown in full)
+  if (key.length <= 16) return `${key.slice(0, 2)}${'*'.repeat(key.length - 4)}${key.slice(-2)}`
   return `${key.slice(0, 6)}${'*'.repeat(Math.min(12, key.length - 10))}${key.slice(-4)}`
 }
 
@@ -234,6 +296,25 @@ function parseCredentialsRefs(credPath) {
   return refs
 }
 
+// DSH's own model capability declarations: pi-ai channels list `input: [text, image]`, the DeepSeek channel lists
+// `inputModalities: [text, image]`. Kept on each model as `input` (lower-case names) — the 看图 (vision) logic uses it.
+const DSH_INPUT_KEYS = new Set(['input', 'inputModalities', 'modalities', 'inputTypes'])
+/** `[text, image]` / `["text", "image"]` / '' (a block list follows) → ['text', 'image'] */
+function parseInlineYamlList(raw) {
+  const s = String(raw || '').trim()
+  if (!s) return []
+  const inner = s.startsWith('[') && s.endsWith(']') ? s.slice(1, -1) : s
+  return inner
+    .split(',')
+    .map((x) => stripYamlScalar(x).toLowerCase())
+    .filter(Boolean)
+}
+/** The input modalities a DSH channel declares for one of its models (['text', 'image'] …), null when it declares none. */
+function dshModelInput(prov, modelId) {
+  const m = (prov?.models || []).find((x) => x && x.id === modelId)
+  return m && Array.isArray(m.input) && m.input.length ? [...m.input] : null
+}
+
 function parseProvidersFromCordisPatch(patchPath) {
   const providers = []
   if (!existsSync(patchPath)) return providers
@@ -245,6 +326,7 @@ function parseProvidersFromCordisPatch(patchPath) {
     let inProviderModels = false
     let deepseekProvider = null
     let inDeepseekModels = false
+    let modelListKey = '' // the model key whose block list (`- image`) the following lines belong to
 
     const flushCur = () => {
       if (curProvider && curProvider.id) {
@@ -315,6 +397,7 @@ function parseProvidersFromCordisPatch(patchPath) {
               const idMatch = /^          - id:\s*(.+?)\s*$/.exec(rawLine)
               if (idMatch) {
                 curProvider.models.push({ id: stripYamlScalar(idMatch[1]), name: stripYamlScalar(idMatch[1]) })
+                modelListKey = ''
                 continue
               }
               const lastModel = curProvider.models[curProvider.models.length - 1]
@@ -323,6 +406,15 @@ function parseProvidersFromCordisPatch(patchPath) {
                 if (nameMatch) lastModel.name = stripYamlScalar(nameMatch[1])
                 const tokMatch = /^            maxTokens:\s*(\d+)\s*$/.exec(rawLine)
                 if (tokMatch) lastModel.maxTokens = Number(tokMatch[1])
+                const keyMatch = /^            ([A-Za-z0-9_]+):\s*(.*?)\s*$/.exec(rawLine)
+                if (keyMatch) {
+                  modelListKey = keyMatch[1]
+                  if (DSH_INPUT_KEYS.has(modelListKey)) lastModel.input = parseInlineYamlList(keyMatch[2])
+                }
+                const itemMatch = /^              -\s*(.+?)\s*$/.exec(rawLine)
+                if (itemMatch && DSH_INPUT_KEYS.has(modelListKey) && Array.isArray(lastModel.input)) {
+                  lastModel.input.push(stripYamlScalar(itemMatch[1]).toLowerCase())
+                }
               }
             }
           }
@@ -348,16 +440,25 @@ function parseProvidersFromCordisPatch(patchPath) {
           deepseekProvider.baseURL = stripYamlScalar(dsBase[1]).replace(/\/+$/, '')
           continue
         }
+        if (/^    [A-Za-z]/.test(rawLine)) inDeepseekModels = false // another config key ends the model list
         if (inDeepseekModels) {
           const dm = /^      - id:\s*(.+?)\s*$/.exec(rawLine)
           if (dm) {
             deepseekProvider.models.push({ id: stripYamlScalar(dm[1]), name: stripYamlScalar(dm[1]) })
+            modelListKey = ''
             continue
           }
           const lastM = deepseekProvider.models[deepseekProvider.models.length - 1]
           if (lastM) {
             const nm = /^        name:\s*(.+?)\s*$/.exec(rawLine)
             if (nm) lastM.name = stripYamlScalar(nm[1])
+            const km = /^        ([A-Za-z0-9_]+):\s*(.*?)\s*$/.exec(rawLine)
+            if (km) {
+              modelListKey = km[1]
+              if (DSH_INPUT_KEYS.has(modelListKey)) lastM.input = parseInlineYamlList(km[2])
+            }
+            const im = /^          -\s*(.+?)\s*$/.exec(rawLine)
+            if (im && DSH_INPUT_KEYS.has(modelListKey) && Array.isArray(lastM.input)) lastM.input.push(stripYamlScalar(im[1]).toLowerCase())
           }
         }
       }
@@ -641,7 +742,7 @@ export function resolveLlmConfig(override = {}) {
   ) {
     mode = 'auto'
   }
-  if (mode !== 'custom' && mode !== 'follow-dsh' && mode !== 'auto') {
+  if (mode !== 'custom' && mode !== 'follow-dsh' && mode !== 'auto' && mode !== HOST_AGENT_MODE) {
     mode = 'auto'
   }
 
@@ -660,6 +761,24 @@ export function resolveLlmConfig(override = {}) {
     Number(override.maxTokens ?? fileCfg.maxTokens ?? 16000) || 16000,
   )
   const common = { maxRepairRounds, temperature, maxTokens }
+
+  // 宿主智能体代写: no endpoint, no key — the agent hosting the plugin answers the writing tasks with its own model
+  if (mode === HOST_AGENT_MODE) {
+    const host = getHostAgentInfo()
+    return {
+      mode: HOST_AGENT_MODE,
+      resolvedBy: HOST_AGENT_MODE,
+      host,
+      sourceLabel: `由${spacedName(host.label || '当前智能体')}代写（用它自己的模型，不需要 API Key）`,
+      dshProviderId: '',
+      provider: HOST_AGENT_MODE,
+      format: 'auto',
+      baseUrl: '',
+      apiKey: '',
+      model: HOST_AGENT_MODE,
+      ...common,
+    }
+  }
 
   // DSH channel: the explicit one (follow-dsh) or DSH's active selection (auto)
   const fromDsh = ({ followActive = false } = {}) => {
@@ -694,6 +813,8 @@ export function resolveLlmConfig(override = {}) {
       baseUrl: pickedProv.baseURL,
       apiKey: pickedProv._secretKey || '',
       model: useModel,
+      // what DSH's channel config declares the model accepts (['text', 'image'] …); null when it says nothing
+      modelInput: dshModelInput(pickedProv, useModel),
       ...common,
     }
   }
@@ -771,7 +892,9 @@ export function resolveLlmConfig(override = {}) {
       mode: 'auto',
       resolvedBy: 'none',
       host,
-      sourceLabel: host.id && host.id !== 'dsh' ? `${agentName} 没有可共享的模型配置` : '未配置大模型',
+      // inside an agent used through a subscription (no API key to share) the agent can still write the answers itself
+      sourceLabel: host.id && host.id !== 'dsh' ? `${agentName} 没有可共享的模型配置（可改用「由${spacedName(agentName)}代写」，不需要 API Key）` : '未配置大模型',
+      hostAgentSuggested: Boolean(host.id && host.id !== 'dsh'),
     }
   }
 
@@ -790,10 +913,24 @@ export function getSafeLlmConfigSummary(dshHomeOverride = '') {
   const template = LLM_PROVIDER_TEMPLATES[cfg.provider] || LLM_PROVIDER_TEMPLATES.custom
   const requiresKey =
     cfg.provider !== 'ollama' && !/^http:\/\/127\.0\.0\.1|^http:\/\/localhost/i.test(cfg.baseUrl)
-  const configured = Boolean(cfg.baseUrl && cfg.model && (!requiresKey || cfg.apiKey))
+  const hostWrites = cfg.mode === HOST_AGENT_MODE
+  const configured = hostWrites || Boolean(cfg.baseUrl && cfg.model && (!requiresKey || cfg.apiKey))
+  let hostQueue = null
+  if (hostWrites) {
+    try {
+      const pending = listHostTasks()
+      hostQueue = { pending: pending.length, waiting: pending.filter((t) => !t.claimed).length, oldestAt: pending[0]?.createdAt || '' }
+    } catch {
+      hostQueue = { pending: 0, waiting: 0, oldestAt: '' }
+    }
+  }
   return {
     configured,
     mode: cfg.mode,
+    // 宿主智能体代写: writing tasks waiting for the agent ({ pending, waiting, oldestAt }); null in the other modes
+    hostAgent: hostQueue,
+    // nothing usable was found inside an agent: offer 「由智能体代写」 (mode 'host-agent')
+    hostAgentSuggested: Boolean(cfg.hostAgentSuggested),
     sourceLabel: cfg.sourceLabel,
     dshProviderId: fileCfg.dshProviderId || (cfg.mode === 'follow-dsh' ? 'active' : ''),
     resolvedBy: cfg.resolvedBy || '',
@@ -816,6 +953,9 @@ export function getSafeLlmConfigSummary(dshHomeOverride = '') {
     protocols: WIRE_PROTOCOLS,
     dshClient: dsh,
     configFile: getLlmConfigPath(),
+    // how long every model call may take (the panels wait for it too) and what is known about 看图 (vision)
+    timeoutMs: hostWrites ? Math.max(getLlmTimeoutMs(), getHostAgentTimeoutMs()) : getLlmTimeoutMs(),
+    vision: summarizeVision(cfg),
   }
 }
 
@@ -824,7 +964,7 @@ export function saveLlmConfig(patch = {}) {
   mkdirSync(dirname(cfgPath), { recursive: true })
   const existing = readStoredConfigFile()
   const nextMode =
-    patch.mode === 'custom' || patch.mode === 'follow-dsh' || patch.mode === 'auto'
+    patch.mode === 'custom' || patch.mode === 'follow-dsh' || patch.mode === 'auto' || patch.mode === HOST_AGENT_MODE
       ? patch.mode
       : existing.mode || 'auto'
 
@@ -874,10 +1014,324 @@ export function saveLlmConfig(patch = {}) {
     // v2 = the mode is the user's explicit choice (pre-v0.6 files stored 'follow-dsh' as the automatic default)
     configVersion: 2,
     updatedAt: new Date().toISOString(),
+    // 看图能力 settings live in the same file; saving the text model never drops them
+    vision: mergeVisionSettings(existing.vision, patch.vision),
   }
 
   writeFileSync(cfgPath, JSON.stringify(next, null, 2) + '\n', 'utf8')
+  // a changed model / endpoint invalidates every remembered 看图 verdict
+  clearVisionCapabilityCache()
   return getSafeLlmConfigSummary()
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// 看图能力 (vision): which model looks at pictures for 参考复刻 / 画面自检 / 截图定位, and what is known about it.
+// Settings (`vision` in llm-config.json):
+//   support  'auto' (default: check once with a tiny probe picture, remember the verdict) | 'yes' (the user says the
+//            model can see: never probe or skip) | 'no' (never send pictures)
+//   model    optional dedicated 看图模型 — on the text model's endpoint, or on its own one when baseUrl is given too
+// Verdicts are remembered per protocol + endpoint + model in DSH_VIDEO_HOME/vision-capability.json (they expire, and
+// saving the model settings forgets them). The probe and the decisions live in vision-capability.js.
+const VISION_SUPPORT = new Set(['auto', 'yes', 'no'])
+const VISION_CACHE_TTL_MS = { supported: 7 * 86_400_000, unsupported: 3 * 86_400_000 }
+const VISION_SETTINGS_PLACE = '「设置 · 模型与密钥 → 看图能力」'
+const isLocalBaseUrl = (url) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(String(url || '').trim())
+
+function normalizeVisionSupport(raw) {
+  const s = String(raw ?? '').trim().toLowerCase()
+  return VISION_SUPPORT.has(s) ? s : 'auto'
+}
+function normalizeVisionFormat(raw) {
+  const f = String(raw || 'auto').trim().toLowerCase()
+  return VALID_FORMATS.has(f) ? normalizeProtocolFormat(f) : 'auto'
+}
+function normalizeVisionSettings(raw) {
+  const v = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  return {
+    support: normalizeVisionSupport(v.support),
+    model: String(v.model || '').trim(),
+    baseUrl: String(v.baseUrl || '').trim().replace(/\/+$/, ''),
+    apiKey: String(v.apiKey || '').trim(),
+    format: normalizeVisionFormat(v.format),
+    provider: String(v.provider || '').trim() || 'custom',
+  }
+}
+/** Apply a patch ({ support, model, baseUrl, apiKey, clearApiKey, format, provider }) to stored 看图 settings. */
+function mergeVisionSettings(existingRaw, patch) {
+  const hasPatch = patch && typeof patch === 'object' && !Array.isArray(patch)
+  if (!(existingRaw && typeof existingRaw === 'object') && !hasPatch) return undefined
+  const next = normalizeVisionSettings(existingRaw)
+  if (!hasPatch) return next
+  if (patch.support !== undefined) next.support = normalizeVisionSupport(patch.support)
+  if (patch.model !== undefined) next.model = String(patch.model ?? '').trim()
+  if (patch.baseUrl !== undefined) next.baseUrl = String(patch.baseUrl ?? '').trim().replace(/\/+$/, '')
+  if (patch.format !== undefined) next.format = normalizeVisionFormat(patch.format)
+  if (patch.provider !== undefined) next.provider = String(patch.provider ?? '').trim() || 'custom'
+  if (patch.clearApiKey === true) next.apiKey = ''
+  else if (patch.apiKey !== undefined) {
+    const k = String(patch.apiKey ?? '').trim()
+    if (k && k !== 'KEEP_EXISTING' && !k.includes('****')) next.apiKey = k
+  }
+  return next
+}
+
+/** The stored 看图 settings — including the dedicated model's key, so never hand this to a UI. */
+export function getVisionSettings() {
+  return normalizeVisionSettings(readStoredConfigFile().vision)
+}
+
+/** Save only the 看图 settings (every other model setting stays as it is) and forget the remembered verdicts. */
+export function saveVisionSettings(patch = {}) {
+  const cfgPath = getLlmConfigPath()
+  mkdirSync(dirname(cfgPath), { recursive: true })
+  const existing = readStoredConfigFile()
+  writeFileSync(cfgPath, JSON.stringify({ ...existing, vision: mergeVisionSettings(existing.vision || {}, patch) }, null, 2) + '\n', 'utf8')
+  clearVisionCapabilityCache()
+  return getSafeLlmConfigSummary()
+}
+
+function lookupDshModelInput(providerId, modelId, dshHomeOverride = '') {
+  try {
+    const d = loadDshClientDiscoveryInternal(dshHomeOverride || '')
+    return dshModelInput(d.providers.find((p) => p.id === providerId), modelId)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The model that looks at pictures and how to reach it: the text model, or the dedicated 看图模型 (on the text model's
+ * endpoint, or on its own endpoint when one is set). `config` is the `overrideConfig` for callLlmChat — the caller's
+ * own override (or undefined: normal resolution) for the text model, a complete explicit config for a dedicated one.
+ * `declared` is what DSH's channel config says the model accepts ('image' | 'text' | '' = says nothing).
+ */
+export function resolveVisionLlmConfig(mainOverride = {}, { main = null, settings = null } = {}) {
+  const base = main || resolveLlmConfig(mainOverride || {})
+  const s = settings || getVisionSettings()
+  const dedicated = Boolean(s.model)
+  const ownEndpoint = dedicated && Boolean(s.baseUrl)
+  const endpoint = ownEndpoint
+    ? { provider: s.provider || 'custom', format: s.format || 'auto', baseUrl: s.baseUrl, apiKey: s.apiKey }
+    : { provider: base.provider || 'custom', format: detectWireProtocol(base), baseUrl: String(base.baseUrl || ''), apiKey: (dedicated && s.apiKey) || base.apiKey || '' }
+  const model = dedicated ? s.model : String(base.model || '')
+  const protocol = detectWireProtocol({ ...endpoint, model })
+  const requiresKey = endpoint.provider !== 'ollama' && !isLocalBaseUrl(endpoint.baseUrl)
+  // the agent hosting the plugin writes the answers itself (it opens pictures as local files): it can always look
+  const hostWrites = !dedicated && base.mode === 'host-agent'
+  let input = null
+  if (!ownEndpoint && base.resolvedBy === 'dsh') {
+    input = dedicated ? lookupDshModelInput(base.dshProviderId, model, mainOverride?.dshHomeDir) : Array.isArray(base.modelInput) ? base.modelInput : null
+  }
+  const hasMainOverride = mainOverride && typeof mainOverride === 'object' && Object.keys(mainOverride).length > 0
+  return {
+    configured: hostWrites || Boolean(endpoint.baseUrl && model && (!requiresKey || endpoint.apiKey)),
+    dedicated,
+    ownEndpoint,
+    // 宿主智能体代写: pictures go to the agent as files (no probe, nothing to dial)
+    hostAgent: hostWrites,
+    support: hostWrites && s.support !== 'no' ? 'yes' : s.support,
+    model: model || (hostWrites ? 'host-agent' : ''),
+    mainModel: String(base.model || ''),
+    protocol,
+    provider: endpoint.provider,
+    baseUrl: endpoint.baseUrl,
+    declared: input ? (input.includes('image') ? 'image' : 'text') : '',
+    cacheKey: visionCacheKey({ protocol, baseUrl: endpoint.baseUrl, model }),
+    config: dedicated
+      ? {
+          mode: 'custom',
+          provider: endpoint.provider,
+          format: protocol,
+          baseUrl: endpoint.baseUrl,
+          apiKey: endpoint.apiKey,
+          model,
+          temperature: base.temperature,
+          maxTokens: base.maxTokens,
+          maxRepairRounds: base.maxRepairRounds,
+        }
+      : hasMainOverride
+        ? mainOverride
+        : undefined,
+  }
+}
+
+export function getVisionCapabilityCachePath() {
+  return join(resolveEnvPath('DSH_VIDEO_HOME', './.dsh-home'), 'vision-capability.json')
+}
+export function visionCacheKey({ protocol = '', baseUrl = '', model = '' } = {}) {
+  return [String(protocol), String(baseUrl).trim().replace(/\/+$/, '').toLowerCase(), String(model).trim()].join(' | ')
+}
+function readVisionCache() {
+  const raw = readJsonSafe(getVisionCapabilityCachePath(), null)
+  return raw && raw.version === 1 && raw.entries && typeof raw.entries === 'object' ? raw : { version: 1, entries: {} }
+}
+/** The remembered, unexpired 看图 verdict for an endpoint + model: { status, code, model, detail, answer, checkedAt, source } */
+export function getCachedVisionCapability(key, now = Date.now()) {
+  if (!key) return null
+  const e = readVisionCache().entries[key]
+  return e && Date.parse(e.expiresAt) > now ? e : null
+}
+/** Remember a conclusive verdict: { status: 'supported' | 'unsupported', code, model, protocol, detail, answer, source }. */
+export function rememberVisionCapability(key, verdict = {}) {
+  if (!key || !VISION_CACHE_TTL_MS[verdict.status]) return null
+  const path = getVisionCapabilityCachePath()
+  const now = Date.now()
+  const entry = {
+    status: verdict.status,
+    code: String(verdict.code || verdict.status),
+    model: String(verdict.model || ''),
+    protocol: String(verdict.protocol || ''),
+    detail: String(verdict.detail || '').slice(0, 300),
+    answer: String(verdict.answer || '').slice(0, 80),
+    source: String(verdict.source || ''),
+    checkedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + VISION_CACHE_TTL_MS[verdict.status]).toISOString(),
+  }
+  try {
+    withFileLockSync(`${path}.lock`, () => {
+      const cache = readVisionCache()
+      for (const [k, v] of Object.entries(cache.entries)) if (!(Date.parse(v?.expiresAt) > now)) delete cache.entries[k]
+      cache.entries[key] = entry
+      writeJsonAtomic(path, cache)
+    })
+  } catch {}
+  return entry
+}
+export function clearVisionCapabilityCache() {
+  try {
+    unlinkSync(getVisionCapabilityCachePath())
+  } catch {}
+}
+
+function fmtCheckedAt(iso) {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const p = (x) => String(x).padStart(2, '0')
+  return `${d.getMonth() + 1} 月 ${d.getDate()} 日 ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/**
+ * Plain-Chinese words for a 看图 (vision) outcome — { short (badge), reason (what happened, with the API's own words),
+ * fix (what the user can do) } — shared by the panels, the task logs and the agent tools.
+ */
+export function describeVisionStatus(code, { model = '', detail = '', answer = '', timeoutMs = 0, checkedAt = '' } = {}) {
+  const m = String(model || '').trim() || '当前模型'
+  const said = detail ? `（接口返回：${detail}）` : ''
+  const pickOther = `到${VISION_SETTINGS_PLACE}单独指定一个能看图的模型（同一个接口里的其它模型也可以）`
+  const when = checkedAt && fmtCheckedAt(checkedAt) ? `（${fmtCheckedAt(checkedAt)}检测）` : ''
+  switch (code) {
+    case 'supported':
+      return { short: `${m} 能看图`, reason: `模型 ${m} 能看懂图片${when}。`, fix: '' }
+    case 'used':
+      return { short: 'AI 视觉已拆解', reason: `模型 ${m} 已经看过画面。`, fix: '' }
+    case 'user-on':
+      return { short: '已设为能看图', reason: `你在${VISION_SETTINGS_PLACE}里标记了模型 ${m} 能看图，插件会直接把图片发给它。`, fix: '' }
+    case 'host-agent':
+      return {
+        short: '由智能体看图',
+        reason: '由智能体代写时，需要看图的地方（参考复刻、画面自检、截图定位）也交给正在对话的智能体：插件把图片存成文件，由它直接打开来看，不需要单独的看图模型。',
+        fix: '',
+      }
+    case 'declared-image':
+      return { short: 'DSH 标注能看图', reason: `DSH 的通道配置里标注模型 ${m} 能接收图片；第一次用到看图功能时会先用一张很小的测试图确认一次。`, fix: '' }
+    case 'unknown':
+      return { short: '还没检测', reason: `还没确认模型 ${m} 能不能看图：第一次用到看图功能（参考复刻、画面自检）时，会先用一张很小的测试图自动检测并记住结果。`, fix: `也可以现在到${VISION_SETTINGS_PLACE}点「检测看图能力」。` }
+    case 'disabled':
+      return { short: '未开启 AI 视觉拆解', reason: '这次只做了本地测量（没有打开「AI 视觉深度拆解」），没有调用看图模型。', fix: '在「拆解选项」里打开「AI 视觉深度拆解」，再点「重新拆解」。' }
+    case 'no-frames':
+      return { short: '没抽到关键帧', reason: '没能从视频里抽出关键帧图片，所以没有让 AI 看图。', fix: '换一个能正常播放的视频文件（mp4 / mov）再试。' }
+    case 'not-configured':
+      return { short: '未配置看图模型', reason: '还没有可用的 AI 大模型（缺少接口地址、模型名或 API Key），所以没有让 AI 看图。', fix: '到「设置 · 模型与密钥」配置一个能看图的大模型。' }
+    case 'user-off':
+      return { short: '已设为不看图', reason: `你在${VISION_SETTINGS_PLACE}里把模型 ${m} 标记为「不支持看图」，所以没有发图片给它。`, fix: '如果它其实能看图，把看图能力改回「自动检测」或「支持看图」；也可以单独指定一个看图模型。' }
+    case 'declared-text':
+      return { short: `${m} 只能读文字`, reason: `DSH 的通道配置里标注模型 ${m} 只接收文字，所以没有发图片给它。`, fix: `${pickOther}；如果它其实能看图，把看图能力改成「支持看图」。` }
+    case 'image-rejected':
+      return { short: `${m} 不支持图片输入`, reason: `模型 ${m} 不支持图片输入${said}。`, fix: `${pickOther}；如果你确定它能看图，可以把看图能力改成「支持看图」再试。` }
+    case 'image-format':
+      return { short: '网关不支持这种图片格式', reason: `接口不接受插件发送的图片数据${said}。`, fix: `换一个支持 base64 图片输入的接口或协议；或${pickOther}。` }
+    case 'not-looked':
+      return {
+        short: `${m} 没有真正看到图片`,
+        reason: `接口收下了图片，但模型 ${m} 的回答说明它没有看到图片内容${answer ? `（测试图是一个红色方块，它回答：「${answer}」）` : ''}，多半是只能读文字的模型。`,
+        fix: `${pickOther}。`,
+      }
+    case 'timeout':
+      return { short: '看图调用超时', reason: `看图调用超时：模型 ${m} 在 ${formatLlmWait(timeoutMs || getLlmTimeoutMs())}内没有回复。`, fix: '稍后再试；或换一个响应更快的看图模型。' }
+    case 'billing':
+      return { short: '余额不足，没能看图', reason: `调用模型 ${m} 时提示余额不足或欠费${said}。`, fix: '到模型服务商那里充值后再试。' }
+    case 'auth':
+      return { short: '看图接口的密钥无效', reason: `接口拒绝了 API Key${said}。`, fix: '到「设置 · 模型与密钥」核对 API Key（单独设置了看图模型的，核对看图模型的密钥）。' }
+    case 'model-missing':
+      return { short: `接口里没有模型 ${m}`, reason: `接口找不到模型 ${m}${said}。`, fix: '核对模型 ID 的拼写；单独设置看图模型时，确认这个接口里有这个模型。' }
+    case 'rate-limit':
+      return { short: '看图接口限流', reason: `接口提示请求太频繁或额度用完${said}。`, fix: '稍等一会儿再试，或换一个看图模型。' }
+    case 'network':
+      return { short: '连不上看图接口', reason: `连不上模型接口${detail ? `（${detail}）` : ''}。`, fix: '检查网络 / 代理，以及接口地址是否填对。' }
+    case 'server':
+      return { short: '看图接口暂时故障', reason: `模型接口返回了服务器错误${said}。`, fix: '稍后再试。' }
+    case 'empty':
+      return { short: '看图没有返回内容', reason: `模型 ${m} 没有返回任何内容${said}。`, fix: '再试一次；问题持续就换一个看图模型。' }
+    case 'bad-json':
+      return { short: '看图结果无法解析', reason: `模型 ${m} 看了图，但回复不是要求的 JSON 格式${detail ? `（回复开头：${detail}）` : ''}。`, fix: '再试一次；问题持续就换一个指令遵循更好的看图模型。' }
+    case 'bad-request':
+      return { short: '看图请求被拒绝', reason: `接口拒绝了带图片的请求${said}。`, fix: `检查协议类型是否选对；如果模型不能看图，${pickOther}。` }
+    case 'aborted':
+      return { short: '已取消', reason: '看图调用被取消了。', fix: '' }
+    default:
+      return { short: '看图调用失败', reason: `看图调用失败${detail ? `：${detail}` : ''}。`, fix: `再试一次；也可以到${VISION_SETTINGS_PLACE}点「检测看图能力」查看具体原因。` }
+  }
+}
+
+/** What the panels show about 看图: settings (no secrets) + the remembered / declared / chosen capability in words. */
+function summarizeVision(mainCfg) {
+  try {
+    const s = getVisionSettings()
+    const t = resolveVisionLlmConfig({}, { main: mainCfg, settings: s })
+    const cached = t.configured && s.support === 'auto' ? getCachedVisionCapability(t.cacheKey) : null
+    let status = 'unknown'
+    let code = 'unknown'
+    if (!t.configured) code = 'not-configured'
+    else if (t.hostAgent && s.support !== 'no') {
+      status = 'supported'
+      code = 'host-agent'
+    } else if (s.support === 'yes') {
+      status = 'supported'
+      code = 'user-on'
+    } else if (s.support === 'no') {
+      status = 'unsupported'
+      code = 'user-off'
+    } else if (cached) {
+      status = cached.status
+      code = cached.status === 'supported' ? 'supported' : cached.code
+    } else if (t.declared === 'text') {
+      status = 'unsupported'
+      code = 'declared-text'
+    } else if (t.declared === 'image') code = 'declared-image'
+    return {
+      support: s.support,
+      dedicated: t.dedicated,
+      ownEndpoint: t.ownEndpoint,
+      model: t.model,
+      settingsModel: s.model,
+      baseUrl: s.baseUrl,
+      format: s.format,
+      provider: s.provider,
+      hasApiKey: Boolean(s.apiKey),
+      maskedApiKey: maskSecretKey(s.apiKey),
+      protocol: t.protocol,
+      configured: t.configured,
+      hostAgent: Boolean(t.hostAgent),
+      declared: t.declared,
+      status,
+      code,
+      ...describeVisionStatus(code, { model: t.model, detail: cached?.detail, answer: cached?.answer, checkedAt: cached?.checkedAt }),
+      checkedAt: cached?.checkedAt || '',
+      source: cached?.source || '',
+    }
+  } catch {
+    return { support: 'auto', status: 'unknown', code: 'unknown', short: '', reason: '', fix: '' }
+  }
 }
 
 export function detectWireProtocol(cfg) {
@@ -986,9 +1440,34 @@ function extractFirstJsonObject(rawText) {
   return null
 }
 
+/**
+ * Raw stop / finish reason of a complete reply object (any of the 4 wire protocols; relays sometimes mix them):
+ * openai chat `choices[0].finish_reason`, anthropic `stop_reason`, openai responses `incomplete_details.reason` /
+ * `status`, gemini `candidates[0].finishReason`. '' when the reply does not say.
+ */
+function finishReasonOf(data) {
+  if (!data || typeof data !== 'object') return ''
+  const chat = data?.choices?.[0]?.finish_reason
+  if (typeof chat === 'string' && chat) return chat
+  if (typeof data.stop_reason === 'string' && data.stop_reason) return data.stop_reason
+  const gem = data?.candidates?.[0]?.finishReason
+  if (typeof gem === 'string' && gem) return gem
+  if (data.object === 'response' || typeof data.status === 'string') {
+    const why = data?.incomplete_details?.reason
+    if (data.status === 'incomplete') return typeof why === 'string' && why ? why : 'incomplete'
+    if (typeof data.status === 'string' && data.status) return data.status
+  }
+  return ''
+}
+
+/** True when a reply stopped because it hit the output limit (the text is cut off mid-way). */
+export function isCutOffFinishReason(reason) {
+  return /^(length|max_tokens|max_output_tokens|MAX_TOKENS|model_context_window_exceeded|incomplete)$/i.test(String(reason || '').trim())
+}
+
 function parseRawLlmResponse(rawText, protocol) {
   const trimmed = String(rawText || '').trim()
-  if (!trimmed) return { data: null, text: '', streamError: '' }
+  if (!trimmed) return { data: null, text: '', streamError: '', finishReason: '' }
 
   // 1. Standard pure JSON response
   try {
@@ -997,6 +1476,7 @@ function parseRawLlmResponse(rawText, protocol) {
       data,
       text: extractTextFromReply(data, protocol),
       streamError: data?.error?.message || '',
+      finishReason: finishReasonOf(data),
     }
   } catch {}
 
@@ -1009,6 +1489,7 @@ function parseRawLlmResponse(rawText, protocol) {
         data: leadingObj,
         text: leadingText,
         streamError: '',
+        finishReason: finishReasonOf(leadingObj),
       }
     }
   }
@@ -1018,6 +1499,10 @@ function parseRawLlmResponse(rawText, protocol) {
   let completedData = leadingObj
   let streamError = ''
   let geminiLastText = ''
+  // the stop reason arrives in its own event (openai chat: last chunk, anthropic: message_delta, gemini: last chunk)
+  let streamFinish = ''
+  // token usage sent in its own events (anthropic: message_start input + message_delta output, gemini: last chunk)
+  let streamUsage = null
 
   for (const rawLine of trimmed.split(/\r?\n/)) {
     const line = rawLine.trim()
@@ -1031,6 +1516,16 @@ function parseRawLlmResponse(rawText, protocol) {
       continue
     }
     if (!ev || typeof ev !== 'object') continue
+    {
+      const chatFinish = ev?.choices?.[0]?.finish_reason
+      const anthropicFinish = ev.type === 'message_delta' ? ev?.delta?.stop_reason : ev.type === 'message_start' ? ev?.message?.stop_reason : ''
+      const geminiFinish = ev?.candidates?.[0]?.finishReason
+      const f = [chatFinish, anthropicFinish, geminiFinish].find((x) => typeof x === 'string' && x)
+      if (f) streamFinish = f
+      if (ev.type === 'message_start' && ev.message?.usage && typeof ev.message.usage === 'object') streamUsage = { ...(streamUsage || {}), ...ev.message.usage }
+      else if (ev.type === 'message_delta' && ev.usage && typeof ev.usage === 'object') streamUsage = { ...(streamUsage || {}), ...ev.usage }
+      else if (ev.usageMetadata && typeof ev.usageMetadata === 'object') streamUsage = ev.usageMetadata
+    }
 
     if (protocol === 'openai-responses') {
       if (ev.type === 'response.output_text.delta' && typeof ev.delta === 'string') {
@@ -1081,6 +1576,8 @@ function parseRawLlmResponse(rawText, protocol) {
     data: completedData,
     text: finalText,
     streamError,
+    finishReason: streamFinish || finishReasonOf(completedData),
+    usage: streamUsage,
   }
 }
 
@@ -1208,6 +1705,55 @@ function isTransientLlmError(err, status = 0, timeoutMs = 0) {
   )
 }
 
+function guessImageMime(url) {
+  const ext = /\.([a-z0-9]{3,4})(?:[?#]|$)/i.exec(String(url || ''))?.[1]?.toLowerCase() || ''
+  return { png: 'image/png', webp: 'image/webp', gif: 'image/gif', heic: 'image/heic' }[ext] || 'image/jpeg'
+}
+
+/** A short job label for the agent: the caller's, else the first meaningful line of the system prompt. */
+function hostTaskPurpose(purpose, system) {
+  const given = String(purpose || '').trim()
+  if (given) return given.slice(0, 80)
+  const first = String(system || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l.length >= 4)
+  return first ? first.replace(/^#+\s*/, '').slice(0, 80) : '插件写作任务'
+}
+
+/**
+ * 宿主智能体代写: queue the request for the agent that hosts the plugin and wait for its answer (see host-llm-bridge.js).
+ * Same result shape as a model call. The agent gets the longer of the call's limit and the host-agent limit.
+ */
+async function callHostAgent({ cfg, system, messages, temperature, maxTokens, timeoutMs, signal, onWait, waitTickMs, responseFormat, purpose }) {
+  const limit = Math.max(Number(timeoutMs) || 0, getHostAgentTimeoutMs())
+  const startedAt = Date.now()
+  const beat =
+    typeof onWait === 'function'
+      ? setInterval(() => {
+          try {
+            onWait({ elapsedMs: Date.now() - startedAt, timeoutMs: limit, attempt: 1, hostAgent: true })
+          } catch {}
+        }, Math.max(250, Number(waitTickMs) || 15000))
+      : 0
+  try {
+    const res = await requestHostCompletion({
+      system,
+      messages,
+      purpose: hostTaskPurpose(purpose, system),
+      maxTokens: Number(maxTokens) > 0 ? Number(maxTokens) : cfg.maxTokens,
+      temperature,
+      wantJson: String(responseFormat || '').toLowerCase() === 'json',
+      timeoutMs: limit,
+      signal,
+    })
+    if (!String(res.text || '').trim()) throw new Error('智能体交回的回答是空的，请在智能体对话里让它重新完成这个写作任务。')
+    return { ok: true, protocol: HOST_AGENT_MODE, endpoint: '', model: res.model, text: res.text, usage: null, hostTaskId: res.hostTaskId }
+  } finally {
+    if (beat) clearInterval(beat)
+  }
+}
+
 /**
  * Call any configured LLM across all 4 wire protocols:
  * - openai-completions (/v1/chat/completions)
@@ -1215,19 +1761,132 @@ function isTransientLlmError(err, status = 0, timeoutMs = 0) {
  * - openai-responses (/v1/responses)
  * - gemini-native (/v1beta/models)
  * Includes incremental stream reading + transient relay/network retries.
+ * `timeoutMs` defaults to the shared limit (getLlmTimeoutMs(), 10 minutes); `onWait({ elapsedMs, timeoutMs, attempt })`
+ * is called every `waitTickMs` while the model is still working, so long waits can show elapsed time.
  */
+/* ---------------------------------------------------------------------------------------- 大模型用量 (token usage) */
+
+/**
+ * One reply's token usage as { input, output, cached } from any of the 4 wire protocols (openai chat: prompt_tokens /
+ * completion_tokens; openai responses: input_tokens / output_tokens; anthropic: input_tokens + cache tokens /
+ * output_tokens; gemini: promptTokenCount / candidatesTokenCount + thoughtsTokenCount). null when the provider sent none.
+ */
+export function normalizeLlmUsage(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const n = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.round(Number(v)) : 0)
+  const has = (...keys) => keys.some((k) => raw[k] !== undefined && raw[k] !== null)
+  if (!has('prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'promptTokenCount', 'candidatesTokenCount', 'totalTokenCount')) return null
+  let input
+  let cached
+  if (has('cache_read_input_tokens', 'cache_creation_input_tokens')) {
+    // anthropic: input_tokens excludes the cached part
+    input = n(raw.input_tokens) + n(raw.cache_read_input_tokens) + n(raw.cache_creation_input_tokens)
+    cached = n(raw.cache_read_input_tokens)
+  } else {
+    input = n(raw.prompt_tokens ?? raw.input_tokens ?? raw.promptTokenCount)
+    cached = n(raw.prompt_tokens_details?.cached_tokens ?? raw.input_tokens_details?.cached_tokens ?? raw.cachedContentTokenCount)
+  }
+  const output = n(raw.completion_tokens ?? raw.output_tokens ?? raw.candidatesTokenCount) + n(raw.thoughtsTokenCount)
+  if (!input && !output && n(raw.totalTokenCount)) return { input: n(raw.totalTokenCount), output: 0, cached: 0 }
+  return { input, output, cached }
+}
+
+const llmUsageScope = new AsyncLocalStorage()
+
+/**
+ * A usage ledger for one run (pipeline, AI 编码出片 …): every callLlmChat made inside runWithLlmUsage() — awaits and
+ * parallel calls included — adds its calls, tokens and pictures, grouped by the call's `purpose` (else the ledger's
+ * current `stage` label). `summary()` is plain data for logs / output/llm-usage.json.
+ */
+export function createLlmUsageLedger() {
+  const groups = new Map()
+  const total = { calls: 0, counted: 0, input: 0, output: 0, cached: 0, images: 0, hostTasks: 0 }
+  const ledger = {
+    stage: '',
+    record({ purpose = '', usage = null, images = 0, host = false } = {}) {
+      const label = String(purpose || ledger.stage || '其它').slice(0, 24)
+      const g = groups.get(label) || { label, calls: 0, counted: 0, input: 0, output: 0, cached: 0, images: 0, hostTasks: 0 }
+      for (const t of [g, total]) {
+        t.calls++
+        t.images += Math.max(0, Number(images) || 0)
+        if (host) t.hostTasks++
+        else if (usage) {
+          t.counted++
+          t.input += usage.input
+          t.output += usage.output
+          t.cached += usage.cached
+        }
+      }
+      groups.set(label, g)
+    },
+    summary() {
+      return { ...total, uncounted: total.calls - total.counted - total.hostTasks, groups: [...groups.values()].sort((a, b) => b.input + b.output - (a.input + a.output)).map((g) => ({ ...g })) }
+    },
+  }
+  return ledger
+}
+
+/** Run `fn` with `ledger` collecting the token usage of every model call inside it. */
+export function runWithLlmUsage(ledger, fn) {
+  return llmUsageScope.run(ledger, fn)
+}
+
+/** The ledger of the run this code is part of (null outside runWithLlmUsage). */
+export function currentLlmUsageLedger() {
+  return llmUsageScope.getStore() || null
+}
+
+function recordLlmUsage(entry) {
+  try {
+    llmUsageScope.getStore()?.record(entry)
+  } catch {}
+}
+
+/** 「1.2 万」 style token count. */
+function fmtTokens(n) {
+  const v = Number(n) || 0
+  return v >= 10000 ? `${(v / 10000).toFixed(v >= 1e6 ? 0 : 1)} 万` : String(v)
+}
+
+/** Plain-Chinese usage lines for the task log (empty when nothing was called). */
+export function formatLlmUsageSummary(s) {
+  if (!s || !s.calls) return []
+  const lines = []
+  const tok = (g) => `输入 ${fmtTokens(g.input)} tokens${g.images ? `（含 ${g.images} 张图片）` : ''}、输出 ${fmtTokens(g.output)} tokens`
+  const host = s.hostTasks ? `；其中 ${s.hostTasks} 次由智能体代写，用的是智能体自己的额度，不计在内` : ''
+  const blind = s.uncounted > 0 ? `；${s.uncounted} 次接口没有返回用量，未计入` : ''
+  lines.push(`💰 本次大模型用量：调用 ${s.calls} 次，${tok(s)}${host}${blind}。实际费用请以模型平台的账单为准。`)
+  const parts = (s.groups || []).filter((g) => g.counted > 0).slice(0, 8).map((g) => `${g.label} ${g.calls} 次（${tok(g)}）`)
+  if (parts.length > 1) lines.push(`   · 分项：${parts.join('；')}`)
+  return lines
+}
+
 export async function callLlmChat({
   onRetry,
+  onWait,
+  waitTickMs = 15000,
   messages = [],
   system = '',
   temperature,
   maxTokens,
-  timeoutMs = 180000,
+  timeoutMs: timeoutOpt,
   overrideConfig = {},
   fetchImpl = globalThis.fetch,
   signal,
+  // 'json' when the caller needs a JSON reply
+  responseFormat,
+  // short label of the job (shown to the agent in 宿主智能体代写 mode); derived from the system prompt when absent
+  purpose = '',
 } = {}) {
+  const timeoutMs = Number(timeoutOpt) > 0 ? Number(timeoutOpt) : getLlmTimeoutMs()
   const cfg = resolveLlmConfig(overrideConfig)
+  // pictures sent with this call (counted in the run's 大模型用量)
+  const imageCount = (Array.isArray(messages) ? messages : []).reduce((a, m) => a + (Array.isArray(m?.content) ? m.content.filter((p) => p && (p.type === 'image' || p.type === 'image_url')).length : 0), 0)
+  if (cfg.mode === HOST_AGENT_MODE) {
+    const hostRes = await callHostAgent({ cfg, system, messages, temperature, maxTokens, timeoutMs, signal, onWait, waitTickMs, responseFormat, purpose })
+    recordLlmUsage({ purpose, host: true, images: imageCount })
+    return hostRes
+  }
   if (!cfg.baseUrl) {
     throw new Error('尚未配置大模型接口地址 (Base URL)。点击右上角「模型设置」可一键跟随 DSH 客户端或填写自定义网关。')
   }
@@ -1316,7 +1975,9 @@ export async function callLlmChat({
             : m.parts.map((p) =>
                 p.type === 'image'
                   ? { type: 'image', source: { type: 'base64', media_type: p.mimeType, data: p.base64 } }
-                  : { type: 'text', text: p.text || '' },
+                  : p.type === 'image_url'
+                    ? { type: 'image', source: { type: 'url', url: p.url } }
+                    : { type: 'text', text: p.text || '' },
               ),
       })),
     }
@@ -1349,12 +2010,16 @@ export async function callLlmChat({
     }
     payload = {
       ...(sysParts ? { systemInstruction: { parts: [{ text: sysParts }] } } : {}),
+      // inlineData / mimeType (camelCase): Google's REST API also accepts inline_data, but relays that re-encode Gemini
+      // requests through typed structs usually only read the camelCase form
       contents: chatMsgs.map((m) => ({
         role: m.role === 'assistant' ? 'model' : 'user',
         parts: m.parts.map((p) =>
           p.type === 'image'
             ? { inlineData: { mimeType: p.mimeType, data: p.base64 } }
-            : { text: p.text || '' },
+            : p.type === 'image_url'
+              ? { fileData: { mimeType: guessImageMime(p.url), fileUri: p.url } }
+              : { text: p.text || '' },
         ),
       })),
       generationConfig: {
@@ -1390,6 +2055,34 @@ export async function callLlmChat({
       temperature: temp,
       max_tokens: maxOut,
     }
+  }
+
+  // JSON mode when the caller needs a JSON reply: openai chat `response_format`, openai responses `text.format`, gemini
+  // `responseMimeType` (anthropic has no JSON mode). A provider / relay that rejects the field with a 400 is asked once
+  // more without it (see the retry below).
+  let jsonModeField = ''
+  if (String(responseFormat || '').trim().toLowerCase() === 'json') {
+    if (protocol === 'openai-responses') {
+      payload.text = { ...(payload.text && typeof payload.text === 'object' ? payload.text : {}), format: { type: 'json_object' } }
+      jsonModeField = 'text.format'
+    } else if (protocol === 'gemini-native') {
+      payload.generationConfig = { ...(payload.generationConfig || {}), responseMimeType: 'application/json' }
+      jsonModeField = 'responseMimeType'
+    } else if (protocol !== 'anthropic-messages') {
+      payload.response_format = { type: 'json_object' }
+      jsonModeField = 'response_format'
+    }
+  }
+  const dropJsonMode = () => {
+    if (jsonModeField === 'text.format') {
+      if (payload.text && typeof payload.text === 'object') delete payload.text.format
+      if (payload.text && !Object.keys(payload.text).length) delete payload.text
+    } else if (jsonModeField === 'responseMimeType') {
+      if (payload.generationConfig) delete payload.generationConfig.responseMimeType
+    } else if (jsonModeField === 'response_format') {
+      delete payload.response_format
+    }
+    jsonModeField = ''
   }
 
   const realNetwork = fetchImpl === globalThis.fetch
@@ -1448,6 +2141,7 @@ export async function callLlmChat({
     await sleepAbortable(plan.waitMs)
   }
 
+  const startedAt = Date.now()
   for (let attempt = 1; ; attempt++) {
     if (signal?.aborted) {
       throw signal.reason || Object.assign(new Error('Request aborted'), { name: 'AbortError' })
@@ -1458,13 +2152,22 @@ export async function callLlmChat({
       if (signal.aborted) onExternalAbort()
       else signal.addEventListener('abort', onExternalAbort, { once: true })
     }
-    const timer = setTimeout(() => controller.abort(new Error(`LLM 请求超时 (${Math.round(timeoutMs / 1000)}s)`)), timeoutMs)
+    const timer = setTimeout(() => controller.abort(new Error(llmTimeoutMessage(timeoutMs))), timeoutMs)
+    // heartbeat while the model works, so a long wait can show elapsed time instead of looking frozen
+    const beat =
+      typeof onWait === 'function'
+        ? setInterval(() => {
+            try {
+              onWait({ elapsedMs: Date.now() - startedAt, timeoutMs, attempt })
+            } catch {}
+          }, Math.max(250, Number(waitTickMs) || 15000))
+        : 0
     let resStatus = 0
 
     try {
       const bodyStr = JSON.stringify(payload)
       const res =
-        fetchImpl === globalThis.fetch && timeoutMs > 240_000
+        timeoutMs > 240_000 && isBuiltinFetch(fetchImpl)
           ? await postJsonLongTimeout(endpoint, headers, bodyStr, timeoutMs, controller.signal)
           : await fetchImpl(endpoint, {
               method: 'POST',
@@ -1486,6 +2189,12 @@ export async function callLlmChat({
           `HTTP ${res.status}`
         const httpErr = new Error(`大模型接口 (${protocol}) 返回错误 (${res.status}): ${msg}`)
         httpErr.status = res.status
+        // a provider / relay without JSON mode: ask once more without the field (not counted as a retry)
+        if (res.status === 400 && jsonModeField && /response_format|json_object|text\.format|responsemimetype|response_mime_type|mime.?type/i.test(String(msg))) {
+          dropJsonMode()
+          lastErr = httpErr
+          continue
+        }
         const plan = planRetry(httpErr, resStatus, res)
         if (plan) {
           lastErr = httpErr
@@ -1511,13 +2220,18 @@ export async function callLlmChat({
         throw emptyErr
       }
 
+      const usage = data?.usage || data?.usageMetadata || parsed.usage || null
+      recordLlmUsage({ purpose, usage: normalizeLlmUsage(usage), images: imageCount })
       return {
         ok: true,
         protocol,
         endpoint,
         model: data?.model || cfg.model,
         text,
-        usage: data?.usage || data?.usageMetadata || null,
+        usage,
+        // raw stop reason of the provider and whether the reply was cut off by the output limit
+        finishReason: parsed.finishReason || '',
+        truncated: isCutOffFinishReason(parsed.finishReason),
       }
     } catch (err) {
       lastErr = err
@@ -1531,6 +2245,7 @@ export async function callLlmChat({
       throw err
     } finally {
       clearTimeout(timer)
+      if (beat) clearInterval(beat)
       if (signal) signal.removeEventListener('abort', onExternalAbort)
     }
   }
@@ -1539,6 +2254,7 @@ export async function callLlmChat({
 
 export async function fetchAvailableModels(overrideConfig = {}, fetchImpl = globalThis.fetch) {
   const cfg = resolveLlmConfig(overrideConfig)
+  if (cfg.mode === HOST_AGENT_MODE) return [] // the agent uses its own model: nothing to pick here
   const protocol = detectWireProtocol(cfg)
   const endpoint = buildModelsEndpoint(cfg.baseUrl, protocol)
   if (!endpoint || typeof fetchImpl !== 'function') return []
@@ -1575,6 +2291,26 @@ export async function fetchAvailableModels(overrideConfig = {}, fetchImpl = glob
 export async function testLlmConnection(overrideConfig = {}, fetchImpl = globalThis.fetch) {
   const started = Date.now()
   const cfg = resolveLlmConfig(overrideConfig)
+  if (cfg.mode === HOST_AGENT_MODE) {
+    // nothing to dial: the writing tasks wait for the agent in the conversation, which answers with its own model
+    let pending = 0
+    try {
+      pending = listHostTasks().length
+    } catch {}
+    const agent = cfg.host?.label || '当前智能体'
+    return {
+      ok: true,
+      latencyMs: Date.now() - started,
+      mode: HOST_AGENT_MODE,
+      protocol: HOST_AGENT_MODE,
+      model: HOST_AGENT_MODE,
+      endpoint: '',
+      replyPreview: '',
+      availableModels: [],
+      pendingTasks: pending,
+      message: `已设为「智能体代写」：需要 AI 写作时，插件会把任务交给正在对话的${agent}，由它用自己的模型完成（不需要 API Key）。${pending ? `现在有 ${pending} 个任务在等它处理。` : ''}请在智能体的对话里让它处理视频插件的写作任务（工具 host_llm_task）。`,
+    }
+  }
   const models = await fetchAvailableModels(cfg, fetchImpl)
   const res = await callLlmChat({
     overrideConfig: cfg,
@@ -1583,7 +2319,8 @@ export async function testLlmConnection(overrideConfig = {}, fetchImpl = globalT
     messages: [{ role: 'user', content: 'Connection health check. Reply with OK.' }],
     temperature: 0,
     maxTokens: 32,
-    timeoutMs: 25000,
+    // the same limit as real work: a slow (reasoning) model that would finish real tasks must not fail the test
+    timeoutMs: getLlmTimeoutMs(),
   })
   return {
     ok: true,

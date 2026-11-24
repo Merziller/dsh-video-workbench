@@ -17,7 +17,7 @@ import {
   resolveRemotionRuntime,
   runCommandRedirected,
 } from '../shared/index.js'
-import { captureHtmlSnapshots, findRemotionBrowser, removeRemotionBundleDir } from './frame-renderer.js'
+import { captureHtmlSnapshots, findRemotionBrowser, removeRemotionBundleDir, resolveHtmlCaptureBrowser } from './frame-renderer.js'
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
 
@@ -147,7 +147,7 @@ async function renderRemotionStillsTwice({ absDir, frames, signal }) {
 }
 
 async function renderHtmlStillsTwice({ absDir, script, frames, signal }) {
-  const browserBin = resolveBrowserExecutable()
+  const browserBin = resolveHtmlCaptureBrowser()
   if (!browserBin || !existsSync(join(absDir, 'index.html'))) {
     throw new Error('缺少 Chromium 浏览器或 index.html，无法执行 HTML 确定性检查')
   }

@@ -35,6 +35,7 @@ import {
   createAbortError,
   ensureRemotionJunction,
   killProcessTree,
+  loadEnv,
   readScriptJson,
   resolveBinaries,
   resolveBrowserExecutable,
@@ -172,6 +173,7 @@ async function openCdpSession(browserBin, width, height) {
       '--mute-audio',
       '--autoplay-policy=no-user-gesture-required',
       '--disable-dev-shm-usage',
+      ...CAPTURE_BROWSER_FLAGS,
       `--window-size=${width},${height}`,
       'about:blank',
     ],
@@ -238,7 +240,89 @@ async function openCdpSession(browserBin, width, height) {
   }
 }
 
+// Offscreen-capture flags. A full Edge / Chrome in headless mode still runs its extensions (also policy-installed
+// ones), sync and first-run pages: one of them opening a tab hides the render page, a hidden page never runs
+// requestAnimationFrame and stops updating video frames, and the render waited forever. Background throttling is off
+// for the same reason.
+export const CAPTURE_BROWSER_FLAGS = [
+  '--no-first-run',
+  '--no-default-browser-check',
+  '--disable-extensions',
+  '--disable-component-extensions-with-background-pages',
+  '--disable-default-apps',
+  '--disable-sync',
+  '--disable-background-networking',
+  '--disable-background-timer-throttling',
+  '--disable-backgrounding-occluded-windows',
+  '--disable-renderer-backgrounding',
+  '--disable-hang-monitor',
+  '--disable-features=CalculateNativeWinOcclusion,Translate,MediaRouter,OptimizationHints',
+]
+
+/**
+ * Browser for HTML-engine frame capture (renders, snapshots, determinism checks). The plugin's bundled
+ * chrome-headless-shell comes first — the binary Remotion renders with: no extensions / sync / first-run tabs,
+ * H.264 + AAC built in (a plain Chromium such as Playwright's cannot play the MP4 clips at all) and ~10x faster
+ * screenshots than a full Edge in headless mode. `DSH_HTML_CAPTURE_BROWSER` forces a specific binary; without the
+ * bundled shell it falls back to `BROWSER_EXECUTABLE_PATH` / installed Edge / Chrome.
+ */
+export function resolveHtmlCaptureBrowser() {
+  loadEnv()
+  const forced = String(process.env.DSH_HTML_CAPTURE_BROWSER || '').trim()
+  if (forced && existsSync(forced)) return forced
+  try {
+    const shell = findRemotionBrowser(resolveRemotionRuntime())
+    if (shell) return shell
+  } catch {}
+  return resolveBrowserExecutable()
+}
+
+function withTimeout(promise, ms, message) {
+  let timer
+  return Promise.race([
+    promise,
+    new Promise((_, rej) => {
+      timer = setTimeout(() => rej(new Error(message)), ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
+/**
+ * Seek the page to one frame and let it paint. The seek is bounded (a broken page fails the render with a reason
+ * instead of hanging it); the paint wait is bounded too: when the page went to the background no animation frame
+ * comes, so it is brought back to the front and the capture goes on (a screenshot composites a fresh frame anyway).
+ */
+async function seekAndPaint(session, frame, { paintFrames = 1, paintTimeoutMs = 2500 } = {}) {
+  await withTimeout(
+    session.cdp.send('Runtime.evaluate', {
+      expression: `Promise.resolve(window.__seekToFrame ? window.__seekToFrame(${frame}) : ${frame}).then(() => true)`,
+      awaitPromise: true,
+    }),
+    60_000,
+    `HTML 画面第 ${frame} 帧定位超过 60 秒没有完成（页面卡住）`,
+  )
+  const paint = session.cdp.send('Runtime.evaluate', {
+    expression: paintFrames > 1
+      ? 'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))'
+      : 'new Promise(r => requestAnimationFrame(() => r(true)))',
+    awaitPromise: true,
+  })
+  let timer
+  const painted = await Promise.race([
+    paint.then(() => true, () => true),
+    new Promise((r) => {
+      timer = setTimeout(() => r(false), paintTimeoutMs)
+    }),
+  ])
+  clearTimeout(timer)
+  if (!painted) {
+    session.backgroundRecoveries = (session.backgroundRecoveries || 0) + 1
+    try { await withTimeout(session.cdp.send('Page.bringToFront'), 5000, 'bringToFront timeout') } catch {}
+  }
+}
+
 async function waitForPageReady(cdp, url) {
+  try { await cdp.send('Page.bringToFront') } catch {}
   await cdp.send('Page.navigate', { url })
   for (let i = 0; i < 120; i++) {
     const r = await cdp.send('Runtime.evaluate', {
@@ -282,11 +366,8 @@ export async function captureHtmlSnapshots({ projectDir, browserBin, frames, out
     for (let i = 0; i < frames.length; i++) {
       if (signal?.aborted) throw createAbortError()
       const f = frames[i]
-      await session.cdp.send('Runtime.evaluate', {
-        expression: `Promise.resolve(window.__seekToFrame ? window.__seekToFrame(${f}) : ${f}).then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))`,
-        awaitPromise: true,
-      })
-      const shot = await session.cdp.send('Page.captureScreenshot', { format: 'png' })
+      await seekAndPaint(session, f, { paintFrames: 2 })
+      const shot = await withTimeout(session.cdp.send('Page.captureScreenshot', { format: 'png' }), 60_000, `HTML 快照第 ${f} 帧截图超时`)
       const pngPath = join(outDir, `shot_${String(i).padStart(2, '0')}.png`)
       const fd = openSync(pngPath, 'w')
       writeSync(fd, Buffer.from(shot.data, 'base64'))
@@ -385,15 +466,12 @@ export async function renderHtmlVideoToMp4({
           try {
             for (let f = startFrame; f < endFrameExclusive; f++) {
               if (signal?.aborted) throw createAbortError()
-              await sess.cdp.send('Runtime.evaluate', {
-                expression: `Promise.resolve(window.__seekToFrame ? window.__seekToFrame(${f}) : ${f}).then(() => new Promise(r => requestAnimationFrame(r)))`,
-                awaitPromise: true,
-              })
-              const shot = await sess.cdp.send('Page.captureScreenshot', {
+              await seekAndPaint(sess, f)
+              const shot = await withTimeout(sess.cdp.send('Page.captureScreenshot', {
                 format: 'jpeg',
                 quality: 90,
                 optimizeForSpeed: true,
-              })
+              }), 60_000, `HTML 画面第 ${f} 帧截图超时`)
               writeSync(mjpegFd, Buffer.from(shot.data, 'base64'))
               if (onProgress && ((f - startFrame) % 15 === 0 || f === endFrameExclusive - 1)) {
                 const denom = Math.max(1, Number(totalFrames) || endFrameExclusive)
@@ -479,15 +557,13 @@ export async function renderHtmlVideoToMp4({
   try {
     await waitForPageReady(session.cdp, `http://127.0.0.1:${port}/index.html?render=1`)
     for (let f = 0; f < totalFrames; f++) {
-      await session.cdp.send('Runtime.evaluate', {
-        expression: `Promise.resolve(window.__seekToFrame ? window.__seekToFrame(${f}) : ${f}).then(() => new Promise(r => requestAnimationFrame(r)))`,
-        awaitPromise: true,
-      })
-      const shot = await session.cdp.send('Page.captureScreenshot', {
+      if (signal?.aborted) throw createAbortError()
+      await seekAndPaint(session, f)
+      const shot = await withTimeout(session.cdp.send('Page.captureScreenshot', {
         format: 'jpeg',
         quality: 90,
         optimizeForSpeed: true,
-      })
+      }), 60_000, `HTML 画面第 ${f} 帧截图超时`)
       const jpg = Buffer.from(shot.data, 'base64')
       writeSync(mjpegFd, jpg)
 

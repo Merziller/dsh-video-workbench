@@ -30,8 +30,13 @@ Architecture:
 | `src/30-router.js` | coordinator | `PK.panel/open/close/catalog`, legacy aliases, host events, `PK.editTopic` (big 主题需求 editor) |
 | `src/40-studio.js` | coordinator | the 分步精修 workspace shell + `PK.studioStep(id, def)` |
 | `src/50-panels-base.js` | coordinator | `projects`, `newProject`, `help`, `kitchen` (hidden showcase of every primitive) |
+| `src/55-save-file.js` | coordinator | `PK.saveFile(...)` — 另存为: the system save-location dialog for downloads (routes `delivery/save-as`) |
 | `src/60-studio-assets.js` | panel agent A | studio steps `assets` (素材) + `director` (导演参数 incl. 数字人开关/音色/BGM…) |
 | `src/61-studio-scenes.js` | panel agent B | studio steps `scenes` (分镜精修) + `delivery` (交付) |
+| `src/62-talk-edit.js` (+ `.css`) | talk editor | `talkEdit` (AI 剪辑 · 口播粗剪): local speech recognition, rough cut on the transcript, real captions, 口播包装 (keywords, chapters, B-roll, captions on/off, 录屏讲解, 卡通讲解员); routes `asr/*`, `talk/*`, `footage/*` |
+| `src/63-highlight.js` | highlight editor | `highlightReel` (AI 剪辑 · Vlog 高光): the library's clips cut to a song's beats; routes `highlight/state`, `highlight/build` |
+| `src/64-template-fill.js` (+ `.css`) | template fill | `templateFill` (模板填空, opened from 影核广场 with `{ templateId }` or from the tools menu): a plaza template's blanks — words / pictures / music — filled with the user's own, optional 「AI 按主题写文字」; routes `plaza/slots`, `plaza/fill`, `plaza/fill-suggest` |
+| `src/65-anime.js` (+ `.css`) | coordinator | `animeChars` (我的动漫形象): the reusable anime presenter library — create from a photo (cloud likeness: cost confirmed first; or the local model) or a cartoon picture, face-mark editor + mouth-shape / blink preview, the three presenter tiers (free / local model install / cloud keys); `animeCloud` (hidden, opened from there): the Vidu / 火山引擎 (+ TOS bucket) / Runway keys, masked, with a free key test; routes `anime/*` (`lib/routes-anime.js`). The talk panel's 卡通讲解员 picks a character + engine (+ a cloud engine's mode) and confirms a cloud presenter's cost before building |
 | `src/70-settings.js` | panel agent C | `keys` (设置 · 模型与密钥), `voices` (配音中心), `cloud` (云端媒体), `avatar` (数字人), `hardware` (算力体检) |
 | `src/80-ops.js` | panel agent D | `tasks` (任务中心), `plaza` (影核广场), `reference` (参考复刻), `teleprompter` (提词器录制) |
 | `src/81-project-tools.js` | panel agent E | `export` (发布包导出), `brand` (品牌套件), `history` (版本历史与工程安全) |
@@ -51,9 +56,11 @@ data refresh), `projectFlags`. Subscribe with `PK.on('state', (st, prev) => …)
 |---|---|
 | `await PK.store.load(force?)` | raw `GET /state?projectDir=` snapshot: `projects, activeProject{projectDir, script, assets, notes, assetSummary, hasMp4, hasReferenceVideo, referenceVideoRel, hasSnapshot, hasMasterAudio, hasAvatarClip, sceneThumbs, qaReport, buildLog, historyCount}, llmConfig, ttsConfig, ttsInstallCatalog, cloudMedia, stagedCloudAssets, plazaBrand, plazaCategories, plazaTemplates, voiceCatalog, voiceCategories, availableEmotions, ttsStatus, brandKit, authorInfo, hardwareProfile, hardwarePreferences, hardwarePolicy, vibeToolkit, avatarTemplates, avatarProvider, taskRuns`. Cached per `PK.state.rev`. |
 | `await PK.get(path, query)` / `PK.post(path, body)` / `PK.postP(path, body)` | allow-listed plugin routes (relative to `/api/video-workbench/`). `postP` adds `projectDir`. Returns the JSON body, throws `PK.Error` on HTTP ≥ 400 or `{ok:false}`. After every mutating POST the host refreshes its data (and `rev` bumps) automatically. |
-| `await PK.upload(path, file, { query })` | raw binary upload: `bgm/upload`, `reference/upload`, `skin/upload`, `assets/upload` (metadata in the query, e.g. `{ projectDir, fileName }`) |
+| `await PK.upload(path, file, { query })` | raw binary upload: `bgm/upload`, `reference/upload`, `skin/upload`, `assets/upload`, `anime/upload` (metadata in the query, e.g. `{ projectDir, fileName }`) |
 | `await PK.importFiles(files, { role })` | import into the asset library through the host (keeps its auto-binding of BGM / 数字人底板 / 声音克隆样本 / 真人出镜) |
-| `await PK.job(jobId, { onProgress })` | poll `GET jobs?id=` until done (`job.status: done/error`), returns `job.result` |
+| `await PK.job(jobId, { onProgress })` | poll `GET jobs?id=` until done (`job.status: done/error`), returns `job.result`. Gives up only after `maxMs` (default: two hours, never less than `PK.llmTimeout(8)`) |
+| `PK.llmTimeout(calls = 1)` | how long to wait for a request that wraps model calls: the server's model limit (`llmConfig.timeoutMs`, 10 minutes unless `DSH_LLM_TIMEOUT_MS`) × calls + 2 minutes. Use it for every LLM-backed `PK.post` / `PK.action` (润色 / 精修 / 协助 / 封面提示词 / 提词稿 / 看图检测 …), never a fixed number |
+| `PK.llmBusy(text)` | busy text of such a request; in 由当前智能体代写 mode (`llmConfig.mode === 'host-agent'`) it adds 「等待智能体完成写作任务」 |
 | `await PK.action(name, payload)` | host actions: `run {topic?}`, `pause/resume/stop/retry`, `setDirector {patch}`, `setAvatar {patch}`, `polishTopic {topic?}`, `importFiles`, `removeAsset {assetId}`, `confirmStaging/discardStaging {stagingId}`, `selectProject {dir}`, `createProject {title, options:{engine,aspectRatio,quality,style}}`, `deleteProject {dir}`, `refresh {syncForm?}`, `setLowSpec {on}`, `setSkin {skin}`, `backToChat` |
 | `PK.assetUrl(rel)` | same-origin URL of a project file (for `<img>/<video>/<audio>`) |
 | `PK.routeUrl(path, query)` | same-origin URL of a GET route (e.g. `voices/preview`, `plaza/preview`, `reference/video`) for media elements |
@@ -61,7 +68,7 @@ data refresh), `projectFlags`. Subscribe with `PK.on('state', (st, prev) => …)
 `setDirector` patch keys: `topic, engine, creationMode('ai-coded'|'fast-draft'), aspectRatio(+'custom'), quality(+'custom'), fps,
 durationMode, targetDurationSec, narrationMode, bgmMode, pacingMode, style, voiceId, avatarEnabled, avatarLayout, displayTitle,
 genre, genreLabel, directorNotes, contentOutline(string[]), bgmTtsPrompt, targetPlatform, customWidth, customHeight,
-aiBadgeEnabled, aiBadgePosition, aiBadgeText, visual3dMode, visualReview, figureStyleChoice, figureStyleChoiceNote,
+aiBadgeEnabled, aiBadgePosition, aiBadgeText, visual3dMode, visualReview, visualReviewFine, figureStyleChoice, figureStyleChoiceNote,
 useDraftReference, speechTempo, useHostVocal, aiAuthorCode, trimClipSec, clipSpeedMult` (validated by the host; invalid
 values are ignored). `setAvatar` keys: `enabled, mode, layout,
 presetId, sourcePath, voiceSamplePath, chromaKeyColor`.
@@ -211,7 +218,8 @@ inner scroll areas; give them `data-pk-scroll="<unique>"` so their scroll positi
 * The skin's own toasts and the kit toasts must not stack on top of each other (either route `PK.configure({ toast })` to
   the skin's toast or let the kit render them).
 
-Panel ids: `studio`(+steps assets/director/scenes/delivery) `tasks` `plaza` `keys`(args `{tab:'llm'|'tts'|'cloud'|'general'}`)
+Panel ids: `studio`(+steps assets/director/scenes/delivery) `tasks` `plaza` `keys`(args `{tab:'llm'|'tts'|'cloud'|'general'}`;
+`{tab:'llm', focus:'vision'}` scrolls to 看图能力 — the 参考复刻 badge's 「看图能力设置」 uses it)
 `voices` `cloud` `avatar`(args `{tab:'lipsync'|'provider'|'generate'}` scroll to that section; alias `lipsync`) `hardware`
-`teleprompter` `reference` `brand` `export` `history` `projects` `newProject` `help`
+`teleprompter` `reference` `brand` `export` `history` `animeChars`(args `{ editId }` opens a character's face marks) `animeCloud`(its cloud keys) `projects` `newProject` `help`
 (`kitchen` hidden). Legacy names (`llm`,`tts`,`prompter`,`compute`,`pack`,`voice`,`refine`,`ref`,`compare`,`hub`…) resolve via aliases.

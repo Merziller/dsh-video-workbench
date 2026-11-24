@@ -408,6 +408,8 @@ a.pk-btn{text-decoration:none}
     return Array.isArray(l) && l.length ? l : fallback
   }
   const findScene = (script, id) => ((script && Array.isArray(script.scenes) ? script.scenes : []).find((x) => x && x.id === id) || null)
+  /** 口播剪辑 scenes speak with the person's own recorded voice: never offered for AI re-dubbing or per-scene mastering */
+  const isHostVoice = (sc) => Boolean(sc && sc.voiceSource === 'host')
   const withCurrent = (list, value, label) => {
     if (value === undefined || value === null || value === '') return list
     return list.some((o) => String(o.value) === String(value)) ? list : [...list, { value, label: label || String(value), hint: '当前值' }]
@@ -442,6 +444,13 @@ a.pk-btn{text-decoration:none}
       o.icon ? PK.icon(o.icon, o.size === 'sm' ? 13 : 15) : null,
       h('span.pk-btn-l', null, label),
     )
+  /** download link of a deliverable: a plain click opens 「另存为」 (choose folder + name — PK.saveFile in 55-save-file.js);
+   *  it stays a real <a download>, so 右键「链接另存为」 and a kit without the save module keep working */
+  const saveLink = (label, href, o = {}) => {
+    const a = linkBtn(label, href, o)
+    if (o.what) a.setAttribute('data-pk-save-what', o.what)
+    return a
+  }
 
   /* ================================================================ draft patch model */
   const HIDDEN_KEYS = new Set(['voiceLocked', 'voiceCastBy', 'useBuiltinLayout', 'assetPaths'])
@@ -714,8 +723,9 @@ a.pk-btn{text-decoration:none}
     const subIds = Object.keys(snap.scenes).filter((id) => Object.prototype.hasOwnProperty.call(snap.scenes[id], 'subtitleText'))
     if (subIds.length && rec) await resyncGlobalSubs(saved, subIds)
     // narration edits: the voice + subtitles still speak the old text until the scene is re-dubbed
+    // (a 口播剪辑 scene keeps the person's own voice: its narration is the transcript, nothing is re-dubbed)
     const narrIds = Object.keys(snap.scenes).filter((id) => Object.prototype.hasOwnProperty.call(snap.scenes[id], 'narration'))
-    for (const id of narrIds) redubOf(PK.dir()).add(id)
+    for (const id of narrIds) if (!isHostVoice(findScene(saved, id))) redubOf(PK.dir()).add(id)
     subtractSaved(L, snap)
     PK.store.invalidate()
     const recorded = (rec && Array.isArray(rec.recorded) ? rec.recorded.length : 0) || 0
@@ -1832,7 +1842,7 @@ a.pk-btn{text-decoration:none}
         lead: sceneNo(i),
         thumb: thumbImg(thumb, () => h('div.pk-media-empty', null, PK.icon('film', 16))),
         title,
-        sub: `${num(sc.durationSec).toFixed(1)} 秒 · ${env.view.narrationMode === 'subtitle-mv' ? '纯字幕' : hasVoice ? '已配音' : '未配音'}${redubOf(PK.dir()).has(sc.id) ? ' · 需重配' : ''}`,
+        sub: `${num(sc.durationSec).toFixed(1)} 秒 · ${env.view.narrationMode === 'subtitle-mv' ? '纯字幕' : isHostVoice(sc) ? '本人原声' : hasVoice ? '已配音' : '未配音'}${redubOf(PK.dir()).has(sc.id) && !isHostVoice(sc) ? ' · 需重配' : ''}`,
         active: sc.id === L.sel,
         tip: `${sc.id} · ${sceneTitle(sc, i)}`,
         right: h(
@@ -2200,6 +2210,7 @@ a.pk-btn{text-decoration:none}
     const title = sceneTitle(sc, idx)
     const busy = env.busy
     const subMv = env.view.narrationMode === 'subtitle-mv'
+    const hostVoice = isHostVoice(sc)
     const fps = env.fps
     const emo = withCurrent([...new Set([...optList('emotions', []).map((o) => o.value), ...BASE_EMOTIONS])].map((e) => ({ value: e, label: e })), sc.emotion)
     const rate = String((num(sc.speechRate) || 1).toFixed(2))
@@ -2229,19 +2240,32 @@ a.pk-btn{text-decoration:none}
       names.length
         ? h('div.pk-sc-guard', null, PK.icon('check', 14), h('span', null, `已保护你的手动修改：${names.join('、')}（AI 重新出片时会保留）`), ui.btn('不再保护', () => clearProtection(env, sc.id, title, names), { size: 'sm', kind: 'ghost', disabled: busy }))
         : null,
-      redubOf(PK.dir()).has(sc.id) && !subMv
+      redubOf(PK.dir()).has(sc.id) && !subMv && !hostVoice
         ? ui.note('旁白已经改了，但配音和字幕还是旧的。点「重配此幕配音」让声音和字幕跟上新文字。', { level: 'warn', actions: [ui.btn('重配此幕配音', () => ttsScene(env, sc), { size: 'sm', icon: 'mic', kind: 'primary', disabled: busy })] })
         : null,
       ui.section(
         { title: '文案', en: 'COPY', icon: 'edit' },
         ui.field({ label: '画面主标题', en: 'TITLE' }, ui.textarea({ key: `sc-title-${sc.id}`, value: sc.title || '', rows: 1, minRows: 1, maxRows: 4, maxLength: 200, placeholder: '这一幕在画面上显示的大标题', onInput: (v) => env.edit('title', v), expand: { title: `画面主标题 · ${sc.id}` } })),
+        hostVoice
+          ? ui.field(
+              { label: '原话（语音识别）', en: 'TRANSCRIPT', hint: '这是从你录制的视频里识别出来的原话，只作记录。改这里不会改变声音；字幕的错别字请改下方「屏幕字幕」；要删掉某句话，请回到「AI 剪辑」面板。' },
+              ui.textarea({ key: `sc-narr-${sc.id}`, value: sc.narration || '', rows: 3, minRows: 2, maxRows: 10, counter: true, placeholder: '识别出的原话', onInput: (v) => env.edit('narration', v), expand: { title: `原话 · ${sc.id}「${title}」` } }),
+            )
+          : ui.field(
+              { label: subMv ? '画面文案' : '口播旁白', en: 'NARRATION', hint: subMv ? '纯音乐卡点模式没有配音：画面上显示的是下方「屏幕字幕」。改完文案后点「用文案重新生成字幕」同步过去。' : '改完记得点下方「重配此幕配音」，声音和字幕才会换成新文字' },
+              ui.textarea({ key: `sc-narr-${sc.id}`, value: sc.narration || '', rows: 4, minRows: 3, maxRows: 12, counter: true, placeholder: subMv ? '这一幕要表达的文字' : '这一幕要说的话（也是默认字幕）', onInput: (v) => env.edit('narration', v), expand: { title: `${subMv ? '画面文案' : '口播旁白'} · ${sc.id}「${title}」`, hint: subMv ? '纯音乐卡点模式的画面文案。' : '这是 AI 配音要念的内容，也是默认字幕。写口语化的短句效果最好。' } }),
+            ),
         ui.field(
-          { label: subMv ? '画面文案' : '口播旁白', en: 'NARRATION', hint: subMv ? '纯音乐卡点模式没有配音：画面上显示的是下方「屏幕字幕」。改完文案后点「用文案重新生成字幕」同步过去。' : '改完记得点下方「重配此幕配音」，声音和字幕才会换成新文字' },
-          ui.textarea({ key: `sc-narr-${sc.id}`, value: sc.narration || '', rows: 4, minRows: 3, maxRows: 12, counter: true, placeholder: subMv ? '这一幕要表达的文字' : '这一幕要说的话（也是默认字幕）', onInput: (v) => env.edit('narration', v), expand: { title: `${subMv ? '画面文案' : '口播旁白'} · ${sc.id}「${title}」`, hint: subMv ? '纯音乐卡点模式的画面文案。' : '这是 AI 配音要念的内容，也是默认字幕。写口语化的短句效果最好。' } }),
-        ),
-        ui.field(
-          { label: '屏幕字幕', en: 'SUBTITLE', hint: subMv ? '画面上实际显示的文字。清空后保存 = 按上面的文案重新生成。' : '默认按旁白自动断句。改这里只改变屏幕上显示的字幕文字（保存后按新文字重新排版）；清空后保存 = 按旁白重新生成；重新配音时字幕会按旁白重新断句。' },
-          ui.textarea({ key: `sc-sub-${sc.id}`, value: sc.subtitleText || '', rows: 2, minRows: 2, maxRows: 8, counter: true, placeholder: subMv ? '留空 = 按画面文案自动生成字幕' : '留空 = 跟随旁白自动生成字幕', onInput: (v) => env.edit('subtitleText', v), expand: { title: `屏幕字幕 · ${sc.id}「${title}」` } }),
+          {
+            label: '屏幕字幕',
+            en: 'SUBTITLE',
+            hint: hostVoice
+              ? '画面上的字幕，每句之间用「，」隔开，一句对应一行。改错别字不会打乱时间（字幕仍跟着你说话的节奏）；清空后保存 = 恢复识别出的原话。'
+              : subMv
+                ? '画面上实际显示的文字。清空后保存 = 按上面的文案重新生成。'
+                : '默认按旁白自动断句。改这里只改变屏幕上显示的字幕文字（保存后按新文字重新排版）；清空后保存 = 按旁白重新生成；重新配音时字幕会按旁白重新断句。',
+          },
+          ui.textarea({ key: `sc-sub-${sc.id}`, value: sc.subtitleText || '', rows: 2, minRows: 2, maxRows: 8, counter: true, placeholder: hostVoice ? '留空 = 恢复识别出的原话' : subMv ? '留空 = 按画面文案自动生成字幕' : '留空 = 跟随旁白自动生成字幕', onInput: (v) => env.edit('subtitleText', v), expand: { title: `屏幕字幕 · ${sc.id}「${title}」` } }),
         ),
         subMv
           ? ui.btn('用文案重新生成字幕', () => {
@@ -2255,7 +2279,14 @@ a.pk-btn{text-decoration:none}
       ),
       subMv
         ? null
-        : ui.section(
+        : hostVoice
+          ? ui.section(
+              { title: '声音', en: 'VOICE', icon: 'voice' },
+              ui.note('本幕是你本人的原声（来自你录制的视频，剪辑时已做人声增强和响度统一），会原样保留，不能用 AI 重新配音。要剪掉或恢复某句话，请回到「AI 剪辑」面板。', { level: 'ok' }),
+              h('div.pk-sc-rowbtns', null, audioRel ? ui.playBtn(fileUrl(audioRel, hash(server.updatedAt || '')), { label: '试听本幕原声' }) : null),
+              ui.hint(audioRel ? `原声 ${voiceLen ? `${voiceLen.toFixed(1)} 秒` : ''}` : '这一幕还没有原声片段，请在「AI 剪辑」面板重新生成剪辑工程。'),
+            )
+          : ui.section(
             { title: '声音', en: 'VOICE', icon: 'voice' },
             ui.field(
               { label: '本幕音色', en: 'VOICE', hint: voiceId === 'auto' ? '跟随全片主配音（或 AI 自动匹配）' : '只对这一幕生效；改完点「重配此幕配音」' },
@@ -2620,7 +2651,14 @@ a.pk-btn{text-decoration:none}
       'div.pk-dl-check',
       { class: `is-${tone}` },
       h('span.pk-dl-check-i', null, PK.icon(tone === 'ok' ? 'check' : tone === 'err' ? 'x' : tone === 'warn' ? 'warn' : 'info', 14)),
-      h('div.pk-dl-check-b', null, h('b', null, ck.name || '检查项'), ck.value ? h('span', null, String(ck.value)) : null),
+      h(
+        'div.pk-dl-check-b',
+        null,
+        h('b', null, ck.name || '检查项'),
+        ck.value ? h('span', null, String(ck.value)) : null,
+        // a failed / warned check lists where it happens (e.g. held pictures: time range + scene ids), one line each
+        ...(tone === 'err' || tone === 'warn' ? (Array.isArray(ck.details) ? ck.details : []).slice(0, 8).map((d) => h('span', null, `· ${String(d)}`)) : []),
+      ),
     )
   }
   function playerFor(L, url, poster) {
@@ -2711,7 +2749,7 @@ a.pk-btn{text-decoration:none}
               { icon: 'expand', title: '铺满整个窗口播放成片，再按 F 进入真正的全屏' },
             )
           : null,
-        hasMp4 ? linkBtn('下载成片', mp4, { icon: 'download', download: `${title.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'final'}.mp4` }) : null,
+        hasMp4 ? saveLink('下载成片', mp4, { icon: 'download', what: '成片', download: `${title.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'final'}.mp4`, title: '选择保存位置和文件名，把成片 MP4 存到你想放的地方' }) : null,
         hasMp4 ? ui.btn('一键生成发布资料包', () => PK.open('export'), { icon: 'box' }) : null,
         hasMp4 ? ui.btn('投稿到影核广场', () => PK.open('plaza', { view: 'submit' }), { icon: 'hub', kind: 'ghost', title: '把这条作品打成投稿包发给作者，审核收录后大家都能在影核广场套用' }) : null,
       ),
@@ -2798,7 +2836,7 @@ a.pk-btn{text-decoration:none}
             'div.pk-stack',
             null,
             h('div.pk-dl-player', { style: { width: `min(100%, calc(min(40vh, 360px) * ${W} / ${H}))`, aspectRatio: `${W} / ${H}` } }, h('video', { src: lutRes.url, controls: 'controls', preload: 'metadata', playsinline: '' })),
-            ui.row([linkBtn('下载调色版', lutRes.url, { icon: 'download', size: 'sm' }), ui.hint(U.baseName(lutRes.outputPath || ''))]),
+            ui.row([saveLink('下载调色版', lutRes.url, { icon: 'download', size: 'sm', what: '调色版', title: '选择保存位置和文件名，保存这份调色版视频' }), ui.hint(U.baseName(lutRes.outputPath || ''))]),
           )
         : null,
     )

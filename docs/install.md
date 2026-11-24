@@ -1,4 +1,4 @@
-# Universal Installation Guide — DSH Video Workbench (`v0.6.0`)
+# Universal Installation Guide — DSH Video Workbench (`v0.7.0`)
 
 > **Original Author**: Merziller · **QQ**: `1411574209` · **WeChat**: `Merziller` · **Email**: `k26789228@gmail.com`  
 > **GitHub**: https://github.com/Merziller/dsh-video-workbench (MIT Open Source)
@@ -74,7 +74,7 @@ node ./bin/dsh-video-cli.mjs stop   # or double-click `stop-workbench.cmd`
 # Opens http://127.0.0.1:4399 in your browser: the AI Agent War Room (3 skins) with CinePulse Hub, Reference Compare, multi-track timeline, BYOK Cloud Media & Multi-Engine TTS panels!
 ```
 
-**What you will see (v0.6.0 "AI Agent War Room" UI):** the studio opens straight into a native war room with three switchable skins — **C · 棱镜实验室 Prism Lab (default)**, **A · 星舰剪辑甲板 Nova Deck** and **B · 墨韵织机 Ink Loom** (skin button at the top right; your choice is remembered). Every panel (分步精修 step studio, 任务中心 tasks, 影核广场 templates, 配音中心 voices, 云端媒体中心 cloud media, 数字人 avatar, 算力体检 hardware, 设置 · 模型与密钥 settings …) is native to the skin.
+**What you will see (the "AI Agent War Room" UI, since v0.6.0):** the studio opens straight into a native war room with three switchable skins — **C · 棱镜实验室 Prism Lab (default)**, **A · 星舰剪辑甲板 Nova Deck** and **B · 墨韵织机 Ink Loom** (skin button at the top right; your choice is remembered). Every panel (分步精修 step studio, 任务中心 tasks, 影核广场 templates, 配音中心 voices, 云端媒体中心 cloud media, 数字人 avatar, 算力体检 hardware, 设置 · 模型与密钥 settings …) is native to the skin.
 
 First render in four clicks:
 1. Top-left project button → pick a project (two demo projects are included) or 「新建工程」.

@@ -597,7 +597,8 @@
       const res = await PK.post(
         'publish-pack/cover',
         { projectDir: dir, action: 'ai-prompt', aspect: aiAspectOf(ctx), platform: L.platform, timeSec: hasNum(eff.timeSec) ? eff.timeSec : undefined, draft: d.prompt },
-        { timeout: 150000 },
+        // one model call on the server: wait for the shared model time limit (it used to give up after 150 s)
+        { timeout: PK.llmTimeout() },
       )
       const next = String((res && res.prompt) || '').trim()
       if (!next) throw new PK.Error('AI 没有写出提示词，请再试一次')
@@ -2084,6 +2085,7 @@
     figureStyleChoice: '人物画风',
     figureStyleChoiceNote: '人物画风',
     visualReview: '画面自检',
+    visualReviewFine: '逐个机位看图',
   }
   const knownLabel = (k) => {
     const s = String(k || '')

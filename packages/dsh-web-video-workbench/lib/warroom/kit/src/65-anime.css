@@ -1,0 +1,85 @@
+/* 我的动漫形象 (65-anime.js): library thumbnails + the face-mark editor / mouth-shape preview */
+.pk-an-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background:
+    repeating-conic-gradient(color-mix(in srgb, var(--pk-line) 55%, transparent) 0% 25%, transparent 0% 50%) 50% / 16px 16px,
+    var(--pk-bg3);
+}
+.pk-an-thumb--empty {
+  display: grid;
+  place-items: center;
+  color: var(--pk-ink3, var(--pk-ink2));
+}
+.pk-an-face-wrap {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+.pk-an-face {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+  max-height: 520px;
+  margin: 0 auto;
+  border: 1px solid var(--pk-line);
+  border-radius: var(--pk-radius-sm);
+  overflow: hidden;
+  cursor: crosshair;
+  user-select: none;
+  background:
+    repeating-conic-gradient(color-mix(in srgb, var(--pk-line) 55%, transparent) 0% 25%, transparent 0% 50%) 50% / 18px 18px,
+    var(--pk-bg3);
+}
+.pk-an-face-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+.pk-an-pv {
+  position: absolute;
+  pointer-events: none;
+  image-rendering: auto;
+}
+.pk-an-mark {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 14px;
+  min-height: 10px;
+  border: 2px dashed color-mix(in srgb, var(--pk-acc) 75%, white);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.pk-an-mark.is-mouth {
+  border-radius: 40%;
+}
+.pk-an-mark.is-sel {
+  border-style: solid;
+  border-color: var(--pk-acc);
+  background: color-mix(in srgb, var(--pk-acc) 16%, transparent);
+}
+.pk-an-mark-l {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 3px);
+  transform: translateX(-50%);
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.62);
+  pointer-events: none;
+}
+.pk-an-mark.is-sel .pk-an-mark-l {
+  background: var(--pk-acc);
+  color: var(--pk-on-acc, #fff);
+}

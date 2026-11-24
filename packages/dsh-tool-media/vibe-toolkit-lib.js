@@ -13,9 +13,8 @@
  * Each tool lives in its own lib file so a scene only bundles what it imports.
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import { dirname, join, resolve } from 'node:path'
-import { REPO_ROOT, resolveBinaries } from '../shared/index.js'
+import { join, resolve } from 'node:path'
+import { PACKAGE_ROOT, resolveBinaries, resolveDependencyDir } from '../shared/index.js'
 import { detectSuperCollider } from './supercollider-bridge.js'
 
 export const VIBE_TWEEN_TSX_SOURCE = `/**
@@ -552,14 +551,14 @@ declare module 'tsl-textures' {
 }
 `
 
-function resolveThreeLibFile(file) {
-  const candidates = []
-  try {
-    const req = createRequire(join(REPO_ROOT, 'package.json'))
-    candidates.push(join(dirname(req.resolve('three/package.json')), 'examples', 'jsm', 'libs', file))
-  } catch {}
-  candidates.push(join(REPO_ROOT, 'node_modules', 'three', 'examples', 'jsm', 'libs', file))
-  return candidates.find((p) => existsSync(p)) || ''
+/**
+ * A file shipped in three's examples/jsm/libs (Tween.js, Ammo.js), '' when missing. Looked up from the plugin package
+ * (its own or the hoisted parent node_modules) — REPO_ROOT is the user's data folder once the plugin is installed.
+ */
+export function resolveThreeLibFile(file, { packageRoot = PACKAGE_ROOT } = {}) {
+  const threeDir = resolveDependencyDir('three', { packageRoot })
+  const p = threeDir ? join(threeDir, 'examples', 'jsm', 'libs', file) : ''
+  return p && existsSync(p) ? p : ''
 }
 
 /**
@@ -705,38 +704,31 @@ export function buildVisualFxPreferenceGuide(mode = 'auto') {
   return '- **【视效偏好：AI 按需自由创作】**：每一镜自己判断用不用 3D、SVG、HUD、物理、材质等工具；现成组件和 Vibecoding 工具都只是可选项，满足不了的效果直接写代码实现。'
 }
 
-/** Status of the 8 Vibecoding tools on this machine (for doctor / UI / self-test). */
-export function getVibeToolkitStatus() {
-  const req = (() => {
-    try {
-      return createRequire(join(REPO_ROOT, 'package.json'))
-    } catch {
-      return null
-    }
-  })()
-  const has = (spec) => {
-    if (!req) return false
-    try {
-      req.resolve(spec)
-      return true
-    } catch {
-      return false
-    }
+/**
+ * Status of the 8 Vibecoding tools on this machine (for doctor / UI / self-test). The libraries are looked up from the
+ * plugin package (its own or the hoisted parent node_modules), never from the REPO_ROOT data folder.
+ */
+export function getVibeToolkitStatus({ packageRoot = PACKAGE_ROOT } = {}) {
+  const dirs = new Map()
+  const dirOf = (name) => {
+    if (!dirs.has(name)) dirs.set(name, resolveDependencyDir(name, { packageRoot }))
+    return dirs.get(name)
   }
-  // Read <pkg>/package.json directly: packages with an "exports" map (three) refuse 'pkg/package.json'
+  const has = (name) => Boolean(dirOf(name))
+  // Read <pkg>/package.json from the resolved folder: packages with an "exports" map (three) refuse 'pkg/package.json'
   const pkgVersion = (name) => {
-    const p = join(REPO_ROOT, 'node_modules', name, 'package.json')
     try {
-      return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')).version || '' : ''
+      return dirOf(name) ? JSON.parse(readFileSync(join(dirOf(name), 'package.json'), 'utf8')).version || '' : ''
     } catch {
       return ''
     }
   }
+  const threeLib = (file) => resolveThreeLibFile(file, { packageRoot })
   return [
     { id: 'threejs', name: 'Three.js', role: '3D 场景 / 程序化几何', available: has('three'), version: pkgVersion('three') },
     { id: 'animejs', name: 'Anime.js', role: '时间轴 / 交错 / 弹性缓动', available: has('animejs'), version: pkgVersion('animejs') },
-    { id: 'tweenjs', name: 'Tween.js', role: '补间 / 缓动曲线', available: Boolean(resolveThreeLibFile('tween.module.js')), version: 'three-bundled' },
-    { id: 'ammojs', name: 'Ammo.js', role: 'Bullet 刚体物理', available: Boolean(resolveThreeLibFile('ammo.wasm.js') && resolveThreeLibFile('ammo.wasm.wasm')), version: 'three-bundled' },
+    { id: 'tweenjs', name: 'Tween.js', role: '补间 / 缓动曲线', available: Boolean(threeLib('tween.module.js')), version: 'three-bundled' },
+    { id: 'ammojs', name: 'Ammo.js', role: 'Bullet 刚体物理', available: Boolean(threeLib('ammo.wasm.js') && threeLib('ammo.wasm.wasm')), version: 'three-bundled' },
     { id: 'tsl-textures', name: 'TSL Textures', role: '程序化着色器材质', available: has('tsl-textures'), version: pkgVersion('tsl-textures') },
     (() => {
       const sc = detectSuperCollider()

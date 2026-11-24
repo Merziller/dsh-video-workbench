@@ -10,6 +10,7 @@ import {
   readSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -58,10 +59,142 @@ export function resolvePackagePath(...segments) {
   return join(REPO_ROOT, ...segments)
 }
 
-function getPkgRequire() {
+/*
+ * Code and npm dependencies are looked up from the plugin package (PACKAGE_ROOT), never from the writable REPO_ROOT
+ * data folder: installed into a host's node_modules the two differ, and the dependencies sit either in the package's
+ * own node_modules or hoisted into the parent node_modules (npm, pnpm virtual store, DSH profiles). The package root
+ * is a parameter so the installed layouts can be tested with scratch folders. A package root reached through a link
+ * (pnpm, `npm link`, a junction) is also looked at in its real folder, where pnpm puts the dependencies next to it.
+ */
+
+function realPackageRoot(packageRoot) {
   try {
-    return createRequire(join(PACKAGE_ROOT, 'package.json'))
+    return realpathSync(packageRoot)
   } catch {
+    return packageRoot
+  }
+}
+
+/** A require() anchored at the plugin package; Node walks up into hoisted parent node_modules folders. */
+export function getPackageRequire(packageRoot = PACKAGE_ROOT) {
+  try {
+    return createRequire(join(realPackageRoot(packageRoot), 'package.json'))
+  } catch {
+    return null
+  }
+}
+
+function getPkgRequire() {
+  return getPackageRequire()
+}
+
+/** node_modules folders that may hold the plugin's dependencies, nearest first (own, hoisted parent, scoped parent). */
+export function packageNodeModulesDirs(packageRoot = PACKAGE_ROOT) {
+  const dirs = []
+  for (const root of new Set([realPackageRoot(packageRoot), packageRoot])) {
+    const parent = dirname(root)
+    dirs.push(join(root, 'node_modules'))
+    if (basename(parent) === 'node_modules') dirs.push(parent)
+    if (basename(dirname(parent)) === 'node_modules') dirs.push(dirname(parent))
+  }
+  return [...new Set(dirs)]
+}
+
+/**
+ * Folder of an installed dependency of the plugin ('' when missing). Packages whose "exports" map hides
+ * `./package.json` (three) are found from their entry point, walking up to the folder whose package.json has that name.
+ */
+export function resolveDependencyDir(name, { packageRoot = PACKAGE_ROOT } = {}) {
+  const isPackageDir = (dir) => {
+    try {
+      return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).name === name
+    } catch {
+      return false
+    }
+  }
+  const req = getPackageRequire(packageRoot)
+  if (req) {
+    try {
+      const dir = dirname(req.resolve(`${name}/package.json`))
+      if (isPackageDir(dir)) return dir
+    } catch {}
+    try {
+      const entry = req.resolve(name)
+      for (let dir = dirname(entry); isAbsolute(entry) && basename(dir) !== 'node_modules'; dir = dirname(dir)) {
+        if (isPackageDir(dir)) return dir
+        if (dirname(dir) === dir) break
+      }
+    } catch {}
+  }
+  // ESM-only packages (no "require" entry) and folders Node would not reach from the package
+  for (const nmDir of packageNodeModulesDirs(packageRoot)) {
+    const dir = join(nmDir, ...name.split('/'))
+    if (isPackageDir(dir)) return dir
+  }
+  return ''
+}
+
+/**
+ * Model-facing text of a tool result — the text the MCP server answers with (bin/dsh-video-mcp.mjs): a string as it is,
+ * any other value as indented JSON. Never throws (circular objects / BigInt are written defensively).
+ */
+export function toolResultText(value) {
+  if (typeof value === 'string') return value
+  if (value === undefined) return 'null'
+  try {
+    const text = JSON.stringify(value, null, 2)
+    if (typeof text === 'string') return text
+  } catch {}
+  try {
+    const seen = new WeakSet()
+    const text = JSON.stringify(
+      value,
+      (_key, v) => {
+        if (typeof v === 'bigint') return v.toString()
+        if (v && typeof v === 'object') {
+          if (seen.has(v)) return '[Circular]'
+          seen.add(v)
+        }
+        return v
+      },
+      2,
+    )
+    if (typeof text === 'string') return text
+  } catch {}
+  return String(value)
+}
+
+/**
+ * Default `output.render` of the plugin's tools. Newer DSH hosts (@deepseek-ai/dsh-tools) require
+ * `render(args, value) => ContentBlock[]`: a pure, synchronous projection of the validated arguments and result to the
+ * content the model sees. Here: one text block with toolResultText(value). A host passing only the result is tolerated.
+ */
+export function renderToolResultText(args, value) {
+  const text = toolResultText(arguments.length >= 2 ? value : args)
+  return [{ type: 'text', text: text || '""' }]
+}
+
+/** The tool definition itself, with renderToolResultText added as `output.render` when it has none. */
+export function withToolRender(def) {
+  if (!def || typeof def !== 'object') return def
+  const output = def.output && typeof def.output === 'object' ? def.output : {}
+  if (typeof output.render !== 'function') def.output = { ...output, render: renderToolResultText }
+  return def
+}
+
+/**
+ * Register one tool with the host (`ctx.tools.register`), adding the `output.render` newer DSH hosts require (older
+ * hosts and the MCP / CLI shims ignore it). Every tool of the plugin goes through here. The calling plugin must list
+ * 'tools' in its `inject`: strict Cordis hosts refuse `ctx.tools` otherwise. A tool the host rejects is reported and
+ * skipped, so it cannot take the plugin's other tools down with it. Returns the host's disposer, or null.
+ */
+export function registerTool(ctx, def) {
+  try {
+    const tools = ctx.tools
+    if (!tools || typeof tools.register !== 'function') return null
+    return tools.register(withToolRender(def)) ?? null
+  } catch (err) {
+    console.warn(`[dsh-video-workbench] 工具「${def?.name || '未命名'}」注册失败，已跳过：${err?.message || err}`)
     return null
   }
 }
@@ -144,13 +277,11 @@ export function resolveEnvPath(envKey, fallbackRelative = '') {
  * Resolve Remotion runtime (`remotion`, `@remotion/renderer`, `@remotion/bundler`, `typescript`)
  * cleanly across `.env REMOTION_TEMPLATE_ROOT` override, flat npm, and pnpm virtual stores.
  */
-export function resolveRemotionRuntime() {
+export function resolveRemotionRuntime({ packageRoot = PACKAGE_ROOT } = {}) {
   loadEnv()
   const explicitRoot = resolveEnvPath('REMOTION_TEMPLATE_ROOT', '')
   const nmCandidates = [
-    join(PACKAGE_ROOT, 'node_modules'),
-    basename(dirname(PACKAGE_ROOT)) === 'node_modules' ? dirname(PACKAGE_ROOT) : '',
-    basename(dirname(dirname(PACKAGE_ROOT))) === 'node_modules' ? dirname(dirname(PACKAGE_ROOT)) : '',
+    ...packageNodeModulesDirs(packageRoot),
     explicitRoot ? join(explicitRoot, 'node_modules') : '',
   ].filter(Boolean)
 
@@ -165,7 +296,7 @@ export function resolveRemotionRuntime() {
     ) {
       const tscCand = join(nmDir, 'typescript', 'bin', 'tsc')
       return {
-        templateRoot: nmDir === join(PACKAGE_ROOT, 'node_modules') ? PACKAGE_ROOT : dirname(nmDir),
+        templateRoot: nmDir === join(packageRoot, 'node_modules') ? packageRoot : dirname(nmDir),
         nodeModulesDir: nmDir,
         rendererEntry: join(rendererDir, 'dist', 'index.js'),
         bundlerEntry: join(bundlerDir, 'dist', 'index.js'),

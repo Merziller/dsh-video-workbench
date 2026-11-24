@@ -69,7 +69,7 @@
     },
     badge: { 'top-right': '避开左上角的主标题', 'top-left': '传统角标位置', 'bottom-right': '贴底安全区展示', 'bottom-left': '左下安全区展示' },
     narration: { tts: 'AI 真人音色逐幕配音解说（标准）', 'tts-beat-sync': '配音的同时，切镜对齐背景音乐的重拍', 'subtitle-mv': '纯音乐卡点 MV：不配音，只有字幕和音效' },
-    bgm: { 'llm-coded': '大模型写代码合成原创配乐（需要先配置大模型）', uploaded: '用你上传的音乐，自动测量节拍', 'tts-engine': '用配音引擎生成沉浸式氛围音景' },
+    bgm: { 'llm-coded': '大模型写代码合成原创配乐（需要先配置大模型）', uploaded: '用你上传的音乐，自动测量节拍', 'tts-engine': '用配音引擎生成沉浸式氛围音景', generated: '本机按节拍合成配乐，不用素材库里的歌（不花钱）' },
     layout: { 'pip-br': '画面右下角小窗出镜', 'pip-bl': '画面左下角小窗出镜', fullscreen: '数字人占满全屏口播' },
   }
   const o2 = (pairs) => pairs.map(([value, label, hint]) => ({ value, label, hint: hint || '' }))
@@ -80,7 +80,7 @@
     aspectRatios: o2([['auto', 'AI 智能判断'], ['16:9', '16:9 横屏'], ['9:16', '9:16 竖屏'], ['3:4', '3:4 竖版 · 小红书'], ['1:1', '1:1 方屏'], ['4:3', '4:3 复古']]),
     qualities: o2([['720p', '720P 极速预览'], ['1080p', '1080P 全高清'], ['2k', '2K 超清'], ['4k', '4K 超清母带']]),
     narrationModes: o2([['tts', 'AI 真人配音'], ['tts-beat-sync', '配音 + 踩拍切镜'], ['subtitle-mv', '纯音乐卡点 MV（免配音）']]),
-    bgmModes: o2([['llm-coded', 'AI 写代码作曲'], ['uploaded', '使用已上传 BGM'], ['tts-engine', 'TTS 氛围音景']]),
+    bgmModes: o2([['llm-coded', 'AI 写代码作曲'], ['uploaded', '使用已上传 BGM'], ['tts-engine', 'TTS 氛围音景'], ['generated', '本机合成配乐']]),
     pacingModes: o2([['auto', 'AI 自动节奏'], ['calm', '舒缓叙事 (4~7s/镜)'], ['balanced', '稳健解说 (3~5s/镜)'], ['dynamic', '高燃踩点 (0.5~3s/镜)']]),
     avatarLayouts: o2([['pip-br', '右下画中画'], ['pip-bl', '左下画中画'], ['fullscreen', '全屏口播']]),
     avatarModes: o2([['ai-human', 'AI 虚拟主播'], ['cloned-human', '克隆真人（上传 / 录制本人）']]),
@@ -96,6 +96,10 @@
       ['flat', '扁平插画', '彩色扁平侧身人物，适合生活、产品、科普'],
       ['stick', '火柴人', '线条小人，适合搞笑段子、教程、简笔故事'],
       ['custom', '自定义（AI 自己设计角色）', 'Q版、动漫、绘本、像素等人物库没有的画风，在下面写清楚想要的样子'],
+    ]),
+    productionTypes: o2([
+      ['ai-film', 'AI 原创成片', '按你的需求由 AI 写文案、配音、做画面（动画、宣传片、科普、MV…）'],
+      ['talk-edit', '口播剪辑（我录好的真人视频）', '用你上传的出镜视频：自动去停顿、口头禅和重录，配真实字幕和轻音乐；本机运行不花钱'],
     ]),
     styleCards: [
       { value: 'auto', label: 'AI 自由匹配', hint: 'AI 按主题从这些风格里挑选，都不合适时自创新风格', swatch: 'linear-gradient(135deg, #7C5CFF, #22D3EE 55%, #F5B942)', kind: 'auto' },
@@ -1250,7 +1254,7 @@
     const before = String(D().topic || '')
     if (!before.trim()) throw new PK.Error('请先写一句简单想法（例如：帮我做一个咖啡馆新品宣传片），再点 AI 润色')
     if (!llmReady()) return needLlm('AI 润色需要先连接大模型接口（设置 · 模型与密钥）')
-    if (!(await act('polishTopic', { topic: before }, { timeout: 660000 }))) return undefined // the host toasted why
+    if (!(await act('polishTopic', { topic: before }, { timeout: PK.llmTimeout() }))) return undefined // the host toasted why
     await PK.waitState((s0) => Boolean(s0 && s0.director && s0.director.topic !== before), 4000)
     if (String(D().topic || '') !== before) {
       L.unpolished = before
@@ -1562,7 +1566,8 @@
     PK.needProject()
     if (!llmReady()) return needLlm('请先配置大模型接口，才能让 AI 编写纯代码配乐')
     await ctx.task('AI 大模型正在编写合成器代码并生成 48kHz 配乐母带…', async () => {
-      const d = await PK.postP('audio/llm-compose', {}, { timeout: 900000 })
+      // up to 3 model calls (SuperCollider score, then the JS synth with one retry) + rendering the 48 kHz track
+      const d = await PK.postP('audio/llm-compose', {}, { timeout: PK.llmTimeout(3) })
       await PK.action('setDirector', { patch: { bgmMode: 'llm-coded' } })
       L.bgmPreview = String((d && d.previewUrl) || '')
       PK.toast(`AI 配乐合成完毕${d && d.relScriptPath ? `（${d.relScriptPath}）` : ''}，可以直接点播放器试听`, 'success')
@@ -1609,7 +1614,7 @@
     const rel = String(bgm.uploadedPath || bgm.path || '')
     if (!rel || bgm.enabled === false) return ui.hint('当前还没有生成或绑定配乐：出片时会按上面选的来源自动生成。')
     const lib = (assets || []).find((a) => a && a.path === rel)
-    const src = bgm.source === 'llm-coded' ? 'AI 编码配乐' : bgm.source === 'tts-engine' ? 'TTS 氛围音景' : bgm.source === 'user-imported' ? '你上传的配乐' : '配乐'
+    const src = bgm.source === 'llm-coded' ? 'AI 编码配乐' : bgm.source === 'tts-engine' ? 'TTS 氛围音景' : bgm.source === 'user-imported' ? '你上传的配乐' : bgm.source === 'generated' ? '本机合成配乐' : '配乐'
     const beat = U.num(bgm.bpm) > 0
       ? [`已测定节拍 ${Math.round(U.num(bgm.bpm))} BPM`, bgm.phaseSec !== undefined ? `首拍 ${U.num(bgm.phaseSec).toFixed(2)} 秒` : '', Array.isArray(bgm.downbeats) ? `${bgm.downbeats.length} 个重拍` : '', Array.isArray(bgm.drops) ? `${bgm.drops.length} 个高潮突降点` : ''].filter(Boolean).join(' · ')
       : ''
@@ -1725,6 +1730,7 @@
     const fxHint = `${vibe.length ? `Vibecoding 工具箱（本机就绪 ${vibeReady}/${vibe.length}）` : 'Vibecoding 工具箱'}由 AI 按每一镜的需要自动调用，不用手动挑选；工具满足不了的效果，AI 会直接写代码实现。这里只定整体视效偏好。`
     const badgeOn = Boolean(dv(L, 'aiBadgeEnabled'))
     const reviewOn = dv(L, 'visualReview') !== false
+    const reviewFineOn = dv(L, 'visualReviewFine') !== false
     const badgePos = String(dv(L, 'aiBadgePosition') || 'top-right')
     const aspects = withHints(OP('aspectRatios'), HINTS.aspect)
     if (!aspects.some((o) => o.value === 'custom')) aspects.push({ value: 'custom', label: '自定义宽高', hint: HINTS.aspect.custom })
@@ -1752,6 +1758,14 @@
       ui.field({ label: '视效偏好', en: 'VISUAL FX · AI TOOLS', hint: fxHint }, ui.select({ key: 'a60-fx', value: fx, options: withHints(OP('visual3dModes'), HINTS.fx), showHint: true, searchable: false, aria: '视效偏好', onChange: (v) => guard(() => setD(ctx, L, 'visual3dMode', v)) })),
       mode === 'ai-coded'
         ? ui.toggle({ value: reviewOn, label: '画面自检（AI 看图返工）', hint: '代码写完后先渲染每个镜头的关键帧，让大模型看图检查人物、构图、文字和亮度，有明显问题的镜头带截图返工一次。需要能看图的模型；每批镜头多 1~2 次大模型调用', onChange: (v) => guard(() => setD(ctx, L, 'visualReview', v)) })
+        : null,
+      mode === 'ai-coded' && reviewOn
+        ? ui.toggle({
+            value: reviewFineOn,
+            label: '逐个机位看图（更细的画面自检）',
+            hint: '较长的镜头会按节拍切成几个机位（远景 / 中景 / 特写）。打开后每个机位都截一张图给大模型看（长镜头约每 4 秒一张），能发现推近后标题、人物被裁掉等问题，被裁掉的机位会自动改成更宽的景别；返工过的镜头还会再复查一次，返工后反而更差就退回原来的画面。一条 1～2 分钟的片子大约多看 0～60 张图，大模型费用约多 5%～20%',
+            onChange: (v) => guard(() => setD(ctx, L, 'visualReviewFine', v)),
+          })
         : null,
       ui.toggle({ value: badgeOn, label: '添加 AI 创作角标', hint: '在画面角落标注「AI 辅助创作」，符合平台对 AI 内容的标注要求', onChange: (v) => guard(() => setD(ctx, L, 'aiBadgeEnabled', v)) }),
       badgeOn
@@ -1968,7 +1982,7 @@
       ),
       ui.toggle({ value: Boolean(rv(L, 'useHostVocal')), label: '优先沿用真人出镜原声', hint: '素材里有真人出镜视频时，用视频原声代替 AI 配音', onChange: (v) => guard(() => setR(ctx, L, 'useHostVocal', v)) }),
       ui.toggle({ value: Boolean(rv(L, 'aiAuthorCode')), label: '允许大模型手写动效源码', hint: '关闭后只用内置版式，出片更快、更稳定', onChange: (v) => guard(() => setR(ctx, L, 'aiAuthorCode', v)) }),
-      ui.toggle({ value: dv(L, 'useDraftReference') !== false, label: 'AI 编码出片时参考现有草稿', hint: '沿用已生成草稿的分镜和配音时长作为节奏基准', onChange: (v) => guard(() => setD(ctx, L, 'useDraftReference', v)) }),
+      ui.toggle({ value: dv(L, 'useDraftReference') !== false, label: '出片时参考现有草稿', hint: '沿用已生成草稿的分镜和配音时长作为节奏基准（开始出片和 AI 编码出片都会参考）', onChange: (v) => guard(() => setD(ctx, L, 'useDraftReference', v)) }),
       ui.field(
         { label: '素材智能构图与调色', en: 'CURATE', hint: '按当前画面比例、清晰度、风格、截取 / 倍速和抠像设置，用 FFmpeg 批量裁切构图、统一调色（结果在 assets/edited/，原素材不变）。' },
         ui.row([ui.btn('立刻执行 FFmpeg 素材智能构图与调色', () => curate(ctx), { size: 'sm', icon: 'scissors', busyText: '精修中…' })]),
@@ -2008,6 +2022,7 @@
       targetDurationSec: d.durationMode === 'custom' ? clampInt(d.targetDurationSec, 15, 600, 120) : 0,
       visual3dMode: d.visual3dMode || 'auto',
       visualReview: d.visualReview !== false,
+      visualReviewFine: d.visualReviewFine !== false,
       figureStyleChoice: d.figureStyleChoice || 'auto',
       figureStyleChoiceNote: d.figureStyleChoiceNote || '',
       narrationMode: d.narrationMode || 'tts',
@@ -2069,6 +2084,12 @@
     PK.needProject()
     await settle(ctx) // the host starts the run from its own form: let the edit just made land there first
     const d = D()
+    if (d.productionType === 'talk-edit') {
+      // 口播剪辑: no brief, no model — the person's own recording (needs the free local speech engine)
+      if (!(await act('run', {}, { timeout: 180000 }))) return undefined
+      ctx.close()
+      return undefined
+    }
     if ((d.creationMode || 'ai-coded') === 'ai-coded' && !llmReady()) return needLlm('尚未配置 AI 大模型接口：请先填入 API Key，或把创作模式切换为「本地极速草稿」再一键出片')
     const topic = String(d.topic || '')
     if (!topic.trim()) {
@@ -2216,6 +2237,52 @@
       ),
     )
   }
+  /* ---------------------------------------------------------------- 作品类型: AI 原创成片 / 口播剪辑 */
+  function productionTypeSection(ctx, L) {
+    const opts = OP('productionTypes')
+    const cur = String(dv(L, 'productionType') || 'ai-film') === 'talk-edit' ? 'talk-edit' : 'ai-film'
+    const curOpt = opts.find((o) => o.value === cur) || opts[0]
+    return ui.section(
+      { title: '作品类型', en: 'PRODUCTION', icon: 'layers', key: 'a60-ptype' },
+      ui.seg({
+        value: cur,
+        options: opts.map((o) => ({ value: o.value, label: o.label })),
+        aria: '作品类型',
+        onChange: (v) => guard(() => setD(ctx, L, 'productionType', v)),
+      }),
+      curOpt && curOpt.hint ? ui.hint(curOpt.hint) : null,
+    )
+  }
+  function talkEditSection(ctx, L, s) {
+    const te = (s.script && s.script.talkEdit) || null
+    const built = s.script && s.script.productionType === 'talk-edit' && te
+    return ui.section(
+      {
+        title: '口播剪辑',
+        en: 'TALKING HEAD',
+        icon: 'film',
+        desc: '用素材库里你本人出镜的视频：自动去掉长停顿、口头禅、结巴和重录（同一句说了几遍只留最后一遍），字幕按你真实说的话逐字出现，再配一首压在人声下面的轻音乐。全部在本机完成，不调用大模型、不花钱。',
+      },
+      built
+        ? ui.kv([
+            ['上次剪辑', String(te.summary || '—')],
+            ['用的视频', String((te.source && (te.source.name || te.source.path)) || '—')],
+          ])
+        : ui.note('还没有剪辑过。可以先打开「AI 剪辑」逐句看看要剪掉哪些地方（能一键恢复），也可以直接一键出片。', { level: 'info' }),
+      ui.row([ui.btn('打开 AI 剪辑：逐句查看与恢复', () => PK.open('talkEdit'), { kind: 'primary', icon: 'film' })], { wrap: true }),
+      ui.hint('第一次使用需要安装「本地语音识别」（免费、离线，约 260 MB），在 AI 剪辑面板里一键安装。'),
+    )
+  }
+  function produceTalkSection(ctx) {
+    const live = runLive()
+    const job = JOB.cur && JOB.cur.dir === PK.dir() ? JOB.cur : null
+    const lock = live || Boolean(job && job.status === 'running')
+    return ui.section(
+      { title: '开始出片', en: 'PRODUCE', icon: 'bolt', desc: '识别 → 粗剪 → 原声分段 → 真实字幕 → 配乐 → 渲染，全部在本机完成。' },
+      live ? ui.note('当前工程已经有出片任务在运行，完成或停止后才能再次出片。', { level: 'info', actions: [ui.btn('打开任务中心', () => PK.open('tasks'), { size: 'sm', icon: 'tasks' })] }) : null,
+      ui.stack([ui.btn('一键出片（口播剪辑）', () => doRun(ctx), { kind: 'primary', size: 'lg', block: true, icon: 'bolt', disabled: lock, busyText: '启动中…' }), ui.hint('会按「AI 剪辑」里的设置和你恢复 / 删掉的地方来剪。')], { gap: 4 }),
+    )
+  }
   function renderDirector(ctx, s) {
     const L = scope(s)
     const W = hook(ctx, s)
@@ -2233,8 +2300,12 @@
       ui.btn('一键出片', () => doRun(ctx), { kind: 'primary', icon: 'bolt', disabled: runLive() || Boolean(job), busyText: '启动中…' }),
     ])
     W.sig = signature(ctx)
+    if (String(dv(L, 'productionType') || '') === 'talk-edit') {
+      // 口播剪辑: brief, style, voice and avatar do not apply (the person's own picture and voice are the film)
+      return ui.split([productionTypeSection(ctx, L), talkEditSection(ctx, L, s)], [bgmSection(ctx, L, s), produceTalkSection(ctx)], { ratio: 'minmax(0, 1.08fr) minmax(0, 1fr)' })
+    }
     return ui.split(
-      [briefSection(ctx, L), workSection(ctx, L), durationSection(ctx, L), styleSection(ctx, L, s), bgmSection(ctx, L, s)],
+      [productionTypeSection(ctx, L), briefSection(ctx, L), workSection(ctx, L), durationSection(ctx, L), styleSection(ctx, L, s), bgmSection(ctx, L, s)],
       [formatSection(ctx, L, s), voiceSection(ctx, L, s), avatarSection(ctx, L, s), advancedSection(ctx, L), produceSection(ctx, L, s)],
       { ratio: 'minmax(0, 1.08fr) minmax(0, 1fr)' },
     )

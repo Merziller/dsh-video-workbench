@@ -7,6 +7,7 @@ import {
   normalizeNumeralsForDisplay,
   probeAudioDuration,
   readScriptJson,
+  registerTool,
   REPO_ROOT,
   resolveBinaries,
   resolveEnvPath,
@@ -444,6 +445,13 @@ export async function executeGenerateSpeech(args = {}) {
       }
     } catch {}
   }
+  // A 口播剪辑 scene plays the person's own recorded voice: a synthetic voice must never replace it
+  if (sceneId && targetScene && targetScene.voiceSource === 'host') {
+    const err = new Error(`「${targetScene.title || sceneId}」这一幕用的是你本人的原声（口播剪辑），不能用 AI 重新配音。要改说的内容，请到「AI 剪辑」面板调整剪辑后重新生成剪辑工程。`)
+    err.code = 'HOST_VOICE_LOCKED'
+    err.status = 409
+    throw err
+  }
 
   // 1. Match or select voice from Voice Pack Catalog
   const { voices } = getVoiceCatalog()
@@ -755,7 +763,7 @@ export const inject = ['tools']
 
 export function apply(ctx) {
   // Tool 1: list_voices
-  ctx.tools.register({
+  registerTool(ctx, {
     name: 'list_voices',
     description:
       'List all available TTS voices and imported voice packs (IndexTTS-2.5 & GPTvoice-tts), including gender, style tags, supported emotions, and availability.',
@@ -828,7 +836,7 @@ export function apply(ctx) {
   })
 
   // Tool 2: import_voice_pack
-  ctx.tools.register({
+  registerTool(ctx, {
     name: 'import_voice_pack',
     description:
       'Import a custom voice pack (.wav, .mp3, .flac, .pt file, directory, or .zip archive with manifest.json/voices.json) into the local Voice Pack Catalog so AI can auto-match it or the user can select it.',
@@ -883,7 +891,7 @@ export function apply(ctx) {
   })
 
   // Tool 3: match_scene_voices
-  ctx.tools.register({
+  registerTool(ctx, {
     name: 'match_scene_voices',
     description:
       'Automatically match suitable voices from the Voice Pack Catalog for all scenes in `script.json` based on scene emotion, role, narration, and audience/goal, or lock a user-specified voice ID.',
@@ -923,7 +931,7 @@ export function apply(ctx) {
   })
 
   // Tool 4: generate_speech
-  ctx.tools.register({
+  registerTool(ctx, {
     name: 'generate_speech',
     description:
       'Synthesize speech audio (WAV) using active or selected TTS engine (IndexTTS-2.5, IndexTTS-2, GPT-SoVITS/gptvoice, or custom imported OpenAI/HTTP/CLI TTS model), measure exact duration via `ffprobe`, compute `durationInFrames = Math.ceil(durationSec * fps)`, and write back to `script.json`.',
@@ -992,7 +1000,7 @@ export function apply(ctx) {
   })
 
   // Tool 5: configure_tts_engine
-  ctx.tools.register({
+  registerTool(ctx, {
     name: 'configure_tts_engine',
     description:
       'Inspect, switch, or add custom TTS engines (IndexTTS-2.5, IndexTTS-2, GPT-SoVITS/gptvoice, OpenAI /v1/audio/speech, custom HTTP JSON, or local CPU CLI such as edge-tts).',

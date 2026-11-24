@@ -19,6 +19,7 @@
   const h = PK.h
   const ui = PK.ui
   const KEEP = 'KEEP_EXISTING'
+  const HOST_AGENT = 'host-agent' // 由当前智能体代写: the agent in the conversation answers the writing tasks
 
   /* ================================================================================================ helpers */
   const S = (v) => (v === undefined || v === null ? '' : String(v))
@@ -120,16 +121,24 @@
     return ui.row([flex1(ctl), eye], { wrap: false, top: true })
   }
 
-  /** Button whose busy state survives panel re-renders (prevents double submits while a request is in flight). */
+  /**
+   * Button whose busy state survives panel re-renders (prevents double submits while a request is in flight). A long
+   * wait (a model call may take minutes) shows how long it has been running, so it never looks frozen.
+   */
   function actBtn(ctx, key, label, fn, o = {}) {
     const B = (ctx.local.busy = ctx.local.busy || {})
     const busy = Boolean(B[key])
+    const since = typeof B[key] === 'number' ? B[key] : Date.now()
+    const busyLabel = () => {
+      const s = Math.round((Date.now() - since) / 1000)
+      return `${o.busyText || '处理中…'}${s >= 5 ? ` ${U.fmtDur(s)}` : ''}`
+    }
     const b = ui.btn(
-      busy ? o.busyText || '处理中…' : label,
+      busy ? busyLabel() : label,
       busy
         ? null
         : async () => {
-            B[key] = true
+            B[key] = Date.now()
             ctx.update()
             try {
               return await fn()
@@ -140,8 +149,135 @@
           },
       { ...o, disabled: Boolean(o.disabled) || busy, key: o.key || `act-${key}` },
     )
-    if (busy) b.setAttribute('aria-busy', 'true')
+    if (busy) {
+      b.setAttribute('aria-busy', 'true')
+      const lbl = b.querySelector('.pk-btn-l')
+      if (lbl) {
+        const tick = setInterval(() => {
+          if (!b.isConnected || !B[key]) clearInterval(tick)
+          else lbl.textContent = busyLabel()
+        }, 1000)
+      }
+    }
     return b
+  }
+
+  /* -------------------------------------------------------------------- 「测试连接」 (POST connection-test) */
+  /**
+   * Test a cloud connection with the values typed in a form — nothing is saved, nothing generated, nothing charged
+   * (dsh-tool-media/cloud-connection-test.js). One slot per form (`key`) in ctx.local.connTests; 「取消」 or a newer
+   * run makes an in-flight answer stale (the server request ends by itself within ~40 s). An empty / masked key field
+   * means "the saved key" — the server reads it, the page never sees it.
+   */
+  const CT_WHO = { yours: '你的密钥', fake: '故意写错的测试密钥', none: '不带密钥' }
+  const connTests = (ctx) => (ctx.local.connTests = ctx.local.connTests || {})
+  /** short hash of a test payload: tells whether the form changed after the test (the typed key is not kept twice) */
+  const ctSig = (payload) => {
+    const s = JSON.stringify(payload || {})
+    let x = 5381
+    for (let i = 0; i < s.length; i++) x = ((x << 5) + x + s.charCodeAt(i)) | 0
+    return String(x)
+  }
+  async function runConnTest(ctx, key, payload, o = {}) {
+    const T = connTests(ctx)
+    const token = {}
+    T[key] = { running: true, token, sig: ctSig(payload) }
+    ctx.update()
+    let res
+    try {
+      const out = await PK.api('POST', 'connection-test', { body: payload, raw: true, timeout: 75000 })
+      res = out && out.body && typeof out.body === 'object' ? out.body : null
+      if (!res || !res.title) res = { level: 'error', title: '❌ 测试没有完成', message: S(res && (res.error || res.message)) || `本地工作台服务没有返回测试结果（HTTP ${U.num(out && out.status)}）` }
+    } catch (err) {
+      res = { level: 'error', title: '❌ 测试没有完成', message: friendlyErr(err, '本地工作台服务', '测试失败') }
+    }
+    if (!connTests(ctx)[key] || connTests(ctx)[key].token !== token || (ctx.frame && ctx.frame.closed)) return
+    T[key] = { result: res, sig: ctSig(payload), at: Date.now() }
+    if (res.verdict !== 'aborted') {
+      const lvl = res.level === 'ok' ? 'success' : res.level === 'error' ? 'error' : res.level === 'warn' ? 'warn' : 'info'
+      PK.toast(S(res.title), lvl, { title: o.label ? `测试连接 · ${o.label}` : '测试连接', timeout: 7000 })
+    }
+    ctx.update()
+    // bring the result into view (the button may sit in the panel footer, far from the form)
+    setTimeout(() => {
+      const el = ctx.body && ctx.body.querySelector(`[data-ct-note="${key}"]`)
+      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }, 120)
+  }
+  /** the 「测试连接」 button; while a test runs: a busy button + 「取消」 */
+  function connTestBtn(ctx, key, payloadFn, o = {}) {
+    const t = connTests(ctx)[key]
+    if (t && t.running) {
+      const busy = ui.btn(o.busyText || '正在测试…', null, { icon: 'bolt', kind: o.kind || 'secondary', size: o.size, disabled: true, key: `ct-busy-${key}` })
+      busy.setAttribute('aria-busy', 'true')
+      return ui.row(
+        [
+          busy,
+          ui.btn('取消', () => {
+            delete connTests(ctx)[key]
+            ctx.update()
+          }, { kind: 'link', size: 'sm', key: `ct-cancel-${key}`, title: '不再等待这次测试的结果' }),
+        ],
+        { wrap: false, gap: 4 },
+      )
+    }
+    return ui.btn(
+      o.label || '测试连接',
+      () => {
+        const payload = payloadFn() // may throw PK.Error (shown as a toast by ui.btn)
+        if (payload) runConnTest(ctx, key, payload, { label: o.toastLabel })
+      },
+      { icon: 'bolt', kind: o.kind || 'secondary', size: o.size, key: `ct-${key}`, title: o.title || '用表单里现在填的地址和密钥测试一次：不用先保存，不会生成内容，也不扣费' },
+    )
+  }
+  /** inline result under the form (or the running state); `payloadNow` marks a result older than the current form */
+  function connTestNote(ctx, key, payloadNow) {
+    const t = connTests(ctx)[key]
+    if (!t) return null
+    if (t.running) {
+      return h('div', { 'data-ct-note': key }, ui.note('正在用你填的地址和密钥连接服务商（最多约 40 秒）。测试只调用免费的查询接口：不会生成内容，也不扣费。', { level: 'info', title: '正在测试连接…' }))
+    }
+    const r = t.result || {}
+    const stale = payloadNow !== undefined && t.sig && ctSig(payloadNow) !== t.sig
+    const notes = Array.isArray(r.notes) ? r.notes.map(S).filter(Boolean) : []
+    const checks = Array.isArray(r.checks) ? r.checks : []
+    const open = Boolean(ctx.local.ctOpen && ctx.local.ctOpen[key])
+    const body = h(
+      'div.pk-stack',
+      { style: { gap: '4px' } },
+      S(r.message) ? ui.text(S(r.message)) : null,
+      ...notes.map((n) => ui.text(n)),
+      stale ? ui.hint('你在测试之后又改了设置：这个结果可能已经过时，请重新测试。') : null,
+      open && checks.length
+        ? h(
+            'div.pk-stack',
+            { style: { gap: '2px' } },
+            checks.map((c, i) => ui.hint(`${i + 1}. ${S(c.request)} · ${CT_WHO[c.who] || ''} → ${c.status ? `HTTP ${c.status}` : '没有响应'}（${S(c.outcome)}）`)),
+          )
+        : null,
+    )
+    const level = r.level === 'ok' ? 'ok' : r.level === 'error' ? 'error' : r.level === 'info' ? 'info' : 'warn'
+    return h(
+      'div',
+      { 'data-ct-note': key },
+      ui.note(body, {
+        level,
+        title: S(r.title) || '测试结果',
+        actions: [
+          checks.length
+            ? ui.btn(open ? '收起测试过程' : '查看测试过程', () => {
+                const O = (ctx.local.ctOpen = ctx.local.ctOpen || {})
+                O[key] = !open
+                ctx.render()
+              }, { kind: 'link', size: 'sm', key: `ct-steps-${key}` })
+            : null,
+          ui.btn('关闭结果', () => {
+            delete connTests(ctx)[key]
+            ctx.render()
+          }, { kind: 'link', size: 'sm', key: `ct-close-${key}` }),
+        ].filter(Boolean),
+      }),
+    )
   }
 
   const confirmedOnce = new Set()
@@ -338,8 +474,9 @@
   function llmDraftFrom(cfg = {}) {
     const dsh = cfg.dshClient || {}
     const templates = Array.isArray(cfg.templates) ? cfg.templates : []
-    // auto = follow the agent hosting the plugin (DSH channel inside DSH, the agent's environment API key elsewhere)
-    const mode = cfg.mode === 'custom' ? 'custom' : cfg.mode === 'follow-dsh' ? 'follow-dsh' : 'auto'
+    // auto = follow the agent hosting the plugin (DSH channel inside DSH, the agent's environment API key elsewhere);
+    // host-agent = 由当前智能体代写 (the agent in the conversation writes the answers with its own model, no key)
+    const mode = cfg.mode === 'custom' ? 'custom' : cfg.mode === 'follow-dsh' ? 'follow-dsh' : cfg.mode === HOST_AGENT ? HOST_AGENT : 'auto'
     const follow = mode === 'follow-dsh'
     const dshId = cfg.dshProviderId || 'active'
     // following DSH's *current default* with its default model → keep the model empty so it keeps following
@@ -353,23 +490,58 @@
       mode,
       dshProviderId: dshId,
       provider: templates.some((t) => t.id === cfg.provider) ? cfg.provider : 'custom',
-      format: mode === 'auto' || followsChannelProto ? 'auto' : cfg.format || 'auto',
-      baseUrl: S(cfg.baseUrl),
+      format: mode === 'auto' || mode === HOST_AGENT || followsChannelProto ? 'auto' : cfg.format || 'auto',
+      baseUrl: mode === HOST_AGENT ? '' : S(cfg.baseUrl),
       apiKey: '',
-      model: mode === 'auto' || followsDefaultModel ? '' : S(cfg.model),
+      model: mode === 'auto' || mode === HOST_AGENT || followsDefaultModel ? '' : S(cfg.model),
       maxRepairRounds: U.clamp(U.num(cfg.maxRepairRounds, 3) || 3, 1, 5),
     }
   }
-  const llmPayload = (cfg, f) => ({
-    mode: f.mode === 'custom' ? 'custom' : f.mode === 'follow-dsh' ? 'follow-dsh' : 'auto',
-    dshProviderId: S(f.dshProviderId) || 'active',
-    provider: S(f.provider) || 'custom',
-    format: S(f.format) || 'auto',
-    baseUrl: S(f.baseUrl).trim(),
-    apiKey: S(f.apiKey).trim() || (customKeySaved(cfg) ? KEEP : ''),
-    model: S(f.model).trim(),
-    maxRepairRounds: U.clamp(U.num(f.maxRepairRounds, 3) || 3, 1, 5),
-  })
+  const llmPayload = (cfg, f) =>
+    f.mode === HOST_AGENT
+      ? // nothing to dial: only the mode (the custom address / key / model stay stored for switching back)
+        { mode: HOST_AGENT, maxRepairRounds: U.clamp(U.num(f.maxRepairRounds, 3) || 3, 1, 5) }
+      : {
+          mode: f.mode === 'custom' ? 'custom' : f.mode === 'follow-dsh' ? 'follow-dsh' : 'auto',
+          dshProviderId: S(f.dshProviderId) || 'active',
+          provider: S(f.provider) || 'custom',
+          format: S(f.format) || 'auto',
+          baseUrl: S(f.baseUrl).trim(),
+          apiKey: S(f.apiKey).trim() || (customKeySaved(cfg) ? KEEP : ''),
+          model: S(f.model).trim(),
+          maxRepairRounds: U.clamp(U.num(f.maxRepairRounds, 3) || 3, 1, 5),
+        }
+  /** the agent hosting the plugin by name, for 「由 Codex 代写」 (empty when unknown) */
+  const agentNameOf = (cfg) => S(cfg && cfg.host && cfg.host.id !== 'dsh' ? cfg.host.label : '')
+  const hostAgentLabel = (cfg) => (agentNameOf(cfg) ? `由 ${agentNameOf(cfg)} 代写` : '由当前智能体代写')
+  /** writing tasks waiting for the agent (host-agent mode): the host's live status first, else the loaded summary */
+  const hostPending = (cfg) => {
+    const live = st().status && st().status.llm
+    if (live && live.mode === HOST_AGENT && Number.isFinite(Number(live.pending))) return U.num(live.pending)
+    return cfg && cfg.mode === HOST_AGENT && cfg.hostAgent ? U.num(cfg.hostAgent.pending) : 0
+  }
+
+  /* ---- 看图能力 draft (llmConfig.vision: the settings + what is known; a saved 看图 key never reaches the page) */
+  function visDraftFrom(v = {}) {
+    return {
+      support: v.support === 'yes' || v.support === 'no' ? v.support : 'auto',
+      model: S(v.settingsModel),
+      own: Boolean(S(v.baseUrl)),
+      baseUrl: S(v.baseUrl),
+      format: S(v.format) || 'auto',
+      apiKey: '',
+      clearApiKey: false,
+    }
+  }
+  function visPayload(v, f) {
+    const model = S(f.model).trim()
+    const own = Boolean(f.own && model)
+    const out = { support: f.support, model, baseUrl: own ? S(f.baseUrl).trim() : '', format: own ? S(f.format) || 'auto' : 'auto', provider: 'custom' }
+    if (own && S(f.apiKey).trim()) out.apiKey = S(f.apiKey).trim()
+    // a 看图 key only belongs to the 看图 model's own endpoint: turning that off forgets it
+    if (f.clearApiKey || (!own && v && v.hasApiKey)) out.clearApiKey = true
+    return out
+  }
 
   /* ---- TTS drafts */
   const DEFAULT_TTS_ENGINES = [
@@ -559,6 +731,7 @@
       return false
     }
     if (syncOne('llm', () => llmDraftFrom(d.llmConfig || {}))) L.llmStash = null
+    syncOne('vis', () => visDraftFrom((d.llmConfig && d.llmConfig.vision) || {}))
     syncOne('ttsB', () => ttsBuiltinFrom(d.ttsConfig))
     syncOne('cloudCfg', () => cloudDraftFrom(d.cloudMedia || {}))
     if (!L.ttsC) {
@@ -570,11 +743,16 @@
     ctx.local.base = ctx.local.base || {}
     ctx.local.base[name] = clone(ctx.local[name])
   }
+  const visDirty = (ctx) => {
+    const L = ctx.local
+    return Boolean(L.vis && L.base && L.base.vis && !same(L.vis, L.base.vis))
+  }
   function keysDirty(ctx) {
     const L = ctx.local
     const base = L.base || {}
     const out = []
     if (L.llm && base.llm && !same(L.llm, base.llm)) out.push('文本大模型')
+    if (visDirty(ctx)) out.push('看图能力')
     if (L.ttsB && base.ttsB && !same(L.ttsB, base.ttsB)) out.push('配音引擎参数')
     if (L.ttsC && base.ttsC && !same(L.ttsC, base.ttsC)) out.push('自定义配音模型')
     if (L.cloudCfg && base.cloudCfg && !same(L.cloudCfg, base.cloudCfg)) out.push('云端生成接口')
@@ -589,7 +767,7 @@
     ctx.local.llmTest = null
     ctx.update()
     try {
-      const res = await PK.post('llm-test', llmPayload(cfg, f), { timeout: 150000 })
+      const res = await PK.post('llm-test', llmPayload(cfg, f), { timeout: PK.llmTimeout() })
       ctx.local.llmTest = { ok: true, ...res }
     } catch (err) {
       ctx.local.llmTest = { ok: false, error: friendlyErr(err, '这个大模型接口', '连接失败') }
@@ -612,7 +790,16 @@
     ctx.local.llmStash = null
     resetBase(ctx, 'llm')
     ctx.local.reveal = {}
+    if (conf.mode === HOST_AGENT) {
+      PK.toast(`已改为「${hostAgentLabel(conf)}」：需要 AI 写作时，插件会把任务交给正在对话的智能体，请在对话里让它处理视频插件的写作任务。`, 'success')
+      return
+    }
     PK.toast(conf.configured ? `已保存并生效：${conf.sourceLabel || '大模型接口'} · ${conf.model || ''}` : '已保存。注意：当前配置还不完整（缺少地址、模型或密钥），AI 功能暂时不可用。', conf.configured ? 'success' : 'warn')
+  }
+  /** 「改用智能体代写」 in one click (the suggestion shown when the agent has no model key to share) */
+  async function useHostAgent(ctx) {
+    switchLlmMode(ctx, HOST_AGENT)
+    await saveLlm(ctx)
   }
   async function clearLlmKey(ctx) {
     // only the key is removed — every other saved field stays as it is (unsaved edits in the form are not saved)
@@ -633,8 +820,45 @@
     f.mode = next
     if (stash[next]) Object.assign(f, stash[next])
     else if (next === 'follow-dsh') Object.assign(f, { dshProviderId: 'active', model: '', format: 'auto' })
-    else if (next === 'auto') Object.assign(f, { model: '', format: 'auto' })
+    else if (next === 'auto' || next === HOST_AGENT) Object.assign(f, { model: '', format: 'auto' })
     ctx.local.llmTest = null
+  }
+
+  /* ---- 看图能力 actions (参考复刻 · 画面自检 · 截图定位) */
+  async function saveVision(ctx, o = {}) {
+    const cfg = ctx.data.llmConfig || {}
+    const f = ctx.local.vis
+    if (f.own && !S(f.model).trim()) throw new PK.Error('「单独的接口」只用于单独指定的看图模型：请先填写看图模型 ID，或取消勾选')
+    if (f.own && !S(f.baseUrl).trim()) throw new PK.Error('请填写看图模型的接口地址，或取消勾选「看图模型用单独的接口地址与密钥」')
+    const res = await PK.post('llm-vision', { action: 'save', vision: visPayload(cfg.vision || {}, f) })
+    if (res && res.config) ctx.data.llmConfig = res.config
+    ctx.local.vis = visDraftFrom((res && (res.vision || (res.config && res.config.vision))) || {})
+    resetBase(ctx, 'vis')
+    ctx.local.visCheck = null
+    if (ctx.local.reveal) delete ctx.local.reveal['llm-vis-key']
+    if (!o.quiet) PK.toast('看图设置已保存。之前记住的看图检测结果已清除，下次用到看图时会重新确认。', 'success')
+  }
+  /** 「检测看图能力」: the saved settings (unsaved edits are saved first) get a tiny probe picture */
+  async function checkVision(ctx) {
+    if (visDirty(ctx)) await saveVision(ctx, { quiet: true })
+    ctx.local.visCheck = { running: true, startedAt: Date.now() }
+    ctx.update()
+    let check
+    try {
+      const res = await PK.post('llm-vision', { action: 'check' }, { timeout: PK.llmTimeout() })
+      if (res && res.config) ctx.data.llmConfig = res.config
+      check = { ...((res && res.check) || {}) }
+    } catch (err) {
+      check = { ok: false, code: 'error', short: '检测没有完成', reason: friendlyErr(err, '本地工作台服务', '检测失败'), fix: '稍后再试一次。' }
+    }
+    if (ctx.frame && ctx.frame.closed) return
+    ctx.local.visCheck = { ...check, at: Date.now() }
+    PK.toast(check.ok ? `看图检测通过：${S(check.short) || '模型能看图'}` : `看图检测：${S(check.short) || '没有通过'}`, check.ok ? 'success' : 'warn', { title: '检测看图能力', timeout: 7000 })
+    // bring the result into view (the vision section sits low in the tab)
+    setTimeout(() => {
+      const el = ctx.body && ctx.body.querySelector('[data-vis-note]')
+      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }, 120)
   }
 
   /* ---- TTS actions */
@@ -817,9 +1041,17 @@
           `${hostName ? `${hostName} 用账号登录时，` : ''}没有可以共享给插件的模型 API Key（智能体的登录 / 订阅只能它自己用）。可以任选一种：`,
           '① 在智能体的运行环境里设置 ANTHROPIC_API_KEY / OPENAI_API_KEY / DEEPSEEK_API_KEY / GEMINI_API_KEY / OPENROUTER_API_KEY（可再设 *_BASE_URL、*_MODEL），插件会自动跟随；',
           '② 改用「自定义」，填写任意大模型的地址、密钥与模型；',
-          '③ 不配置：创作模式选「本地极速草稿」，或让智能体自己写分镜与代码，再调用插件的检查与渲染出片。',
+          ...(cfg.hostAgentSuggested ? [`③ 改用「${hostAgentLabel(cfg)}」：不需要 API Key，插件里的 AI 写作交给正在对话的${hostName ? ` ${hostName}` : '智能体'}，用它自己的模型完成；`] : []),
+          `${cfg.hostAgentSuggested ? '④' : '③'} 不配置：创作模式选「本地极速草稿」，或让智能体自己写分镜与代码，再调用插件的检查与渲染出片。`,
         ].join('\n'),
-        { level: 'warn', title: hostName ? `${hostName} 没有可共享的模型配置` : '还没有可用的大模型', actions: [toCustom] },
+        {
+          level: 'warn',
+          title: hostName ? `${hostName} 没有可共享的模型配置` : '还没有可用的大模型',
+          actions: [
+            cfg.hostAgentSuggested ? actBtn(ctx, 'llm-host-agent', `改用「${hostAgentLabel(cfg)}」`, () => useHostAgent(ctx), { size: 'sm', kind: 'primary', icon: 'hub', busyText: '切换中…' }) : null,
+            toCustom,
+          ].filter(Boolean),
+        },
       )
     }
     return ui.section(
@@ -846,10 +1078,18 @@
       ctx.render()
     }
     const out = []
+    const pending = hostPending(cfg)
     out.push(
-      cfg.configured
-        ? ui.note(`${cfg.sourceLabel || '已配置'} · 模型 ${cfg.model || '—'} · 协议 ${protoLabel(cfg.detectedProtocol || cfg.format)}`, { level: 'ok', title: '大模型已就绪' })
-        : ui.note('导演策划、分镜编码、AI 润色与云端提示词助手都靠它。选一种接入方式填好，先「测试连接」，再「保存并生效」。也可以不配置，把创作模式切到「本地极速草稿」零配置出片。', { level: 'warn', title: '还没有可用的大模型' }),
+      cfg.mode === HOST_AGENT
+        ? ui.note(
+            pending
+              ? h('div.pk-stack', { style: { gap: '6px' } }, ui.text(S(cfg.sourceLabel) || hostAgentLabel(cfg)), ui.row([ui.pill(`有 ${pending} 个写作任务在等智能体处理`, 'warn', { dot: true, title: '请回到智能体的对话里，让它处理视频插件的写作任务' })]))
+              : S(cfg.sourceLabel) || hostAgentLabel(cfg),
+            { level: 'ok', title: `大模型已就绪 · ${hostAgentLabel(cfg)}` },
+          )
+        : cfg.configured
+          ? ui.note(`${cfg.sourceLabel || '已配置'} · 模型 ${cfg.model || '—'} · 协议 ${protoLabel(cfg.detectedProtocol || cfg.format)}`, { level: 'ok', title: '大模型已就绪' })
+          : ui.note('导演策划、分镜编码、AI 润色与云端提示词助手都靠它。选一种接入方式填好，先「测试连接」，再「保存并生效」。也可以不配置，把创作模式切到「本地极速草稿」零配置出片。', { level: 'warn', title: '还没有可用的大模型' }),
     )
     out.push(
       ui.section(
@@ -860,6 +1100,7 @@
             { value: 'auto', label: '跟随当前智能体（推荐）', icon: 'link' },
             ...(dsh.available || f.mode === 'follow-dsh' ? [{ value: 'follow-dsh', label: '指定 DSH 通道', icon: 'hub' }] : []),
             { value: 'custom', label: '自定义（自填地址与密钥）', icon: 'key' },
+            { value: HOST_AGENT, label: `${hostAgentLabel(cfg)}（不需要 API Key）`, icon: 'hub', hint: '用你订阅的智能体自己的模型完成插件里的 AI 写作' },
           ],
           onChange: (v) => {
             switchLlmMode(ctx, v)
@@ -869,8 +1110,9 @@
       ),
     )
     if (f.mode === 'auto') out.push(renderLlmAuto(ctx, cfg, rerender))
+    if (f.mode === HOST_AGENT) out.push(renderLlmHostAgent(ctx, cfg, pending))
     out.push(
-      f.mode === 'auto' ? null : ui.section(
+      f.mode === 'auto' || f.mode === HOST_AGENT ? null : ui.section(
         { title: '接口协议', en: 'WIRE PROTOCOL', icon: 'code', desc: '点卡片切换。不确定就选「自动识别」；DeepSeek / 通义 / 中转站一般是「OpenAI 兼容 Chat」。' },
         ui.grid(
           WIRE_CARDS.map((c) =>
@@ -890,7 +1132,7 @@
         ),
       ),
     )
-    if (f.mode === 'auto') {
+    if (f.mode === 'auto' || f.mode === HOST_AGENT) {
       // nothing else to fill in: the source is decided by the agent hosting the plugin (see above)
     } else if (f.mode === 'follow-dsh') {
       if (dsh.available) {
@@ -1013,7 +1255,9 @@
     )
     if (test) {
       out.push(
-        test.ok
+        test.ok && test.mode === HOST_AGENT
+          ? ui.note(S(test.message) || '已设为「智能体代写」。', { level: 'ok', title: '测试结果' })
+          : test.ok
           ? ui.note(
               [
                 `延迟 ${U.num(test.latencyMs)} ms · 协议 ${protoLabel(test.protocol)} · 模型 ${test.model || '—'}`,
@@ -1031,13 +1275,158 @@
           : ui.note(test.error, { level: 'error', title: '连接失败', actions: [ui.btn('打开帮助', () => PK.open('help'), { size: 'sm', kind: 'ghost', icon: 'help' })] }),
       )
     }
+    out.push(renderVision(ctx, cfg))
+    if (ctx.local.focus === 'vision') {
+      // opened from 「看图能力设置」 (e.g. the reference-analysis badge): bring the 看图 section into view once
+      ctx.local.focus = ''
+      setTimeout(() => {
+        const el = ctx.body && ctx.body.querySelector('[data-llm-vision]')
+        if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      }, 160)
+    }
     ctx.foot([
       ui.hint(cfg.configFile ? `配置只保存在本机：${U.baseName(cfg.configFile)}` : '配置只保存在本机'),
       ui.spacer(),
-      actBtn(ctx, 'llm-test', '测试连接并拉取模型', () => testLlm(ctx), { icon: 'bolt', busyText: '正在探测接口…' }),
+      actBtn(ctx, 'llm-test', f.mode === HOST_AGENT ? '查看代写状态' : '测试连接并拉取模型', () => testLlm(ctx), { icon: 'bolt', busyText: '正在探测接口…' }),
       actBtn(ctx, 'llm-save', '保存并生效', () => saveLlm(ctx), { kind: 'primary', icon: 'check', busyText: '保存中…' }),
     ])
     return out
+  }
+
+  /* ---- render: 文本大模型 · 由当前智能体代写 (mode host-agent) */
+  function renderLlmHostAgent(ctx, cfg, pending) {
+    const name = agentNameOf(cfg)
+    const saved = cfg.mode === HOST_AGENT
+    return ui.section(
+      { title: hostAgentLabel(cfg), en: 'HOST AGENT WRITES', icon: 'hub', desc: '不需要 API Key，也不会读取智能体的账号或密钥。' },
+      ui.note(
+        [
+          `用你订阅的 ${name || 'Codex / Claude Code 等智能体'} 自己的模型来完成插件里的 AI 写作（润色、分镜、动画代码、精修）。`,
+          `需要时插件会把任务交给正在对话的${name ? ` ${name}` : '智能体'}；请在智能体对话里让它处理视频插件的写作任务。`,
+          '需要看图的地方（参考复刻、画面自检）也交给它：插件把图片存成文件，由它直接打开来看。',
+        ].join('\n'),
+        { level: 'info', title: '怎么用' },
+      ),
+      saved && pending ? ui.row([ui.pill(`有 ${pending} 个写作任务在等智能体处理`, 'warn', { dot: true, title: '请回到智能体的对话里，让它处理视频插件的写作任务' })]) : null,
+      saved ? null : ui.hint('点下方「保存并生效」后切换到这种方式。'),
+      name ? null : ui.hint('插件现在没有在智能体里运行（独立打开的工作台）：选这种方式后，需要在智能体（例如 Codex、Claude Code）里使用插件，写作任务才有人处理。'),
+    )
+  }
+
+  /* ---- render: 文本大模型 · 看图能力 (参考复刻 · 画面自检 · 截图定位) */
+  /** 600000 → 10 分钟 (the server's model-call limit, for 「最长等待」) */
+  const waitWords = (ms) => {
+    const sec = Math.max(0, Math.round(U.num(ms) / 1000))
+    if (sec < 60) return `${sec} 秒`
+    return sec % 60 ? `${Math.floor(sec / 60)} 分 ${sec % 60} 秒` : `${Math.floor(sec / 60)} 分钟`
+  }
+  function renderVision(ctx, cfg) {
+    const v = cfg.vision || {}
+    if (!ctx.local.vis) ctx.local.vis = visDraftFrom(v)
+    const f = ctx.local.vis
+    const chk = ctx.local.visCheck
+    const dirty = visDirty(ctx)
+    const rr = () => ctx.render()
+    const known = v.status === 'supported' ? 'ok' : v.status === 'unsupported' ? 'warn' : 'info'
+    const who = v.model && !v.hostAgent ? `${v.dedicated ? '看图模型' : '文本模型'} ${v.model}` : ''
+    const status = ui.note(
+      h('div.pk-stack', { style: { gap: '4px' } }, S(v.reason) ? ui.text(S(v.reason)) : null, S(v.fix) ? ui.text(`怎么办：${S(v.fix)}`) : null),
+      { level: v.code === 'not-configured' ? 'warn' : known, title: `现在：${S(v.short) || '还没检测'}${who && !S(v.short).includes(S(v.model)) ? ` · ${who}` : ''}` },
+    )
+    const own = Boolean(f.own)
+    const ownFields = own
+      ? fgrid(
+          [
+            ui.field(
+              { label: '看图模型的接口地址', en: 'BASE URL', required: true, hint: '例如 https://api.openai.com/v1 或中转站地址' },
+              lineField({ key: 'llm-vis-base', value: f.baseUrl, placeholder: '看图模型的 API 地址', onInput: (x) => (f.baseUrl = x) }),
+            ),
+            ui.field(
+              { label: '接口协议', en: 'PROTOCOL' },
+              ui.select({ key: 'llm-vis-format', value: f.format || 'auto', options: WIRE_CARDS.map((c) => ({ value: c.id, label: c.title, hint: c.path })), onChange: (x) => (f.format = x) }),
+            ),
+            ui.field(
+              {
+                label: '看图模型的 API Key',
+                en: 'SECRET',
+                hint: v.hasApiKey ? '已加密保存在本机，不修改就留空' : '在这家服务商的后台创建；本机部署的服务可以不填',
+                aside: v.hasApiKey ? ui.btn(f.clearApiKey ? '撤销清除' : '清除已保存的密钥', () => ((f.clearApiKey = !f.clearApiKey), rr()), { kind: 'link', size: 'sm' }) : null,
+              },
+              secretField(ctx, { key: 'llm-vis-key', value: f.apiKey, saved: v.hasApiKey && !f.clearApiKey, masked: v.maskedApiKey, placeholder: '看图模型的 API Key（sk-...）', onInput: (x) => (f.apiKey = x) }),
+            ),
+          ],
+          { min: 240 },
+        )
+      : null
+    const checkNote = (() => {
+      if (!chk) return null
+      if (chk.running) {
+        return h('div', { 'data-vis-note': '1' }, ui.note(`正在把一张很小的测试图（红色方块）发给模型，问它是什么颜色。慢的模型可能要等一会儿（最长 ${waitWords(cfg.timeoutMs || PK.LLM_TIMEOUT_MS)}）。`, { level: 'info', title: '正在检测看图能力…' }))
+      }
+      const meta = [chk.model ? `模型 ${chk.model}${chk.dedicated ? '（单独的看图模型）' : ''}` : '', chk.protocol && chk.protocol !== HOST_AGENT ? `协议 ${protoLabel(chk.protocol)}` : '', U.num(chk.latencyMs) > 0 ? `用时 ${U.num(chk.latencyMs) >= 1000 ? `${(U.num(chk.latencyMs) / 1000).toFixed(1)} 秒` : `${Math.round(U.num(chk.latencyMs))} 毫秒`}` : '']
+        .filter(Boolean)
+        .join(' · ')
+      return h(
+        'div',
+        { 'data-vis-note': '1' },
+        ui.note(
+          h(
+            'div.pk-stack',
+            { style: { gap: '4px' } },
+            S(chk.reason) ? ui.text(S(chk.reason)) : null,
+            S(chk.fix) ? ui.text(`怎么办：${S(chk.fix)}`) : null,
+            S(chk.answer) ? ui.hint(`模型的回答：「${S(chk.answer)}」`) : null,
+            S(chk.detail) && !S(chk.reason).includes(S(chk.detail)) ? ui.hint(`接口原话：${S(chk.detail)}`) : null,
+            meta ? ui.hint(meta) : null,
+          ),
+          {
+            level: chk.ok ? 'ok' : chk.code === 'not-configured' || chk.code === 'timeout' || chk.code === 'network' ? 'warn' : 'error',
+            title: `${chk.ok ? '✅' : '❌'} ${S(chk.short) || (chk.ok ? '能看图' : '没有通过')}`,
+            actions: [ui.btn('关闭结果', () => ((ctx.local.visCheck = null), rr()), { kind: 'link', size: 'sm', key: 'vis-close' })],
+          },
+        ),
+      )
+    })()
+    return h(
+      'div',
+      { 'data-llm-vision': '1' },
+      ui.section(
+        {
+          title: '看图能力（参考复刻 · 画面自检 · 截图定位）',
+          en: 'VISION',
+          icon: 'image',
+          desc: '这三个功能要让模型「看图」。插件不按模型名字猜：第一次用到时先发一张很小的测试图确认一次，并记住结果（换模型或改设置后会重新确认）。',
+        },
+        status,
+        ui.field(
+          { label: '这个模型能不能看图', en: 'SUPPORT' },
+          ui.seg({
+            value: f.support,
+            options: [
+              { value: 'auto', label: '自动检测（推荐）', hint: '第一次用到时用测试图确认，并记住结果' },
+              { value: 'yes', label: '这个模型支持看图', hint: '直接把图片发给它，不再检测' },
+              { value: 'no', label: '不要发送图片', hint: '参考复刻只做本地实测，画面自检与截图定位跳过看图' },
+            ],
+            onChange: (x) => ((f.support = x), rr()),
+          }),
+        ),
+        ui.field(
+          { label: '单独的看图模型（可选）', en: 'VISION MODEL', hint: '留空 = 用上面的文本模型看图。文本模型看不了图时，填一个能看图的模型 ID（同一个接口里的模型即可，例如 gpt-4o-mini / qwen-vl-max / glm-4v-flash）' },
+          lineField({ key: 'llm-vis-model', value: f.model, placeholder: '留空 = 用文本模型看图', onInput: (x) => (f.model = x), onChange: () => ctx.update() }),
+        ),
+        cfg.mode === HOST_AGENT ? ui.hint('由智能体代写时一般不用设置看图模型（智能体自己看图）；要另外用一个看图模型，请勾选下面的「单独的接口」并填好地址与密钥。') : null,
+        ui.check({ label: '看图模型用单独的接口地址与密钥', hint: '只有看图模型在另一家服务商时才需要', value: own, onChange: (x) => ((f.own = x), rr()) }),
+        ownFields,
+        ui.row(
+          [
+            actBtn(ctx, 'llm-vis-check', '检测看图能力', () => checkVision(ctx), { icon: 'eye', busyText: '正在发送测试图…', title: '发一张 64×64 的红色小图问模型是什么颜色（只消耗极少的额度）；有未保存的看图设置会先保存' }),
+            actBtn(ctx, 'llm-vis-save', '保存看图设置', () => saveVision(ctx), { kind: 'primary', icon: 'check', busyText: '保存中…' }),
+            dirty ? ui.hint('有未保存的修改') : null,
+          ].filter(Boolean),
+        ),
+        checkNote,
+      ),
+    )
   }
 
   /* ---- render: tab · 配音引擎 */
@@ -1110,6 +1499,17 @@
     const db = engines.find((e) => e.id === 'doubao-tts') || {}
     const fld = (label, key, field, placeholder, hint) => ui.field({ label, hint }, lineField({ key: `ttsb-${key}`, value: b[field], placeholder, onInput: (v) => (b[field] = v) }))
     const switchBtn = (id) => (cfg.activeEngineId === id ? ui.pill('使用中', 'ok', { dot: true }) : ui.btn('切换启用', () => selectTtsEngine(ctx, engines.find((e) => e.id === id) || { id }), { size: 'sm' }))
+    // 「测试连接」 of the cloud channels: the values typed below (an empty key / token field = the saved one)
+    const mmPayload = () => ({
+      target: 'tts-builtin',
+      engineId: 'minimax-tts',
+      config: { endpoint: S(b.minimaxTtsEndpoint).trim(), model: S(b.minimaxTtsModel).trim(), voiceId: S(b.minimaxTtsVoiceId).trim(), apiKey: S(b.minimaxTtsApiKey).trim(), clearApiKey: Boolean(b.minimaxClearKey) },
+    })
+    const dbPayload = () => ({
+      target: 'tts-builtin',
+      engineId: 'doubao-tts',
+      config: { endpoint: S(b.doubaoTtsEndpoint).trim(), appId: S(b.doubaoTtsAppId).trim(), token: S(b.doubaoTtsToken).trim(), clearToken: Boolean(b.doubaoClearToken), cluster: S(b.doubaoTtsCluster).trim(), voiceType: S(b.doubaoTtsVoiceType).trim() },
+    })
     ctx.foot([
       actBtn(ctx, 'tts-repair', '自动补齐 voices/ 与默认音色', () => repairTtsVoices(ctx), { icon: 'wand', kind: 'ghost', busyText: '正在补齐…', title: '自动创建 voices/ 目录并生成默认参考音色 WAV' }),
       ui.spacer(),
@@ -1171,7 +1571,7 @@
         ),
       ),
       ui.section(
-        { title: '云端 TTS 配音通道', en: 'CLOUD TTS · 0GB 显存', icon: 'cloud', desc: '不需要显卡，按服务商价格计费。填好密钥后点「保存全部配音设置」，再「切换启用」。' },
+        { title: '云端 TTS 配音通道', en: 'CLOUD TTS · 0GB 显存', icon: 'cloud', desc: '不需要显卡，按服务商价格计费。填好后可以先点「测试连接」（不用保存、不扣费），再点「保存全部配音设置」并「切换启用」。' },
         fgrid(
           [
             ui.section(
@@ -1182,6 +1582,8 @@
                 { label: 'MiniMax API Key', aside: mm.hasApiKey ? ui.check({ value: b.minimaxClearKey, label: '保存时清除已存密钥', onChange: (v) => (b.minimaxClearKey = v) }) : null },
                 secretField(ctx, { key: 'ttsb-mm-key', value: b.minimaxTtsApiKey, saved: mm.hasApiKey, masked: mm.apiKeyMasked, placeholder: '粘贴 MiniMax API Key', onInput: (v) => (b.minimaxTtsApiKey = v) }),
               ),
+              ui.row([connTestBtn(ctx, 'tts-minimax', mmPayload, { size: 'sm', toastLabel: 'MiniMax Speech', title: '用上面填的地址和密钥测试 MiniMax：只查询音色列表，不合成声音，不扣费' })]),
+              connTestNote(ctx, 'tts-minimax', mmPayload()),
             ),
             ui.section(
               { title: '火山方舟 · 豆包语音 TTS', class: 'pk-settings-subcard', actions: [switchBtn('doubao-tts')] },
@@ -1197,6 +1599,8 @@
                 { min: 180 },
               ),
               fgrid([fld('集群 Cluster', 'db-cluster', 'doubaoTtsCluster', 'volcano_tts'), fld('音色 voice_type', 'db-voice', 'doubaoTtsVoiceType', '例如 zh_male_...')], { min: 180 }),
+              ui.row([connTestBtn(ctx, 'tts-doubao', dbPayload, { size: 'sm', toastLabel: '豆包语音', title: '用上面填的 AppID 和 Token 测试：只发送一段空文本，不合成声音，不扣费' })]),
+              connTestNote(ctx, 'tts-doubao', dbPayload()),
             ),
           ],
           { min: 300 },
@@ -1328,6 +1732,12 @@
                 ui.textarea({ key: 'ttsc-payload', value: f.payloadTemplateText, rows: 5, maxRows: 16, mono: true, onInput: set('payloadTemplateText'), expand: { title: 'JSON 请求体模板' } }),
               ),
             ]
+    // 「测试连接」: the address / key typed here (a key left empty while editing = that model's saved key); never synthesises
+    const netKind = f.kind !== 'cli-command'
+    const ttscPayload = () => ({
+      target: 'tts-custom',
+      engine: { editingId: S(f.editingId), id: S(f.id), name: S(f.name).trim(), kind: f.kind, endpoint: S(f.endpoint).trim(), method: f.method, apiKey: S(f.apiKey).trim(), model: S(f.model).trim(), voice: S(f.voice).trim() },
+    })
     ctx.foot([
       ui.hint('保存后立即切换为这个配音模型'),
       ui.spacer(),
@@ -1338,6 +1748,7 @@
             ctx.render()
           }, { kind: 'ghost', icon: 'plus' })
         : null,
+      netKind ? connTestBtn(ctx, 'tts-custom', ttscPayload, { toastLabel: S(f.name).trim() || '自定义配音模型', title: '用上面填的地址和密钥测试能不能连上：不用先保存，不会合成声音，也不扣费' }) : null,
       actBtn(ctx, 'ttsc-save', f.editingId ? '保存修改并启用' : '保存并启用该模型', () => saveCustomTts(ctx), { kind: 'primary', icon: 'save', busyText: '保存中…' }),
     ])
     return [
@@ -1378,6 +1789,7 @@
         }),
       ),
       ...kindFields,
+      netKind ? connTestNote(ctx, 'tts-custom', ttscPayload()) : null,
     ]
   }
   function renderTtsImport(ctx, cfg, active) {
@@ -1429,10 +1841,13 @@
     const preset = presets.find((p) => p.id === d.providerId) || null
     const setC = (k) => (v) => (d.custom[k] = v)
     const configured = CLOUD_CATS.filter((c) => (cm[c.value] || {}).hasApiKey || ((cm[c.value] || {}).protocol === 'custom' && S((cm[c.value] || {}).custom && cm[c.value].custom.submitUrl))).length
+    // 「测试连接」 tries exactly what is typed in this tab's form (a key left empty = the saved key)
+    const testPayload = () => ({ target: 'cloud-media', category: cat, config: cloudCatPayload(d) })
     ctx.foot([
       ui.hint('密钥只保存在本机，不会上传；生成结果先进预览验收区，满意再入库'),
       ui.spacer(),
       ui.btn('去生成', () => PK.open('cloud', { cat }), { icon: 'cloud', kind: 'ghost' }),
+      connTestBtn(ctx, `cloud-${cat}`, testPayload, { toastLabel: catMeta(cat).label, title: `用表单里现在填的地址和密钥测试「${catMeta(cat).label}」：不用先保存，不会生成内容，也不扣费` }),
       actBtn(ctx, 'cloud-save', '保存云端接口配置', () => saveCloudCfg(ctx), { kind: 'primary', icon: 'save', busyText: '保存中…' }),
     ])
     return [
@@ -1540,6 +1955,7 @@
               { min: 220 },
             ),
           ),
+      connTestNote(ctx, `cloud-${cat}`, testPayload()),
       stockKeysSection(ctx, cm, D),
       ui.toggle({
         value: Boolean(D.autoUseCloudBroll),
@@ -1567,6 +1983,7 @@
       fgrid(
         STOCK_KEY_DEFS.map((p) => {
           const k = info[p.id] || {}
+          const testPayload = () => ({ target: 'stock', provider: p.id, apiKey: S(s[p.id]).trim() })
           return ui.field(
             {
               label: `${p.name} API Key · ${k.sourceLabel || '未配置'}`,
@@ -1574,14 +1991,20 @@
               hint: `免费申请：${p.url}`,
               aside: k.hasSavedKey ? ui.check({ value: s[p.clear], label: '保存时清除', onChange: (v) => (s[p.clear] = v) }) : null,
             },
-            secretField(ctx, {
-              key: `stockkey-${p.id}`,
-              value: s[p.id],
-              saved: k.hasSavedKey,
-              masked: k.savedKeyMasked,
-              placeholder: k.hasEnvKey ? `正在用 .env 里的 Key（${k.envKeyMasked || '***'}）· 粘贴新 Key 可覆盖` : `粘贴 ${p.name} API Key`,
-              onInput: (v) => (s[p.id] = v),
-            }),
+            h(
+              'div.pk-stack',
+              { style: { gap: '6px' } },
+              secretField(ctx, {
+                key: `stockkey-${p.id}`,
+                value: s[p.id],
+                saved: k.hasSavedKey,
+                masked: k.savedKeyMasked,
+                placeholder: k.hasEnvKey ? `正在用 .env 里的 Key（${k.envKeyMasked || '***'}）· 粘贴新 Key 可覆盖` : `粘贴 ${p.name} API Key`,
+                onInput: (v) => (s[p.id] = v),
+              }),
+              ui.row([connTestBtn(ctx, `stock-${p.id}`, testPayload, { size: 'sm', toastLabel: p.name, title: `用输入框里的 Key（留空则用已保存的 Key）测试 ${p.name}：免费接口，不扣费` })]),
+              connTestNote(ctx, `stock-${p.id}`, testPayload()),
+            ),
           )
         }),
         { min: 260 },
@@ -1654,7 +2077,8 @@
     order: 10,
     desc: '大模型、配音引擎、云端生成的接口与密钥，低配保护',
     aliases: { llm: { tab: 'llm' }, tts: { tab: 'tts' }, settings: {}, preferences: { tab: 'general' }, cloudKeys: { tab: 'cloud' }, ttsInstall: { tab: 'tts', sub: 'install' } },
-    watch: (s) => s && s.rev,
+    // also re-read when the number of writing tasks waiting for the agent changes (mode 由当前智能体代写)
+    watch: (s) => s && `${s.rev}:${U.num(s.status && s.status.llm && s.status.llm.pending)}`,
     onWatch: async (ctx) => {
       await ctx.load()
       ctx.local.hw = null
@@ -1664,6 +2088,9 @@
     mount(ctx) {
       const a = ctx.args || {}
       ctx.local.tab = KEY_TABS.includes(a.tab) ? a.tab : 'llm'
+      // { focus: 'vision' } (e.g. from the reference-analysis badge): scroll to the 看图能力 section
+      ctx.local.focus = a.focus === 'vision' ? 'vision' : ''
+      if (ctx.local.focus) ctx.local.tab = 'llm'
       ctx.local.ttsSub = ['engines', 'install', 'add', 'import'].includes(a.sub) ? a.sub : 'engines'
       ctx.local.cloudCat = CLOUD_CATS.some((c) => c.value === a.cat) ? a.cat : 'image'
       ctx.listen('settings:jobs', () => ctx.update())
@@ -1675,6 +2102,10 @@
     },
     onArgs(ctx, a) {
       if (KEY_TABS.includes(a.tab)) ctx.local.tab = a.tab
+      if (a.focus === 'vision') {
+        ctx.local.tab = 'llm'
+        ctx.local.focus = 'vision'
+      }
       if (['engines', 'install', 'add', 'import'].includes(a.sub)) ctx.local.ttsSub = a.sub
       if (CLOUD_CATS.some((c) => c.value === a.cat)) ctx.local.cloudCat = a.cat
       if (ctx.local.ttsSub === 'install') loadTtsCatalog(ctx, true)
@@ -1702,7 +2133,7 @@
       const tabs = ui.tabs({
         value: tab,
         items: [
-          { value: 'llm', label: '文本大模型', icon: 'wand', badge: llm.configured ? '✓' : '未配置' },
+          { value: 'llm', label: '文本大模型', icon: 'wand', badge: hostPending(llm) ? `待处理 ${hostPending(llm)}` : llm.configured ? '✓' : '未配置' },
           { value: 'tts', label: '配音引擎', icon: 'voice', badge: engLabel(tts.engines.find((e) => e.id === tts.activeEngineId)) },
           { value: 'cloud', label: '云端生成', icon: 'cloud', badge: `${cloudN}/3` },
           { value: 'general', label: '通用偏好', icon: 'settings', badge: lowSpecLabel(prefs.lowSpecMode || 'auto') },
@@ -2452,7 +2883,7 @@
         existingPrompt: S(g.prompt).trim(),
         instrumental: Boolean(g.instrumental),
       },
-      { timeout: 240000 },
+      { timeout: PK.llmTimeout() },
     )
     if (cat === 'audio') {
       if ((field === 'both' || field === 'prompt') && res && res.prompt) g.prompt = res.prompt
@@ -2624,6 +3055,12 @@
       const assistBusy = (ctx.local.busy || {})
       const modelDrafts = (ctx.local.modelDrafts = ctx.local.modelDrafts || {})
       const ready = cloudReady(c)
+      // 「测试连接」 here: the saved provider + key with the model ID being typed (no key is sent from the page)
+      const cgPayload = () => ({
+        target: 'cloud-media',
+        category: cat,
+        config: { providerId: S(c.providerId), protocol: S(c.protocol), baseUrl: S(c.baseUrl), endpoint: S(c.endpoint), model: S(modelDrafts[cat] !== undefined ? modelDrafts[cat] : c.model).trim(), custom: { ...(c.custom || {}) } },
+      })
       const promptLabel = cat === 'audio' ? '音乐风格与情绪描述' : cat === 'video' ? '视频提示词（实拍镜头画面与运镜）' : '生图提示词（高清配图画面描述）'
       const promptPh =
         cat === 'audio'
@@ -2692,6 +3129,10 @@
             { min: 230 },
           ),
           preset && preset.docsHint ? ui.hint(preset.docsHint) : null,
+          ready
+            ? ui.row([connTestBtn(ctx, `cloudgen-${cat}`, cgPayload, { size: 'sm', toastLabel: meta.label, title: '用已保存的密钥和当前模型测一下能不能连上：不生成内容，也不扣费' }), ui.hint('生成前可以先测一下密钥和网络（不生成内容、不扣费）')], { wrap: true })
+            : null,
+          ready ? connTestNote(ctx, `cloudgen-${cat}`, cgPayload()) : null,
           ready ? null : ui.note('先在「设置 · 模型与密钥 → 云端生成」里填好这个类别的 API Key 并保存。', { level: 'warn', actions: [ui.btn('去配置密钥', () => PK.open('keys', { tab: 'cloud', cat }), { size: 'sm', kind: 'primary', icon: 'key' })] }),
         ),
         ui.section(
@@ -2700,7 +3141,7 @@
             en: 'PROMPT',
             icon: 'prompt',
             actions: [
-              actBtn(ctx, 'assist-main', 'AI 协助生成', () => assistCloudPrompt(ctx, cat === 'audio' ? 'prompt' : 'both'), { size: 'sm', icon: 'sparkle', busyText: 'AI 构思中…', disabled: Boolean(assistBusy['assist-both'] || assistBusy['assist-lyrics']) }),
+              actBtn(ctx, 'assist-main', 'AI 协助生成', () => assistCloudPrompt(ctx, cat === 'audio' ? 'prompt' : 'both'), { size: 'sm', icon: 'sparkle', busyText: PK.llmBusy('AI 构思中…'), disabled: Boolean(assistBusy['assist-both'] || assistBusy['assist-lyrics']) }),
               cat === 'audio' ? actBtn(ctx, 'assist-both', '一键填风格 + 歌词', () => assistCloudPrompt(ctx, 'both'), { size: 'sm', icon: 'bolt', busyText: '生成中…', disabled: Boolean(assistBusy['assist-main'] || assistBusy['assist-lyrics']) }) : null,
             ],
           },
@@ -2851,21 +3292,55 @@
     f.apiKey = ''
     PK.toast('已清除数字人接口的 API Key', 'info')
   }
-  async function installLipsync(ctx, pkg) {
+  /** this computer's graphics-card check for MuseTalk (GET avatar/lipsync → installer.hardware); null until loaded */
+  const lipGate = (ctx) => (ctx.local.lipInstaller && ctx.local.lipInstaller.hardware) || null
+  /** MuseTalk needs an NVIDIA GPU with ≥ 4 GB VRAM: why it does not suit this computer + what to use instead */
+  function lipGateNote(gate) {
+    if (!gate) return null
+    if (gate.suitable === false) {
+      const alts = Array.isArray(gate.alternatives) ? gate.alternatives : []
+      return ui.note(
+        h(
+          'div.pk-stack',
+          { style: { gap: '6px' } },
+          ui.text(S(gate.message)),
+          alts.length ? ui.text(h('b', null, '可以这样做：')) : null,
+          ...alts.map((a, i) => ui.text(`${'①②③④⑤'[i] || '·'} ${S(a.title)}：${S(a.text)}`)),
+        ),
+        { level: 'warn', title: S(gate.title) || '这台电脑不适合安装 MuseTalk' },
+      )
+    }
+    return gate.code === 'NVIDIA_UNVERIFIED' ? ui.note(S(gate.message), { level: 'info', title: S(gate.title) }) : null
+  }
+  async function installLipsync(ctx, pkg, o = {}) {
     if (jobRunning('lipsync-install')) throw new PK.Error('口型引擎正在安装中，请等它完成')
     const L = ctx.local
     const dir = S(L.lipDir).trim() || S(pkg.defaultDir)
     const mirror = L.lipMirror || 'cn'
-    const ok = await PK.confirm({
-      title: `一键安装 ${pkg.shortName || 'MuseTalk 1.5'}？`,
-      text: `将从官方仓库下载并安装「${pkg.name || pkg.shortName}」：\n· 显卡要求：${pkg.vramRequired || '—'}\n· 磁盘占用：${pkg.diskRequired || '—'}\n· 预计耗时：${pkg.etaLabel || '数分钟'}\n· 下载源：${mirror === 'global' ? '官方全球源' : '国内高速镜像（HF-Mirror + 清华源）'}\n· 安装位置：${dir || '默认目录'}\n${pkg.licenseNote ? `· 授权说明：${pkg.licenseNote}\n` : ''}\n安装期间需要联网，可以关闭本面板，完成后会提示你。`,
-      ok: '开始安装',
-    })
+    const force = Boolean(o.force)
+    const gate = lipGate(ctx)
+    const details = `· 显卡要求：${pkg.vramRequired || '—'}\n· 磁盘占用：${pkg.diskRequired || '—'}\n· 预计耗时：${pkg.etaLabel || '数分钟'}\n· 下载源：${mirror === 'global' ? '官方全球源' : '国内高速镜像（HF-Mirror + 清华源）'}\n· 安装位置：${dir || '默认目录'}\n${pkg.licenseNote ? `· 授权说明：${pkg.licenseNote}\n` : ''}`
+    // one paragraph per line (a plain confirm text would run the list together)
+    const lines = (s) => h('div.pk-stack', { style: { gap: '4px' } }, S(s).split('\n').filter((l) => l.trim()).map((l) => ui.text(l)))
+    const ok = await PK.confirm(
+      force
+        ? {
+            title: `这台电脑不适合 ${pkg.shortName || 'MuseTalk'}，仍要安装？`,
+            text: lines(`${S(gate && gate.message) || '这台电脑没有合适的 NVIDIA 显卡。'}\n仍要安装的话会下载约 5 GB 文件，装好后口型同步大概率用不起来（自检会提示失败）。\n不装也能正常出片：克隆真人口播会自动改用无口型合成叠层。\n${details}`),
+            ok: '仍要安装',
+            danger: true,
+          }
+        : {
+            title: `一键安装 ${pkg.shortName || 'MuseTalk 1.5'}？`,
+            text: lines(`将从官方仓库下载并安装「${pkg.name || pkg.shortName}」：\n${details}\n安装期间需要联网，可以关闭本面板，完成后会提示你。`),
+            ok: '开始安装',
+          },
+    )
     if (!ok) return
     startJob('lipsync-install', {
       label: `安装 ${pkg.shortName || 'MuseTalk'}`,
       startText: '正在启动口型引擎一键安装…',
-      start: () => PK.post('avatar/lipsync/install', { engineId: pkg.id || 'musetalk', installDir: S(L.lipDir).trim(), mirror }),
+      start: () => PK.post('avatar/lipsync/install', { engineId: pkg.id || 'musetalk', installDir: S(L.lipDir).trim(), mirror, ...(force ? { force: true } : {}) }),
       doneText: '口型引擎安装完成',
       maxMs: 4 * 3600 * 1000,
     })
@@ -2874,7 +3349,17 @@
         await hostRefresh()
         if (!ctx.frame.closed) loadLipsync(ctx).then(() => ctx.update()).catch(() => {})
       })
-      .catch((err) => PK.toast(`口型引擎安装未完成：${S(err && err.message)}`, 'error', { title: '口型引擎安装失败', timeout: 0 }))
+      .catch((err) => {
+        // the server checks the graphics card again: show its verdict in the panel (with the alternatives), not only a toast
+        const hw = err && err.code === 'LIPSYNC_GPU_UNSUITABLE' && err.body && err.body.hardware
+        if (hw) {
+          L.lipInstaller = { ...(L.lipInstaller || {}), hardware: hw }
+          if (!ctx.frame.closed) ctx.update()
+          PK.toast(S(hw.message), 'warn', { title: S(hw.title) || '这台电脑不适合安装 MuseTalk', timeout: 0 })
+          return
+        }
+        PK.toast(`口型引擎安装未完成：${S(err && err.message)}`, 'error', { title: '口型引擎安装失败', timeout: 0 })
+      })
   }
 
   /** `PK.open('avatar', { tab })` jump targets (版本历史 · 工程安全 → 口型引擎 opens `{ tab: 'lipsync' }`) */
@@ -2938,6 +3423,7 @@
     const prov = data.avatarProvider || {}
     const hasProject = PK.hasProject()
     const ls = L.lipsync
+    const lipCloud = Boolean(ls && (S(ls.engine) === 'cloud-fal' || (ls.cloud && ls.cloud.hasApiKey)))
     const lipPkgs = (L.lipInstaller && Array.isArray(L.lipInstaller.packages) && L.lipInstaller.packages) || []
     const genBusy = jobRunning('avatar-gen')
     const set = (patch, msg) =>
@@ -3099,7 +3585,11 @@
               const r = ctx.local.lipsync
               PK.toast(r && r.ready ? '口型引擎深度检测通过（已加载模型与 CUDA）' : S(r && r.reason) || '检测未通过', r && r.ready ? 'success' : 'info')
             }, { size: 'sm', icon: 'search', kind: 'ghost', busyText: '检测中…', title: '加载模型与显卡做一次完整检测（可能要一两分钟）' }),
-          ],
+            // the cloud engine's key lives in .env (AVATAR_LIPSYNC_CLOUD_API_KEY / FAL_KEY): check it for real, free of charge
+            lipCloud
+              ? connTestBtn(ctx, 'lipsync-cloud', () => ({ target: 'lipsync-cloud' }), { size: 'sm', kind: 'ghost', label: '测试 fal.ai 密钥', toastLabel: '云端口型 fal.ai', title: '用 .env 里的 fal.ai 密钥测试一次：只查询价格表，不生成视频，不扣费' })
+              : null,
+          ].filter(Boolean),
         },
         ls
           ? ui.note(S(ls.reason) || (ls.ready ? '口型引擎已就绪' : '口型引擎未就绪'), { level: ls.ready ? 'ok' : 'warn', title: ls.ready ? `唇形同步引擎已就绪${LIPSYNC_ENGINES[S(ls.engine)] ? ` · ${LIPSYNC_ENGINES[S(ls.engine)]}` : ''}` : '唇形同步引擎未就绪' })
@@ -3109,8 +3599,11 @@
                 ctx.update()
               }))
             : ui.spinner('正在检测口型引擎…'),
+        lipCloud ? connTestNote(ctx, 'lipsync-cloud') : null,
         ui.text('克隆真人口播会用本地 MuseTalk 1.5（或 .env 里配置的云端 fal LatentSync）对口型；引擎不可用时会自动退回无口型的合成叠层，不会中断出片。', { tone: 'muted' }),
-        ls && !ls.ready && ls.installHint ? ui.field({ label: '手动安装命令（高级）' }, ui.code(ls.installHint)) : null,
+        // graphics-card check before offering the install (MuseTalk needs an NVIDIA GPU with ≥ 4 GB VRAM)
+        lipPkgs.length && !(ls && ls.ready && ls.engine === 'musetalk') ? lipGateNote(lipGate(ctx)) : null,
+        ls && !ls.ready && ls.installHint && !(lipGate(ctx) && lipGate(ctx).suitable === false) ? ui.field({ label: '手动安装命令（高级）' }, ui.code(ls.installHint)) : null,
         lipPkgs.length && !(ls && ls.ready && ls.engine === 'musetalk')
           ? h(
               'div.pk-stack',
@@ -3122,15 +3615,26 @@
                 ],
                 { min: 240 },
               ),
-              ...lipPkgs.map((pkg) =>
-                ui.card({
+              ...lipPkgs.map((pkg) => {
+                const gate = lipGate(ctx)
+                const running = jobRunning('lipsync-install')
+                // no suitable NVIDIA GPU: no one-click install, only an explicit 「仍要安装」 behind a warning
+                const unsuited = pkg.suitable === false || Boolean(gate && gate.suitable === false)
+                return ui.card({
                   key: `lip-pkg-${pkg.id}`,
                   title: pkg.shortName || pkg.name,
                   body: h('div.pk-stack', { style: { gap: '4px' } }, ui.text(pkg.name || '', { tone: 'muted' }), ui.text(`${pkg.vramRequired || '—'} · 占用 ${pkg.diskRequired || '—'} · ${pkg.etaLabel || ''}`, { tone: 'dim' }), pkg.licenseNote ? ui.text(pkg.licenseNote, { tone: 'dim' }) : null),
-                  tags: [pkg.installed ? ui.pill('已安装', 'ok', { dot: true }) : ui.pill('可选安装', 'warn')],
-                  actions: [ui.btn(jobRunning('lipsync-install') ? '正在安装…' : pkg.installed ? '重新安装 / 修复' : `一键安装 ${pkg.shortName || pkg.id}`, () => installLipsync(ctx, pkg), { kind: pkg.installed ? 'secondary' : 'primary', icon: 'download', size: 'sm', disabled: jobRunning('lipsync-install') })],
-                }),
-              ),
+                  tags: [
+                    pkg.installed ? ui.pill('已安装', 'ok', { dot: true }) : ui.pill('可选安装', 'warn'),
+                    unsuited ? ui.pill('不适合这台电脑', 'err', { dot: true, title: S(gate && gate.message) }) : gate && gate.code === 'OK' ? ui.pill('本机显卡满足要求', 'ok', { title: S(gate.message) }) : null,
+                  ].filter(Boolean),
+                  actions: [
+                    unsuited
+                      ? ui.btn(running ? '正在安装…' : pkg.installed ? '仍要重新安装…' : '仍要安装…', () => installLipsync(ctx, pkg, { force: true }), { kind: 'ghost', icon: 'warn', size: 'sm', disabled: running, title: '这台电脑没有合适的 NVIDIA 显卡，不建议安装；确定要装可以点这里' })
+                      : ui.btn(running ? '正在安装…' : pkg.installed ? '重新安装 / 修复' : `一键安装 ${pkg.shortName || pkg.id}`, () => installLipsync(ctx, pkg), { kind: pkg.installed ? 'secondary' : 'primary', icon: 'download', size: 'sm', disabled: running }),
+                  ],
+                })
+              }),
             )
           : null,
         jobView('lipsync-install'),
@@ -3138,6 +3642,9 @@
     )
     const ep = L.ep
     const epDirty = !same(ep, L.epBase)
+    // 「测试连接」 of the external service: the typed address / key (an empty key field = the saved key); never generates
+    const avPayload = () => ({ target: 'avatar-provider', config: { provider: ep.provider || 'auto', endpoint: S(ep.endpoint).trim(), apiKey: S(ep.apiKey).trim() } })
+    const avTestable = (ep.provider || 'auto') !== 'local-composite'
     out.push(
       ui.section(
         { key: AVATAR_JUMP.provider, title: '外接数字人 / 唇形驱动服务（高级）', en: 'EXTERNAL PROVIDER', icon: 'link', desc: '免外部算力模式：AI 主播按音轨声波实时驱动眨眼 / 嘴型生成透明 WebM；克隆真人则对本人视频叠加克隆声音。需要对真人照片 / 视频做真实唇形同步时，填写外接 MuseTalk / LatentSync 接口。' },
@@ -3172,7 +3679,12 @@
           },
           secretField(ctx, { key: 'av-key', value: ep.apiKey, saved: prov.hasApiKey, masked: prov.maskedApiKey, placeholder: '可选：Bearer API Key（留空表示本地无鉴权）', onInput: (v) => (ep.apiKey = v) }),
         ),
-        ui.row([ui.spacer(), actBtn(ctx, 'av-ep-save', '保存接口', () => saveAvatarEndpoint(ctx), { kind: epDirty ? 'primary' : 'secondary', icon: 'save', busyText: '保存中…' })]),
+        ui.row([
+          ui.spacer(),
+          avTestable ? connTestBtn(ctx, 'avatar-ep', avPayload, { toastLabel: '外接数字人服务', title: '用上面填的地址和密钥测试能不能连上：不用先保存，不会生成数字人，也不扣费' }) : null,
+          actBtn(ctx, 'av-ep-save', '保存接口', () => saveAvatarEndpoint(ctx), { kind: epDirty ? 'primary' : 'secondary', icon: 'save', busyText: '保存中…' }),
+        ]),
+        avTestable ? connTestNote(ctx, 'avatar-ep', avPayload()) : null,
       ),
     )
     return out

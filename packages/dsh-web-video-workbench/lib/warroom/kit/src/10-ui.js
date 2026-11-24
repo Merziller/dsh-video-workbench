@@ -280,11 +280,21 @@
           b.setAttribute('aria-busy', 'true')
           b.disabled = true
           if (lbl && o.busyText) lbl.textContent = o.busyText
+          // a long wait (a model call may take minutes) shows how long it has been running, so it never looks frozen
+          const t0 = Date.now()
+          const tick =
+            lbl && o.busyText
+              ? setInterval(() => {
+                  const s = Math.round((Date.now() - t0) / 1000)
+                  if (s >= 5 && b.isConnected) lbl.textContent = `${o.busyText} ${U.fmtDur(s)}`
+                }, 1000)
+              : 0
           try {
             await res
           } catch (err) {
             PK.reportError(err)
           } finally {
+            if (tick) clearInterval(tick)
             b.removeAttribute('aria-busy')
             b.disabled = Boolean(o.disabled)
             if (lbl && o.busyText) lbl.textContent = old

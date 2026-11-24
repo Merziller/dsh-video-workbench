@@ -1,0 +1,62 @@
+/* AI 剪辑 · 口播粗剪 (62-talk-edit.js): the transcript with cuts in place */
+.pk-te-text {
+  max-height: min(46vh, 520px);
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--pk-line);
+  border-radius: var(--pk-radius-sm);
+  background: var(--pk-bg2);
+  font-size: 15px;
+  line-height: 2;
+  color: var(--pk-ink);
+  overflow-wrap: anywhere;
+}
+.pk-te-w {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 1px 1px;
+  transition: background-color 0.12s;
+}
+.pk-te-w:hover,
+.pk-te-w:focus-visible {
+  background: var(--pk-acc-soft);
+  outline: none;
+}
+.pk-te-w.is-cut {
+  color: var(--pk-ink3);
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  text-decoration-color: color-mix(in srgb, var(--pk-err) 75%, transparent);
+  background: color-mix(in srgb, var(--pk-err) 9%, transparent);
+}
+.pk-te-w.is-cut.is-retake,
+.pk-te-w.is-cut.is-false-start {
+  text-decoration-color: color-mix(in srgb, var(--pk-acc) 80%, transparent);
+  background: color-mix(in srgb, var(--pk-acc) 9%, transparent);
+}
+.pk-te-w.is-cut.is-filler,
+.pk-te-w.is-cut.is-stutter,
+.pk-te-w.is-cut.is-fragment {
+  text-decoration-color: color-mix(in srgb, var(--pk-warn) 85%, transparent);
+  background: color-mix(in srgb, var(--pk-warn) 10%, transparent);
+}
+.pk-te-w.is-pending {
+  outline: 1px dashed var(--pk-warn);
+  outline-offset: 1px;
+}
+.pk-te-p {
+  color: var(--pk-ink2);
+}
+.pk-te-gap {
+  display: inline-block;
+  margin: 0 4px;
+  font-size: 11px;
+  color: var(--pk-ink3);
+  vertical-align: middle;
+}
+.pk-te-video {
+  max-height: 46vh;
+}
+.pk-te-table td {
+  vertical-align: middle;
+}

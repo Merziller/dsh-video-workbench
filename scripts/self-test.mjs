@@ -577,6 +577,10 @@ export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = { 'sc
     )
   }
 
+  // This pass checks the compile / lint auto-repair loop. The mock's repaired scene barely moves on purpose, so the
+  // picture-motion check (画面变化检查) would add a re-authoring round of its own: it is switched off here.
+  const prevMotionCheck = process.env.DSH_VIDEO_MOTION_CHECK
+  process.env.DSH_VIDEO_MOTION_CHECK = '0'
   const aiPipeRes = await runAiStudioPipeline({
     projectDir: tmpAiProj,
     topic: 'AI 编程测试短片',
@@ -595,6 +599,9 @@ export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = { 'sc
       maxRepairRounds: 3,
     },
     fetchImpl: mockLlmFetch,
+  }).finally(() => {
+    if (prevMotionCheck === undefined) delete process.env.DSH_VIDEO_MOTION_CHECK
+    else process.env.DSH_VIDEO_MOTION_CHECK = prevMotionCheck
   })
   if (!aiPipeRes.ok || aiPipeRes.buildLog?.repairRoundsUsed !== 1 || aiPipeRes.script?.width !== 1080 || aiPipeRes.script?.height !== 1920) {
     throw new Error(`AI Coding Auto-Repair verification failed: ${JSON.stringify(aiPipeRes.buildLog)}`)
@@ -2498,11 +2505,14 @@ export const BATCH_01_SCENES: Record<string, React.FC<CustomSceneProps>> = {
   rmSync(tmpV038Proj, { recursive: true, force: true })
   const serverIndexSrc = readFileSync(join(REPO_ROOT, 'packages', 'dsh-web-video-workbench', 'lib', 'index.js'), 'utf8')
   const llmClientSrc = readFileSync(join(REPO_ROOT, 'packages', 'dsh-tool-media', 'llm-client.js'), 'utf8')
+  // the AI polish waits the shared model limit: 10 minutes unless DSH_LLM_TIMEOUT_MS says otherwise
+  const { DEFAULT_LLM_TIMEOUT_MS: polishLimitMs } = await import('../packages/dsh-tool-media/llm-client.js')
   if (
     mockTierCalls < 2 ||
     (expandedPlanRes?.plan?.shots?.length || 0) < 18 ||
     expandedEstSec < 110 ||
-    !serverIndexSrc.includes('timeoutMs: 600_000') ||
+    !serverIndexSrc.includes('timeoutMs: getLlmTimeoutMs()') ||
+    polishLimitMs !== 600_000 ||
     !llmClientSrc.includes('postJsonLongTimeout')
   ) {
     throw new Error(`v0.3.8/0.3.9 anti-shrink or 10-min polish check failed: calls=${mockTierCalls} shots=${expandedPlanRes?.plan?.shots?.length} estSec=${expandedEstSec}`)

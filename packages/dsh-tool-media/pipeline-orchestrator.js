@@ -36,6 +36,7 @@ import { buildRichHtmlVideo } from './html-generator.js'
 import { authorBatchedRemotionScenes, runCodeAutoRepairLoop } from './ai-coder.js'
 import { applyFigureStyleChoice, enrichScenesForVisuals, FIGURE_STYLE_ZH, normalizeCast, normalizeFigureStyle, normalizeFigureStyleNote } from './figure-kit.js'
 import { syncCastWithCharacterBank } from './cast-bank-sync.js'
+import { ensureFootageWindows } from './footage-index.js'
 
 import { formatToolSummary } from './scene-tool-plan.js'
 import { summarizeVisualReview } from './visual-review.js'
@@ -54,10 +55,11 @@ import {
 } from './audio-synth.js'
 import { buildHtmlCoderSkillsPrompt, buildRemotionCoderSkillsPrompt } from './shotcraft-lib.js'
 import { withStyleGuide } from './style-presets.js'
-import { callLlmChat, extractJsonFromLlmText, getSafeLlmConfigSummary, resolveLlmConfig } from './llm-client.js'
+import { callLlmChat, createLlmUsageLedger, extractJsonFromLlmText, formatLlmUsageSummary, getSafeLlmConfigSummary, resolveLlmConfig, runWithLlmUsage } from './llm-client.js'
 import { stripPlazaTemplateGuidance } from './plaza-guidance.js'
 import { runSchemaDirectorWithDegradation } from './plan-schema.js'
 import { writeRemotionProjectFiles } from './remotion-generator.js'
+import { clearTalkEditSettings, executeTalkEditRunner, TALK_EDIT_SUBTASKS } from './talk-edit.js'
 import { taskManager } from './task-manager.js'
 import { buildMediaDimsMap, groundVisualAssets } from './vision-grounding.js'
 import {
@@ -97,6 +99,13 @@ export function resolvePipelineMode(rawMode) {
   }
 }
 import { masterVoiceTracks } from './voice-master.js'
+
+/** 作品类型: 'ai-film' (AI 原创成片, the default) | 'talk-edit' (口播剪辑: the user's own talking-head recording). */
+export const PRODUCTION_TYPES = ['ai-film', 'talk-edit']
+export function normalizeProductionType(v) {
+  const s = String(v || '').trim().toLowerCase()
+  return PRODUCTION_TYPES.includes(s) ? s : 'ai-film'
+}
 
 function isDoneTask(run, taskId) {
   const t = run?.tasks?.find((x) => x.id === taskId)
@@ -177,6 +186,12 @@ async function executeMultiAgentRunner(run, helpers) {
   loadEnv()
   const { signal, onChild, waitIfPaused, updateTask, appendLog } = helpers
   const spec = run.spec || {}
+  // 口播剪辑: the person's own recording is the film — no AI script, no voice synthesis, no paid calls
+  if (normalizeProductionType(spec.productionType) === 'talk-edit') {
+    return executeTalkEditRunner(run, helpers, { executeVideoRender, executeVideoLint, executeVideoSnapshot })
+  }
+  // an AI film in a project that held a 口播剪辑 before: its caption style / host-voice settings must not carry over
+  if (spec.projectDir && clearTalkEditSettings(resolve(spec.projectDir))) appendLog('director', '作品类型已切换为 AI 原创成片：已清除上一次口播剪辑的字幕样式与原声设置')
   // Everything that made this film worse than a normal run (a model fallback, a failed QA check) is collected here,
   // shown as a yellow log line right away and summed up in the completion message and the run summary.
   const runWarnings = []
@@ -449,10 +464,16 @@ async function executeMultiAgentRunner(run, helpers) {
           if (groundRes?.grounded > 0) {
             appendLog('director', `已完成界面视觉坐标锚点定位：精确 DOM 侧车 ${groundRes.sidecarCount} 份 · 视觉识别 ${groundRes.visionCount} 份`)
           }
+          // the shared 看图能力 check says why the pictures were not looked at (model cannot see / timeout / …)
+          if (groundRes?.visionSkipped) appendLog('director', `素材截图定位没有使用看图模型：${groundRes.visionSkipped}`, 'warn')
         } catch {}
         llmBilling.throwIfTripped()
         const assetsManifest = readAssets(absDir)
         curScript.mediaDims = buildMediaDimsMap(assetsManifest, curScript)
+        // 「AI 编码出片时参考现有草稿」 (studio toggle, sent with the run): the current storyboard is the pacing baseline
+        const draftSceneCount = Array.isArray(curScript.scenes) ? curScript.scenes.length : 0
+        if (spec.useDraftReference === true && draftSceneCount >= 2) appendLog('director', `已参考现有草稿（${draftSceneCount} 镜）的叙事顺序和配音节奏，镜头数仍按本次时长和节奏重新规划`)
+        else if (spec.useDraftReference === false && draftSceneCount >= 2) appendLog('director', '未参考现有草稿：分镜从你的需求重新规划')
         const schemaRes = await runSchemaDirectorWithDegradation({
           projectDir: absDir,
           topic: spec.topic || curScript.topic || curScript.title,
@@ -475,6 +496,12 @@ async function executeMultiAgentRunner(run, helpers) {
           signal,
           onLlmWait: ({ waitMs }) =>
             appendLog('director', `大模型接口仍不可用，${Math.round((Number(waitMs) || 0) / 1000)} 秒后再试一次完整策划…`, 'warn'),
+          // a long storyboard is written page by page: show where the director is
+          onProgress: (msg) => {
+            appendLog('director', msg)
+            updateTask('t-director', { status: 'running', progress: 56, message: msg, log: false })
+          },
+          useDraftReference: spec.useDraftReference,
         })
         // The schema director degrades through tiers on errors: a billing failure must stop here, not fall back
         llmBilling.throwIfTripped()
@@ -603,11 +630,16 @@ async function executeMultiAgentRunner(run, helpers) {
           if (Number(schemaRes.degradationTier || 4) <= 3) {
             curScript.authoringMode = 'ai-coded'
           }
+          const pc = schemaRes.planCheck || null
           curScript.directorMeta = {
             tier: schemaRes.degradationTier || 4,
             tierLabel: schemaRes.tierLabel || 'Schema Tier',
             model: llmSummary.model || '',
             llmUsed: Number(schemaRes.degradationTier || 4) <= 3,
+            // how complete the storyboard came back (paged / cut off / short / densified locally)
+            ...(pc
+              ? { shotPlan: { shots: pc.shots, needMin: pc.needMin, needMax: pc.needMax, mode: pc.mode, truncated: Boolean(pc.truncated), recovered: pc.recovered || '', densified: Boolean(pc.densified || pc.seedSplit), complete: Boolean(pc.complete) } }
+              : {}),
           }
           // the storyboard's beat grid: the AI-composed music is written at this tempo (see the BGM stage)
           if (Number(schemaRes.degradationTier || 4) <= 3 && Number(schemaRes.plan?.bpm) > 0) curScript.planBpm = Number(schemaRes.plan.bpm)
@@ -619,12 +651,15 @@ async function executeMultiAgentRunner(run, helpers) {
             appendLog('director', `人工修改保护：${summarizeEditMerge(directorMerge.report)}`)
           }
           writeScriptJson(absDir, curScript)
-          appendLog('director', `大模型导演调度完成 (${schemaRes.tierLabel || 'Schema Tier'} · ${updatedScenes.length} 幕${schemaRes.degradationTier > 1 ? ` · Tier1详情: ${schemaRes.trace?.[0]?.reason || 'unknown'}` : ''})`)
+          const tier1Trace = (schemaRes.trace || []).find((t) => t?.tier === 1) || schemaRes.trace?.[0]
+          appendLog('director', `大模型导演调度完成 (${schemaRes.tierLabel || 'Schema Tier'} · ${updatedScenes.length} 幕${schemaRes.degradationTier > 1 ? ` · Tier1详情: ${tier1Trace?.reason || 'unknown'}` : ''})`)
+          // 「计划 N 镜 / 需要 X–Y 镜」: how the storyboard compares with what the pacing and length need
+          if (schemaRes.shotPlanLine) appendLog('director', `分镜镜头数：${schemaRes.shotPlanLine}`)
           const tierNo = Number(schemaRes.degradationTier || 4)
           if (tierNo >= 4) {
             const why = schemaRes.llmOutage
               ? `大模型接口持续限流或不可用（${String(schemaRes.llmOutage).slice(0, 90)}）`
-              : `大模型没有返回可用的分镜（${String(schemaRes.trace?.[0]?.reason || '未知原因').slice(0, 90)}）`
+              : `大模型没有返回可用的分镜（${String(tier1Trace?.reason || '未知原因').slice(0, 90)}）`
             warnUser(
               'director',
               `⚠ ${why}，本次分镜改由规则引擎${schemaRes.briefBeatCount ? `按你需求里的 ${schemaRes.briefBeatCount} 个要点` : ''}生成（${updatedScenes.length} 幕），文案和节奏会比正常出片简单很多；建议稍后点「重新出片」。`,
@@ -632,6 +667,8 @@ async function executeMultiAgentRunner(run, helpers) {
           } else if (tierNo >= 2) {
             warnUser('director', `⚠ 大模型返回的分镜不完整，已降级为简化策划（${schemaRes.tierLabel || `Tier ${tierNo}`}），画面编排会比完整策划简单。`)
           }
+          // cut-off replies, too few shots, segments the model never wrote, local densifying: each one is said plainly
+          for (const w of Array.isArray(schemaRes.planWarnings) ? schemaRes.planWarnings : []) warnUser('director', `⚠ ${w}`)
         }
       } catch (err) {
         if (err?.name === 'AbortError' || signal.aborted) throw createAbortError()
@@ -655,6 +692,7 @@ async function executeMultiAgentRunner(run, helpers) {
     if (spec.pacingMode) sAfterDir.pacingMode = String(spec.pacingMode)
     if (spec.visual3dMode) sAfterDir.visual3dMode = String(spec.visual3dMode)
     if (spec.visualReview !== undefined) sAfterDir.visualReview = spec.visualReview !== false
+    if (spec.visualReviewFine !== undefined) sAfterDir.visualReviewFine = spec.visualReviewFine !== false
     sAfterDir.fps = effectiveFps
     sAfterDir.lowSpecSafe = hwPolicy.lowSpecSafe
     sAfterDir.hardwarePolicy = {
@@ -1111,7 +1149,8 @@ async function executeMultiAgentRunner(run, helpers) {
         const bgmRes = await generateAiCodedBgmTrack({
           projectDir: absDir,
           script: bgmScriptInput,
-          callLlmChatFn: llmBilling.wrap((p) => callLlmChat({ timeoutMs: 240_000, ...p, signal, onRetry: onLlmRetry })),
+          // the shared model-call limit (getLlmTimeoutMs, 10 min by default) applies — no shorter cut-off for 作曲
+          callLlmChatFn: llmBilling.wrap((p) => callLlmChat({ ...p, signal, onRetry: onLlmRetry })),
         })
         scriptNow.bgm = { ...(scriptNow.bgm || {}), mode: 'llm-coded', source: 'llm-coded', path: bgmRes.relWavPath }
         writeScriptJson(absDir, scriptNow)
@@ -1420,6 +1459,22 @@ async function executeMultiAgentRunner(run, helpers) {
     }
     const lockedHtmlBefore = Object.keys(lockedHtmlBlocks).length > 0
     const keepLockedHtmlBlocks = (html) => applyLockedHtmlStore(html, lockedHtmlBlocks)
+    // Long uploaded videos: scene durations are final now (narration timing, beat cuts, densified shots), so each video
+    // shot gets the part of its clip it should play (trimStartSec / trimEndSec; windows the user set are kept)
+    try {
+      const fw = await ensureFootageWindows({
+        projectDir: absDir,
+        script: curScript,
+        signal,
+        onProgress: (p) => updateTask('t-motion', { status: 'running', progress: 18, message: p?.message || '正在为视频镜头挑选要用的片段…', log: false }),
+      })
+      if (Number(fw?.assigned) > 0) {
+        writeScriptJson(absDir, curScript)
+        appendLog('motion_qa', `已为 ${fw.assigned} 个视频镜头挑好要用的片段`)
+      }
+    } catch (err) {
+      if (err?.name === 'AbortError' || signal.aborted) throw createAbortError()
+    }
     syncProjectCodeFromScript(absDir, curScript, { forceOverwrite: true })
 
     if (mode === 'ai-coded' && llmSummary.configured && enableAiCode) {
@@ -1448,6 +1503,10 @@ async function executeMultiAgentRunner(run, helpers) {
             maxRepairRounds: Math.max(1, Math.min(3, Number(llmSummary.maxRepairRounds) || 2)),
             // 画面自检 (keyframes → multimodal review → one targeted rewrite); on unless the user switched it off
             visualReview: spec.visualReview !== undefined ? spec.visualReview !== false : curScript.visualReview !== false,
+            // 「逐个机位看图」: every sub-shot is looked at and rewritten shots are checked once more (on unless switched off)
+            visualReviewFine: spec.visualReviewFine !== undefined ? spec.visualReviewFine !== false : curScript.visualReviewFine !== false,
+            // 画面是否在动 (local stills at each sub-shot, free): a scene whose picture never changes is rewritten once
+            motionCheck: spec.motionCheck !== undefined ? spec.motionCheck !== false : curScript.motionCheck !== false,
             signal,
             onProgress: (_stage, pct, msg) => {
               updateTask('t-motion', {
@@ -1467,10 +1526,34 @@ async function executeMultiAgentRunner(run, helpers) {
           if (repairRes?.visualReview) {
             const vr = repairRes.visualReview
             appendLog('motion_qa', `👀 ${summarizeVisualReview(vr)}`)
-            if (!vr.skipped && vr.majorScenes > vr.fixedScenes) warnUser('motion_qa', `⚠ 画面自检发现 ${vr.majorScenes - vr.fixedScenes} 个镜头的问题没能返工，建议在成片里重点查看这些镜头`)
+            // shots still showing a major problem after the rewrite (re-checked with 「逐个机位看图」) or never rewritten
+            const remaining = Number.isFinite(Number(vr.remainingMajor)) ? Number(vr.remainingMajor) : vr.majorScenes - vr.fixedScenes
+            const remainingIds = Array.isArray(vr.recheck?.remainingScenes) ? vr.recheck.remainingScenes : []
+            if (!vr.skipped && remaining > 0) {
+              warnUser(
+                'motion_qa',
+                vr.recheck && !vr.recheck.skipped
+                  ? `⚠ 返工后复查仍有 ${remaining} 个镜头有明显问题${remainingIds.length ? `（${remainingIds.slice(0, 6).join('、')}${remainingIds.length > 6 ? '…' : ''}）` : ''}，建议在成片里重点查看，或在「分步精修」里对这些镜头点「AI 立即改」`
+                  : `⚠ 画面自检发现 ${remaining} 个镜头的问题没能返工，建议在成片里重点查看这些镜头`,
+              )
+            }
           }
           if (repairRes?.lockedSceneIds?.length) {
             appendLog('motion_qa', `人工锁定场景 ${repairRes.lockedSceneIds.join(', ')} 未重新生成 TSX（沿用锁定时的实现）`)
+          }
+          // the local "does the picture change" check (stills at each sub-shot, no model call)
+          const mc = repairRes?.motionCheck
+          if (mc) {
+            if (mc.skipped) appendLog('motion_qa', `画面变化检查跳过：${mc.skipped}`)
+            else {
+              const fixedN = Array.isArray(mc.fixedBatches) ? mc.fixedBatches.length : 0
+              const staticN = Array.isArray(mc.staticScenes) ? mc.staticScenes.length : 0
+              appendLog('motion_qa', `🎞 画面变化检查：看了 ${mc.checkedScenes} 个镜头的 ${mc.stills} 张截图${staticN ? `，${staticN} 个镜头画面几乎不动（${mc.staticScenes.slice(0, 6).join('、')}${staticN > 6 ? '…' : ''}），已返工 ${fixedN} 批` : '，每个镜头的画面都在变化'}`)
+            }
+          }
+          // scenes whose code never came back: they render with the built-in template picture
+          if (Array.isArray(repairRes?.unregisteredSceneIds) && repairRes.unregisteredSceneIds.length) {
+            warnUser('motion_qa', `⚠ ${repairRes.unregisteredSceneIds.length} 个镜头（${repairRes.unregisteredSceneIds.slice(0, 6).join('、')}${repairRes.unregisteredSceneIds.length > 6 ? '…' : ''}）的动画代码没有生成成功，会先用内置模板画面代替；可以在「分步精修」里对这些镜头点「AI 立即改」重做`)
           }
         } else {
           // a custom AI-designed / saved style reaches the HTML coder too (soft guide, deduped by its marker)
@@ -1687,6 +1770,8 @@ async function executeMultiAgentRunner(run, helpers) {
     const qaFailed = qaRep && qaRep.passed === false ? (Array.isArray(qaRep.checks) ? qaRep.checks : []).filter((c) => c && c.passed === false) : []
     for (const c of qaFailed.slice(0, 4)) {
       warnUser('motion_qa', `⚠ 成片质检未通过：${c.name || c.id || '未命名检查'}${c.value ? ` — ${String(c.value).slice(0, 180)}` : ''}`)
+      // where it happens (e.g. the held-picture check lists each long hold with its time range and scene ids)
+      for (const d of (Array.isArray(c.details) ? c.details : []).slice(0, 6)) appendLog('motion_qa', `   · ${String(d).slice(0, 200)}`)
     }
     if (qaRep && qaRep.passed === false && qaFailed.length === 0) warnUser('motion_qa', '⚠ 成片质检未通过（详见 output/qa_report.json）')
     // checks that passed at the limit (severity "warning", e.g. flashes at exactly 3/s) are shown as hints, not failures
@@ -1749,8 +1834,42 @@ export async function runWithBillingGuard(runner, run, helpers) {
   }
 }
 
+// 大模型用量 groups calls without their own purpose by the stage that made them
+const USAGE_STAGE_ZH = { 't-director': '策划分镜', 't-editor': '素材剪辑', 't-audio': '配音配乐', 't-avatar': '数字人', 't-motion': '画面代码与质检', 't-render': '渲染与质检' }
+
 function executeMultiAgentRunnerGuarded(run, helpers) {
-  return runWithBillingGuard(executeMultiAgentRunner, run, helpers)
+  // 大模型用量: every model call of this run (planning, scene code, 画面自检, repairs …) is counted and summed up in the
+  // log and output/llm-usage.json at the end — also when the run stops early, since those calls were made too
+  const ledger = createLlmUsageLedger()
+  const tracked = {
+    ...helpers,
+    updateTask: (id, patch, ...rest) => {
+      if (patch?.status === 'running' && USAGE_STAGE_ZH[id]) ledger.stage = USAGE_STAGE_ZH[id]
+      return helpers.updateTask(id, patch, ...rest)
+    },
+  }
+  const report = () => {
+    const s = ledger.summary()
+    if (!s.calls) return
+    run.llmUsage = s
+    for (const line of formatLlmUsageSummary(s)) helpers.appendLog(undefined, line)
+    const dir = run.spec?.projectDir || run.projectDir
+    if (!dir) return
+    try {
+      mkdirSync(join(resolve(dir), 'output'), { recursive: true })
+      writeFileSync(join(resolve(dir), 'output', 'llm-usage.json'), JSON.stringify({ at: new Date().toISOString(), runId: run.id || '', ...s }, null, 2) + '\n', 'utf8')
+    } catch {}
+  }
+  return runWithLlmUsage(ledger, () => runWithBillingGuard(executeMultiAgentRunner, run, tracked)).then(
+    (res) => {
+      report()
+      return res
+    },
+    (err) => {
+      report()
+      throw err
+    },
+  )
 }
 
 // Register default runner factory so historical persisted runs remain retryable across daemon restarts
@@ -1761,6 +1880,18 @@ taskManager.setDefaultRunnerFactory(() => executeMultiAgentRunnerGuarded)
  */
 function createNormalizedPipelineRun(spec = {}) {
   if (!spec.projectDir) throw new Error('projectDir is required')
+  spec.productionType = normalizeProductionType(spec.productionType)
+  if (spec.productionType === 'talk-edit') {
+    const title = String(spec.displayTitle || spec.title || '').trim()
+    return taskManager.createRun({
+      projectDir: spec.projectDir,
+      title: `口播剪辑 · ${title || '真人出镜视频'}`,
+      topic: title,
+      mode: 'talk-edit',
+      spec,
+      subtasks: TALK_EDIT_SUBTASKS,
+    })
+  }
   const { modeLabel, mode } = resolvePipelineMode(spec.mode)
   const briefView = splitDirectorBrief(spec)
   return taskManager.createRun({

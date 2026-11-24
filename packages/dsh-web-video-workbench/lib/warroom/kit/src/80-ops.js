@@ -367,7 +367,12 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
     if (stage === 'motion_qa' || stage === 'motion' || stage === 'render') return /渲染|MP4|导出|成品|编码|响度|质检报告/i.test(text) ? 'qa' : 'motion'
     return 'system'
   }
-  const runModeLabel = (r) => (/draft/i.test(String((r && r.mode) || '')) ? '极速本地出片' : 'AI 团队协同出片')
+  const runModeLabel = (r) => {
+    const m = String((r && r.mode) || '')
+    return m === 'talk-edit' ? '口播剪辑（本地）' : /draft/i.test(m) ? '极速本地出片' : 'AI 团队协同出片'
+  }
+  /** runs that never call a paid model: local drafts and 口播剪辑 */
+  const isLocalRun = (r) => /draft|talk-edit/i.test(String((r && r.mode) || ''))
   const CONTROL_OK = { pause: '已暂停任务', resume: '已恢复执行', stop: '已停止任务与子进程', retry: '已发起重新执行', 'pause-all': '已全部暂停', 'stop-all': '已紧急停止全部任务' }
   const BILLING_GUIDE = '为避免重复扣费，系统不会自己重跑。请先到对应平台充值，再点「重新执行」；已完成的步骤与已付费的云端素材会被复用。'
 
@@ -449,13 +454,13 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
 
   async function confirmRetry(run, task) {
     const billing = run.errorKind === 'billing'
-    const draft = /draft/i.test(String(run.mode || ''))
+    const draft = isLocalRun(run)
     const parts = []
     if (task) parts.push(`将从「${task.name || task.id}」重新执行，并重做它之后的全部步骤。`)
     else if (run.status === 'completed') parts.push('将重新执行整条出片流水线，新成片会覆盖当前的 output/final.mp4。')
     else parts.push('将从失败 / 停止的步骤继续执行，已完成的步骤会被复用。')
     if (billing) parts.push('这次任务是因为账户余额不足而停止的：请先确认已经到对应平台充值，否则会再次停止。')
-    parts.push(draft ? '本地极速草稿模式，不消耗大模型额度。' : 'AI 团队协同模式会再次调用大模型 / 云端服务（会消耗少量额度）。')
+    parts.push(run.mode === 'talk-edit' ? '口播剪辑在本机运行（本地语音识别 + 剪辑），不消耗大模型额度。' : draft ? '本地极速草稿模式，不消耗大模型额度。' : 'AI 团队协同模式会再次调用大模型 / 云端服务（会消耗少量额度）。')
     return PK.confirm({ title: task ? '从这一步重新执行？' : '重新执行这次出片？', text: parts.join('\n'), ok: '重新执行' })
   }
 
@@ -679,15 +684,23 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
     PK.needProject()
     const d = curDirector()
     const draft = d.creationMode === 'fast-draft'
+    const talk = d.productionType === 'talk-edit'
     const topic = String(d.topic || '').trim()
     const ok = await PK.confirm({
       title: '启动一键出片？',
-      text: h(
-        'div',
-        null,
-        h('p.pk-text', null, `创作模式：${draft ? '本地极速草稿（零配置、不消耗额度）' : 'AI 团队协同（会调用大模型，消耗少量额度）'}`),
-        h('p.pk-text.pk-text--muted', null, topic ? `创意需求：${U.trimText(topic, 120)}` : '还没有写创意需求，AI 会按工程标题和素材自动构思。'),
-      ),
+      text: talk
+        ? h(
+            'div',
+            null,
+            h('p.pk-text', null, '作品类型：口播剪辑（用你上传的真人出镜视频：自动去停顿 / 口头禅 / 重录，配真实字幕和轻音乐）'),
+            h('p.pk-text.pk-text--muted', null, '全部在本机完成：本地语音识别 + 剪辑，不调用大模型、不花钱。'),
+          )
+        : h(
+            'div',
+            null,
+            h('p.pk-text', null, `创作模式：${draft ? '本地极速草稿（零配置、不消耗额度）' : 'AI 团队协同（会调用大模型，消耗少量额度）'}`),
+            h('p.pk-text.pk-text--muted', null, topic ? `创意需求：${U.trimText(topic, 120)}` : '还没有写创意需求，AI 会按工程标题和素材自动构思。'),
+          ),
       ok: '立即出片',
     })
     if (!ok) return
@@ -885,6 +898,8 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
   const transitionLabel = (x) => (TRANSITION_NAMES[x] ? `${TRANSITION_NAMES[x]}` : String(x))
   const tplCover = (t) => (t && (t.coverUrl || t.coverFile) ? PK.routeUrl('plaza/cover', { id: t.id }) : '')
   const tplPreview = (t) => (t && (t.previewUrl || t.hasPreview) ? PK.routeUrl('plaza/preview', { id: t.id, v: t.previewBytes || t.previewDurationSec || '' }) : '')
+  // 可填空模板: templates that ship their storyboard (the detail view knows the exact scene count)
+  const fillable = (t, L) => Boolean(t) && (L && L.detail && L.detail.template && L.detail.template.id === t.id ? U.num(L.detail.sceneCount, 0) > 0 : U.num(t.shotCount, 0) > 0)
   const tplVertical = (t) => /^9\s*:\s*16$/.test(String((t && t.aspectRatio) || '').trim())
   const tplMetaLine = (t) =>
     [
@@ -1047,7 +1062,7 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
       actions: [
         ui.btn('一键套用同款', () => applyTemplate(ctx, t, false), { kind: 'primary', size: 'sm', icon: 'wand', busyText: '套用中…', disabled: !PK.hasProject(), title: PK.hasProject() ? '把这个模板的节奏、配色与 MOTION.md 蓝图套用到当前工程' : '先新建或打开一个工程才能套用' }),
         ui.btn(prev ? '样片' : '详情', () => openPlazaDetail(ctx, t.id), { size: 'sm', icon: prev ? 'play' : 'eye' }),
-        ui.btn('MOTION.md', () => openPlazaDetail(ctx, t.id), { size: 'sm', kind: 'ghost', icon: 'code' }),
+        fillable(t) ? ui.btn('填空套用', () => PK.open('templateFill', { templateId: t.id }), { size: 'sm', icon: 'edit', disabled: !PK.hasProject(), title: PK.hasProject() ? '保留模板的镜头、节奏和音效，把文字、图片、视频和配乐换成你自己的' : '先新建或打开一个工程才能套用' }) : ui.btn('MOTION.md', () => openPlazaDetail(ctx, t.id), { size: 'sm', kind: 'ghost', icon: 'code' }),
       ],
     })
   }
@@ -1939,6 +1954,7 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
           ui.hint(PK.hasProject() ? `套用到：${(s.project && s.project.title) || '当前工程'}` : '先新建或打开工程才能套用'),
           ui.spacer(),
           t ? ui.btn('连同分镜一起套用', () => applyTemplate(ctx, t, true), { icon: 'layers', busyText: '套用中…', disabled: !PK.hasProject(), title: '用模板的分镜替换当前分镜（会覆盖）' }) : null,
+          t && fillable(t, L) ? ui.btn('填空套用', () => PK.open('templateFill', { templateId: t.id }), { icon: 'edit', disabled: !PK.hasProject(), title: '保留模板的镜头、节奏和音效，把文字、图片、视频和配乐换成你自己的' }) : null,
           t ? ui.btn('一键套用同款基因', () => applyTemplate(ctx, t, false), { kind: 'primary', icon: 'wand', busyText: '套用中…', disabled: !PK.hasProject() }) : null,
         ])
         return plazaDetailView(ctx)
@@ -2213,10 +2229,53 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
       [rs.bpm ? String(Math.round(rs.bpm)) : '—', '音乐 BPM'],
       [String(rs.dropsCount || (rs.drops || []).length || 0), '高潮突降'],
     ]
+    // 看图 (vision): did a model look at the contact sheet, and if not, why — in plain words (visionStatus comes from
+    // the shared capability check; analyses saved before it existed only say whether a model looked)
+    const fromPlaza = Boolean(rs.plazaTemplateId && !rs.sourceRelPath)
+    const vs = rs.visionStatus && typeof rs.visionStatus === 'object' && rs.visionStatus.code ? rs.visionStatus : null
+    const looked = Boolean(rs.visionAnalyzed)
+    const visModel = String(rs.visionModel || (vs && vs.model) || '')
+    const visQuiet = Boolean(vs && (vs.code === 'disabled' || vs.code === 'user-off'))
+    const openVision = () => PK.open('keys', { tab: 'llm', focus: 'vision' })
+    const visTip = vs ? [vs.reason, vs.fix ? `怎么办：${vs.fix}` : ''].filter(Boolean).join('\n') : ''
+    const visionPill = fromPlaza
+      ? ui.pill('影核广场模板基因', 'acc')
+      : looked
+        ? ui.pill(`AI 看图已拆解${visModel ? ` · ${visModel}` : ''}`, 'ok', { title: '画风、人物、特效与转场由看图模型看过 9 宫格关键帧后拆解；镜头数、节奏与 BPM 是本地实测。' })
+        : vs
+          ? ui.pill(vs.short || '没有用 AI 看图', visQuiet ? 'mute' : 'warn', { title: visTip })
+          : ui.pill('本地实测', 'mute', { title: '这份基因由较早的版本拆解，没有记录当时为什么没有让 AI 看图。点「重新拆解」会重新确认当前模型能不能看图。' })
+    const visionNote = fromPlaza || looked
+      ? null
+      : vs
+        ? ui.note(
+            h('div.pk-stack', { style: { gap: '4px' } }, ui.text(vs.reason || vs.short || ''), vs.fix ? ui.text(`怎么办：${vs.fix}`) : null, ui.hint('镜头数、平均镜长、快切、BPM 与高潮点仍是本地实测，数据准确。')),
+            {
+              level: visQuiet ? 'info' : 'warn',
+              title: vs.used ? 'AI 看图这次没有成功，已改用本地测量结果' : '这次没有让 AI 看图，已用本地测量结果',
+              actions: [
+                ui.btn('看图能力设置', openVision, { size: 'sm', icon: 'settings' }),
+                videoRel ? ui.btn('重新拆解', () => reanalyzeReference(videoRel).catch((err) => PK.reportError(err, '重新拆解失败')), { size: 'sm', icon: 'retry', busyText: '拆解中…', disabled: Boolean(REF.job) }) : null,
+              ].filter(Boolean),
+            },
+          )
+        : ui.note(
+            rs.visionError
+              ? `看图模型这次没有成功（${String(rs.visionError).slice(0, 160)}），已用本地测量结果生成复刻基因，节奏数据仍然准确。`
+              : '这份基因只用了本地实测（镜头数、节奏、BPM 都准确），画风与特效描述没有经过 AI 看图。点「重新拆解」会重新确认当前模型能不能看图。',
+            {
+              level: rs.visionError ? 'warn' : 'info',
+              title: rs.visionError ? 'AI 看图拆解未完成' : '本地实测',
+              actions: [
+                ui.btn('看图能力设置', openVision, { size: 'sm', icon: 'settings' }),
+                videoRel ? ui.btn('重新拆解', () => reanalyzeReference(videoRel).catch((err) => PK.reportError(err, '重新拆解失败')), { size: 'sm', icon: 'retry', busyText: '拆解中…', disabled: Boolean(REF.job) }) : null,
+              ].filter(Boolean),
+            },
+          )
     return [
       refJobNote(),
       REF.lastError && !REF.job ? ui.note(REF.lastError, { level: 'error', title: '上一次拆解没有成功', actions: [ui.btn('知道了', () => ((REF.lastError = ''), ctx.render()), { size: 'sm' })] }) : null,
-      rs.visionError ? ui.note(`视觉大模型这次没有成功（${rs.visionError}），已用本地测量结果生成复刻基因，节奏数据仍然准确。`, { level: 'warn', title: 'AI 视觉拆解未完成' }) : null,
+      visionNote,
       rs.plazaTemplateId && !rs.sourceRelPath
         ? ui.note(
             `这份同款复刻基因来自影核广场模板「${rs.title || rs.genreLabel || rs.plazaTemplateId}」，不是上传的参考视频，所以没有关键帧与实测镜头切点。${
@@ -2250,11 +2309,7 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
               title: rs.title || rs.genreLabel || '同款复刻基因',
               en: 'STYLE DNA',
               icon: 'target',
-              actions: [
-                rs.plazaTemplateId && !rs.sourceRelPath
-                  ? ui.pill('影核广场模板基因', 'acc')
-                  : ui.pill(rs.visionAnalyzed ? `AI 视觉已拆解${rs.visionModel ? ` · ${rs.visionModel}` : ''}` : '本地实测（未调用视觉大模型）', rs.visionAnalyzed ? 'ok' : 'mute'),
-              ],
+              actions: [visionPill],
             },
             ui.kv(
               [
@@ -3264,7 +3319,8 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
     const topic = String(d0.topic || script.displayTitle || script.title || (s.project && s.project.title) || '品牌与产品实战介绍').trim()
     const tone = PK.optionLabel('styles', d0.style, d0.style || 'tech')
     const prev = TELE.text
-    const d = await PK.post('teleprompter/generate', { projectDir: dir, topic, durationSec: TELE.durationSec, tone }, { timeout: 120000 })
+    // one model call on the server (the shared model time limit) — the panel waits for it instead of giving up first
+    const d = await PK.post('teleprompter/generate', { projectDir: dir, topic, durationSec: TELE.durationSec, tone }, { timeout: PK.llmTimeout() })
     const text = String((d && (d.text || (d.lines || []).join('\n\n'))) || '').trim()
     if (!text) throw new PK.Error('AI 没有返回提词稿，请稍后再试')
     TELE.text = text

@@ -7,10 +7,16 @@
  *        (writes only inside <project>/output/: outputPath is relative to it, absolute / .. / UNC paths → 400; an existing
  *        file is never replaced unless overwrite: true → 409 OUTPUT_EXISTS; the default name gets -2, -3 … instead)
  *   POST /api/video-workbench/qa-deep    { projectDir, mp4Path?, freezeThresholdSec? } (QA incl. determinism check)
+ *   POST /api/video-workbench/delivery/save-as { projectDir, rel, suggestedName?, what? }
+ *        (「另存为」: shows this computer's own Save-As window and copies the project file `rel` to the place picked there;
+ *        the destination never comes from the request — see save-dialog.js. Answers { ok, cancelled } or
+ *        { ok, savedPath, fileName, bytes }; NATIVE_DIALOG_UNAVAILABLE (501) / NATIVE_DIALOG_REMOTE (403) /
+ *        NATIVE_DIALOG_BUSY (409) tell the kit to fall back to a plain download)
  * Every generated file is also returned as an `/api/video-workbench/asset` URL when it lives inside the project.
  */
 import { relative, resolve } from 'node:path'
 import { readScriptJson } from '../../shared/index.js'
+import { SaveAsError, saveDeliverableAs } from './save-dialog.js'
 import {
   applyProjectColorLut,
   exportProjectPackage,
@@ -24,6 +30,7 @@ export const DELIVERY_ROUTES = Object.freeze([
   { path: '/api/video-workbench/scopes', methods: ['POST'] },
   { path: '/api/video-workbench/color-lut', methods: ['GET', 'POST'] },
   { path: '/api/video-workbench/qa-deep', methods: ['POST'] },
+  { path: '/api/video-workbench/delivery/save-as', methods: ['POST'] },
 ])
 
 const DELIVERY_PATHS = new Set(DELIVERY_ROUTES.map((r) => r.path))
@@ -147,6 +154,26 @@ export async function handleDeliveryApiRequest(req, url = new URL(req.url, 'http
       freezeThresholdSec: body.freezeThresholdSec,
     })
     return json({ ok: true, qa })
+  }
+
+  if (pathname === '/api/video-workbench/delivery/save-as') {
+    if (req.method !== 'POST') return json({ ok: false, error: '仅支持 POST' }, 405)
+    const raw = await readBody(req)
+    const body = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+    try {
+      // only these fields are read: a destination path in the body would be ignored (it comes from the dialog)
+      const res = await saveDeliverableAs({
+        projectDir: body.projectDir,
+        rel: body.rel,
+        suggestedName: typeof body.suggestedName === 'string' ? body.suggestedName : '',
+        what: typeof body.what === 'string' ? body.what : '',
+        request: req,
+      })
+      return json({ ok: true, ...res })
+    } catch (err) {
+      if (err instanceof SaveAsError) return json({ ok: false, error: err.message, code: err.code }, err.status)
+      throw err
+    }
   }
 
   return null

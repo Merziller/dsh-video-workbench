@@ -16,7 +16,9 @@ import {
   PRIMARY_SANS_STACK,
   resolveSafeZoneSpec,
 } from '../shared/index.js'
+import { normalizeSceneCuts } from './beat-analyzer.js'
 import { scheduleFlashBudget } from './flash-budget.js'
+import { mascotBox } from './talk-mascot.js'
 
 const PALETTES = {
   tech: {
@@ -212,7 +214,11 @@ function buildMediaTag(m, idx, isPrimary = true) {
   const isVid = m.type === 'video' || /\.(mp4|mov|webm|mkv)$/i.test(rawPath)
   const cls = isPrimary ? 'k-media-el k-primary-media' : `k-media-el k-extra-media k-extra-${idx}`
   if (isVid) {
-    return `<video class="${cls}" src="${escapeHtml(src)}" muted playsinline preload="auto" data-motion="${escapeHtml(m.motion || 'zoom-in')}"></video>`
+    // the chosen window of a long upload: the runtime seeks inside [trim-start, trim-end) only
+    const ts = Math.max(0, Number(m.trimStartSec) || 0)
+    const te = Number(m.trimEndSec) > ts + 0.1 ? Number(m.trimEndSec) : 0
+    const trimAttrs = `${ts > 0 ? ` data-trim-start="${ts.toFixed(3)}"` : ''}${te > 0 ? ` data-trim-end="${te.toFixed(3)}"` : ''}`
+    return `<video class="${cls}" src="${escapeHtml(src)}" muted playsinline preload="auto" data-motion="${escapeHtml(m.motion || 'zoom-in')}"${trimAttrs}></video>`
   }
   return `<img class="${cls}" src="${escapeHtml(src)}" alt="" data-motion="${escapeHtml(m.motion || 'zoom-in')}">`
 }
@@ -447,7 +453,13 @@ function renderSceneTemplateHtml(scene, idx, total, theme) {
 
   // Main layout inner composition
   let contentHtml = ''
-  if (layout === '3d-stage-opener') {
+  if (layout === 'presenter' && scene.presenter?.path) {
+    // 口播剪辑: the cut recording itself, full frame (the runtime seeks it to presenter.startFrame + the scene time);
+    // no title card, camera move or HUD — the person and the real captions are the picture
+    const pres = scene.presenter
+    const fit = pres.fit === 'contain' ? 'contain' : 'cover'
+    contentHtml = `<div class="k-presenter" style="position:absolute;inset:0;background:#000;"><video class="k-media-el k-presenter-video" src="${escapeHtml(String(pres.path).replace(/\\/g, '/'))}" data-start-frame="${Math.max(0, Math.round(Number(pres.startFrame) || 0))}" muted playsinline preload="auto" style="position:absolute;inset:0;width:100%;height:100%;object-fit:${fit};"></video></div>`
+  } else if (layout === '3d-stage-opener') {
     contentHtml = `
       ${backdropMediaHtml}
       ${depthStageHtml}
@@ -857,6 +869,112 @@ export function planHtmlFlashBudget({ timeline = [], beats = [], fps = 30, scrip
   return scheduleFlashBudget({ fps, candidates, cutFrames })
 }
 
+/**
+ * 口播包装 in the HTML draft (the studio's free live preview): B-roll cutaways, keyword pops, chapter banners, the
+ * progress bar and the lower third — the same timing as the Remotion talk kit, simpler motion. Animated by the
+ * runtime's `updateTalkPack(t)`; B-roll clips are seeked with the scene videos.
+ */
+function buildTalkPackLayer(script, width, height, totalSec) {
+  const tp = script?.talkPack
+  if (!tp || !tp.theme) return { html: '', css: '' }
+  const th = tp.theme
+  const portrait = width < height
+  const num = (v) => Number(Number(v || 0).toFixed(3))
+  const rel = (p) => escapeHtml(String(p || '').replace(/\\/g, '/').replace(/^\/+/, ''))
+  const kwFont = portrait ? Math.round(width * 0.085) : Math.round(width * 0.046)
+  const chFont = portrait ? Math.round(width * 0.05) : Math.round(width * 0.024)
+  const ltFont = portrait ? Math.round(width * 0.055) : Math.round(width * 0.028)
+  const broll = (Array.isArray(tp.broll) ? tp.broll : [])
+    .map((b) => {
+      const isVid = b.type === 'video' || /\.(mp4|mov|webm|mkv)$/i.test(String(b.path || ''))
+      const media = isVid
+        ? `<video class="k-tp-broll-v" src="${rel(b.path)}" muted playsinline preload="auto" data-trim-start="${num(b.inSec)}"></video>`
+        : `<img src="${rel(b.path)}" alt="">`
+      return `<div class="k-tp-it k-tp-broll" data-kind="broll" data-s="${num(b.startSec)}" data-e="${num(b.endSec)}">${media}</div>`
+    })
+    .join('')
+  const ticks = (Array.isArray(tp.chapters) ? tp.chapters : [])
+    .filter((c) => Number(c.index) > 1 && totalSec > 0)
+    .map((c) => `<em style="left:${((Number(c.startSec) / totalSec) * 100).toFixed(3)}%"></em>`)
+    .join('')
+  const prog = tp.progressBar ? `<div class="k-tp-prog"><i></i>${ticks}</div>` : ''
+  const chapters = (Array.isArray(tp.chapters) ? tp.chapters : [])
+    .map((c) => `<div class="k-tp-it k-tp-ch" data-kind="ch" data-s="${num(c.startSec)}" data-e="${num(Number(c.startSec) + 2.4)}"><b>${String(c.index).padStart(2, '0')}</b><span>${escapeHtml(c.title)}</span></div>`)
+    .join('')
+  const kws = (Array.isArray(tp.keywords) ? tp.keywords : [])
+    .map((k, i) => `<div class="k-tp-it k-tp-kw k-tp-kw--${escapeHtml(th.keywordStyle || 'card')} ${i % 2 ? 'is-r' : 'is-l'}" data-kind="kw" data-i="${i}" data-s="${num(k.startSec)}" data-e="${num(Math.max(Number(k.endSec), Number(k.startSec) + 0.9))}">${escapeHtml(k.text)}</div>`)
+    .join('')
+  const lt = tp.lowerThird && String(tp.lowerThird.name || '').trim()
+    ? `<div class="k-tp-it k-tp-lt" data-kind="lt" data-s="0.6" data-e="${num(Math.min(totalSec || 4.2, 4.2))}"><b>${escapeHtml(tp.lowerThird.name)}</b>${tp.lowerThird.title ? `<span>${escapeHtml(tp.lowerThird.title)}</span>` : ''}</div>`
+    : ''
+  // 卡通讲解员: the cut-out character in a corner, posed every frame by the runtime (same formula as the talk kit)
+  const m = tp.mascot && tp.mascot.path ? tp.mascot : null
+  let mascot = ''
+  let mascotCss = ''
+  if (m) {
+    const b = mascotBox(m, width, height)
+    const isVid = m.type === 'video'
+    const pct = (v) => `${(Math.max(0, Number(v) || 0) * 100).toFixed(3)}%`
+    const patch = (cls, src, box, attrs = '') =>
+      box && src ? `<img class="${cls}" src="${rel(src)}" alt=""${attrs} style="left:${pct(box.x)};top:${pct(box.y)};width:${pct(box.w)};height:${pct(box.h)};opacity:0">` : ''
+    let media
+    if (m.type === 'anime-clip') {
+      // 「我的动漫形象」 (local model / cloud): the talking clip plays once from the start of the cut
+      media = `<video src="${rel(m.path)}" muted playsinline preload="auto" data-clip="1"></video>`
+    } else if (m.type === 'anime') {
+      // 「我的动漫形象」 free tier: the portrait + mouth / blink pictures switched per frame by the runtime
+      const mouths = (m.sprites && m.sprites.mouths) || {}
+      const boxes = (m.sprites && m.sprites.boxes) || {}
+      media = `<div class="k-tp-face"><img src="${rel(m.path)}" alt="">${Object.entries(mouths)
+        .map(([shape, file]) => patch('k-tp-patch', file, boxes.mouth, ` data-shape="${escapeHtml(shape)}"`))
+        .join('')}${patch('k-tp-patch', m.sprites && m.sprites.blink, boxes.blink, ' data-blink="1"')}</div>`
+    } else media = isVid ? `<video src="${rel(m.path)}" muted playsinline loop preload="auto" data-loop="${num(m.loopSec)}"></video>` : `<img src="${rel(m.path)}" alt="">`
+    const data = JSON.stringify({
+      type: m.type || 'image',
+      envHz: Number(m.envHz) || 12.5,
+      env: Array.isArray(m.env) ? m.env : [],
+      words: Array.isArray(m.words) ? m.words : [],
+      loopSec: Number(m.loopSec) || 0,
+      ...(m.type === 'anime' && m.visemes ? { visemes: { fps: Number(m.visemes.fps) || 30, shapes: String(m.visemes.shapes || ''), blinks: Array.isArray(m.visemes.blinks) ? m.visemes.blinks : [] } } : {}),
+      ...(m.type === 'anime-clip' ? { durationSec: Number(m.durationSec) || 0 } : {}),
+    }).replace(/</g, '\\u003c')
+    mascot = `${m.keyed !== false ? `<div class="k-tp-mascot-sh"></div>` : ''}<div class="k-tp-mascot${m.keyed !== false ? '' : ' is-card'}" data-h="${b.boxH}">${media}</div><script type="application/json" id="k-tp-mascot-data">${data}</script>`
+    mascotCss = `
+    .k-tp-mascot { position: absolute; left: ${b.left}px; bottom: ${b.bottom}px; width: ${b.boxW}px; height: ${b.boxH}px; transform-origin: 50% 100%; z-index: 2; filter: drop-shadow(0 6px 10px rgba(0,0,0,0.35)); }
+    .k-tp-mascot.is-card { border-radius: ${Math.round(b.boxW * 0.08)}px; overflow: hidden; border: 3px solid rgba(255,255,255,0.85); box-shadow: 0 14px 36px rgba(0,0,0,0.45); filter: none; }
+    .k-tp-mascot img, .k-tp-mascot video { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .k-tp-face { position: relative; width: 100%; height: 100%; }
+    .k-tp-mascot img.k-tp-patch { position: absolute; width: auto; height: auto; object-fit: fill; }
+    .k-tp-mascot-sh { position: absolute; left: ${Math.round(b.left + b.boxW * 0.12)}px; bottom: ${b.bottom - Math.round(b.boxH * 0.015)}px; width: ${Math.round(b.boxW * 0.76)}px; height: ${Math.round(b.boxH * 0.05)}px; border-radius: 50%; background: radial-gradient(closest-side, rgba(0,0,0,0.38), rgba(0,0,0,0)); z-index: 1; }`
+  }
+  // 录屏讲解 without captions: the voice and the picture carry the film
+  const captionCss = tp.captions === false ? '#sub-wrap { display: none !important; }' : ''
+  const html = `<div id="k-tp" class="layer" style="--tp-a:${escapeHtml(th.accent)};--tp-a2:${escapeHtml(th.accent2)};--tp-ink:${escapeHtml(th.ink)};--tp-panel:${escapeHtml(th.panel)};--tp-text:${escapeHtml(th.text)};--tp-r:${Number(th.radius) || 0}px">${broll}${prog}${chapters}${kws}${lt}${mascot}</div>`
+  const css = `${mascotCss}
+    ${captionCss}
+    #k-tp { pointer-events: none; z-index: 23; }
+    .k-tp-it { position: absolute; opacity: 0; will-change: opacity, transform; }
+    .k-tp-broll { inset: 0; background: #000; overflow: hidden; }
+    .k-tp-broll video, .k-tp-broll img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .k-tp-kw { top: ${portrait ? 17 : 14}%; font: 900 ${kwFont}px var(--font-sans, "Noto Sans SC", sans-serif); letter-spacing: 0.02em; line-height: 1.1; padding: ${Math.round(kwFont * 0.34)}px ${Math.round(kwFont * 0.54)}px; border-radius: var(--tp-r); white-space: nowrap; transform-origin: center; }
+    ${portrait ? '.k-tp-kw { left: 50%; }' : '.k-tp-kw.is-l { left: 6%; transform-origin: left center; } .k-tp-kw.is-r { right: 6%; transform-origin: right center; }'}
+    .k-tp-kw--card { background: var(--tp-panel); color: var(--tp-a); box-shadow: 0 12px 32px rgba(0,0,0,0.35); }
+    .k-tp-kw--sticker { background: var(--tp-panel); color: var(--tp-a); box-shadow: 0 ${Math.round(kwFont * 0.12)}px 0 var(--tp-a2), 0 10px 28px rgba(0,0,0,0.35); }
+    .k-tp-kw--bar { background: var(--tp-panel); color: var(--tp-text); border-left: ${Math.round(kwFont * 0.16)}px solid var(--tp-a); }
+    .k-tp-kw--underline { color: var(--tp-text); text-shadow: 0 4px 16px rgba(0,0,0,0.8); border-bottom: ${Math.max(4, Math.round(kwFont * 0.1))}px solid var(--tp-a); border-radius: 0; }
+    .k-tp-ch { top: ${portrait ? 7.5 : 6}%; left: 4%; display: flex; align-items: center; gap: ${Math.round(chFont * 0.5)}px; font-family: var(--font-sans, "Noto Sans SC", sans-serif); }
+    .k-tp-ch b { background: var(--tp-a); color: var(--tp-ink); font-weight: 900; font-size: ${Math.round(chFont * 1.1)}px; padding: ${Math.round(chFont * 0.2)}px ${Math.round(chFont * 0.45)}px; border-radius: var(--tp-r); }
+    .k-tp-ch span { background: var(--tp-panel); color: var(--tp-text); font-weight: 800; font-size: ${chFont}px; padding: ${Math.round(chFont * 0.28)}px ${Math.round(chFont * 0.6)}px; border-radius: var(--tp-r); text-shadow: 0 3px 12px rgba(0,0,0,0.6); }
+    .k-tp-prog { position: absolute; top: 0; left: 0; right: 0; height: ${portrait ? 8 : 6}px; background: rgba(255,255,255,0.18); }
+    .k-tp-prog i { display: block; height: 100%; width: 0; background: var(--tp-a); }
+    .k-tp-prog em { position: absolute; top: 0; width: ${portrait ? 4 : 3}px; height: 100%; background: rgba(0,0,0,0.75); }
+    .k-tp-lt { left: 5%; bottom: ${portrait ? 30 : 20}%; font-family: var(--font-sans, "Noto Sans SC", sans-serif); }
+    .k-tp-lt b { display: inline-block; background: var(--tp-a); color: var(--tp-ink); font-weight: 900; font-size: ${ltFont}px; padding: ${Math.round(ltFont * 0.18)}px ${Math.round(ltFont * 0.5)}px; border-radius: var(--tp-r); }
+    .k-tp-lt span { display: block; width: max-content; margin-top: ${Math.round(ltFont * 0.2)}px; background: var(--tp-panel); color: var(--tp-text); font-weight: 700; font-size: ${Math.round(ltFont * 0.62)}px; padding: ${Math.round(ltFont * 0.14)}px ${Math.round(ltFont * 0.45)}px; border-radius: var(--tp-r); }
+  `
+  return { html, css }
+}
+
 export function buildRichHtmlVideo(script) {
   const theme = { ...resolvePalette(script), brandMark: script?.brandMark || '' }
   const scenes = Array.isArray(script?.scenes) ? script.scenes : []
@@ -909,6 +1027,8 @@ export function buildRichHtmlVideo(script) {
       actionMode: String(s.actionMode || ''),
       actionEvents: Array.isArray(s.actionEvents) ? s.actionEvents.map((e) => ({ frame: Number(e.frame) || 0, kind: String(e.kind || ''), intensity: Number(e.intensity) || 0.9 })) : [],
       subtitles: Array.isArray(s.subtitles) ? s.subtitles : [],
+      // sub-shots (beat-analyzer.js contract): the runtime re-frames the picture at every cut
+      cuts: normalizeSceneCuts(s.cuts, durFrames),
       counterTarget: Number(s.counterTarget) || 96,
       workflowSteps: Array.isArray(s.workflowSteps) ? s.workflowSteps : Array.isArray(script?.workflowSteps) ? script.workflowSteps : [],
       hudStep: Number.isFinite(Number(s.hudStep)) ? Number(s.hudStep) : -1,
@@ -932,6 +1052,7 @@ export function buildRichHtmlVideo(script) {
     })
   })
   const templatesHtml = scenes.map((s, idx) => renderSceneTemplateHtml(s, idx, scenes.length, theme)).join('\n  ')
+  const talkPack = buildTalkPackLayer(script, width, height, totalFrames / Math.max(1, fps))
 
   const payloadJson = JSON.stringify({
     fps,
@@ -1584,6 +1705,7 @@ export function buildRichHtmlVideo(script) {
     .k-app-split, .k-dash-grid, .k-wf-row, .k-trio-row { flex-direction: column; }
     .k-fan-card { width: 170px; height: 245px; }
     ` : ''}
+    ${talkPack.css}
   </style>
 </head>
 <body>
@@ -1599,6 +1721,7 @@ export function buildRichHtmlVideo(script) {
     <canvas id="trc" class="layer" width="${width}" height="${height}"></canvas>
     <div id="flash" class="layer"></div>
     <div id="fx-strobe" class="layer"></div>
+    ${talkPack.html}
     <div id="chrome-hud" class="layer">
       <div id="c-tl" class="k-corner"></div>
       <div id="c-tr" class="k-corner"></div>
@@ -1689,6 +1812,16 @@ export function buildRichHtmlVideo(script) {
     const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
     const lerp = (a, b, x) => a + (b - a) * x;
     const pr = (t, a, b) => clamp((t - a) / Math.max(1e-5, b - a));
+    // Sub-shots (scene.cuts, contiguous scene-local frames): a hard re-frame of the whole picture at every cut —
+    // [zoom, focus x, focus y] per framing, same numbers as the Remotion engine — never a flash
+    const CUT_SPEC = { wide: [1, 0.5, 0.5], medium: [1.18, 0.5, 0.48], close: [1.36, 0.5, 0.42], detail: [1.56, 0.5, 0.5], low: [1.26, 0.5, 0.8], high: [1.26, 0.5, 0.22] };
+    function cutAt(meta, lf) {
+      const cuts = meta && Array.isArray(meta.cuts) ? meta.cuts : null;
+      if (!cuts || cuts.length < 2) return null;
+      let k = cuts.length - 1;
+      while (k > 0 && lf < cuts[k].start) k--;
+      return { index: k, count: cuts.length, cut: cuts[k] };
+    }
     const hash = (n) => { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
     const noise = (t) => { const i = Math.floor(t), f = t - i, u = f * f * (3 - 2 * f); return lerp(hash(i), hash(i + 1), u) * 2 - 1; };
     const EZ = {
@@ -2190,11 +2323,116 @@ export function buildRichHtmlVideo(script) {
       }
     }
 
+    // 口播包装 layer (B-roll / keyword pops / chapter banners / progress bar / lower third) on the global timeline
+    const tpEl = document.getElementById('k-tp');
+    const tpItems = tpEl ? [...tpEl.querySelectorAll('.k-tp-it')].map((el) => ({ el, kind: el.dataset.kind, s: Number(el.dataset.s) || 0, e: Number(el.dataset.e) || 0, i: Number(el.dataset.i) || 0, video: el.querySelector('video') })) : [];
+    const tpProg = tpEl ? tpEl.querySelector('.k-tp-prog i') : null;
+    const easeOut3 = (x) => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
+    // 卡通讲解员: pose formula identical to talk-mascot.js mascotPose / the Remotion talk kit
+    const tpMascot = tpEl ? tpEl.querySelector('.k-tp-mascot') : null;
+    const tpMascotSh = tpEl ? tpEl.querySelector('.k-tp-mascot-sh') : null;
+    const tpMascotVideo = tpMascot ? tpMascot.querySelector('video') : null;
+    let tpMascotData = null;
+    try {
+      const md = document.getElementById('k-tp-mascot-data');
+      tpMascotData = md ? JSON.parse(md.textContent || 'null') : null;
+    } catch (e) { tpMascotData = null; }
+    function mascotPose(m, t) {
+      const env = Array.isArray(m.env) ? m.env : [];
+      const hz = Number(m.envHz) || 12.5;
+      const x = Math.max(0, t * hz);
+      const k = Math.floor(x);
+      const a0 = (env[k] ?? 0) / 100;
+      const a1 = (env[k + 1] ?? env[k] ?? 0) / 100;
+      const amp = a0 + (a1 - a0) * (x - k);
+      const talk = Math.max(0, Math.min(1, (amp - 0.08) / 0.3));
+      const words = Array.isArray(m.words) ? m.words : [];
+      let lo = 0, hi = words.length - 1, wi = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (words[mid] <= t) { wi = mid; lo = mid + 1; } else hi = mid - 1;
+      }
+      const dt = wi >= 0 ? t - words[wi] : 99;
+      const pop = dt < 0.4 ? Math.exp(-dt * 8) * (1 - Math.exp(-dt * 55)) : 0;
+      const dir = wi % 2 === 0 ? 1 : -1;
+      const breathe = Math.sin((2 * Math.PI * t) / 3.4);
+      const sway = Math.sin((2 * Math.PI * t) / 5.3 + 0.8);
+      const gain = m.type === 'anime-clip' ? 0 : m.type === 'video' ? 0.5 : 1;
+      const ty = -gain * (0.016 * talk + 0.045 * pop);
+      const sy = 1 + gain * (0.012 * breathe * (1 - talk) + 0.05 * pop);
+      const sx = 1 - gain * 0.03 * pop;
+      const rot = gain * (0.9 * sway * (1 - talk) + dir * 2.6 * pop + 1.1 * talk * Math.sin(2 * Math.PI * t * 1.6));
+      return { ty, sx, sy, rot, shadow: 1 + ty * 2.2 };
+    }
+    // 「我的动漫形象」 free tier: mouth shape / eyelids per frame — the same as the Remotion talk kit's animeFace
+    const VISEME_MOUTH = { c: 'closed', h: 'half', a: 'a', o: 'o', i: 'i' };
+    function animeFace(m, t) {
+      const v = m.visemes || {};
+      const vf = Number(v.fps) || 30;
+      const shapes = String(v.shapes || '');
+      const k = Math.max(0, Math.floor(t * vf + 1e-6));
+      const mouth = VISEME_MOUTH[shapes.charAt(Math.min(k, Math.max(0, shapes.length - 1)))] || 'closed';
+      const len = Math.max(2, Math.round(vf * 0.1));
+      const blink = (Array.isArray(v.blinks) ? v.blinks : []).some((b) => k >= b && k < b + len);
+      return { mouth, blink };
+    }
+    const tpFacePatches = tpMascot ? [...tpMascot.querySelectorAll('.k-tp-patch')] : [];
+    function updateMascot(t) {
+      if (!tpMascot || !tpMascotData) return;
+      const p = mascotPose(tpMascotData, t);
+      const h = Number(tpMascot.dataset.h) || 1;
+      tpMascot.style.transform = 'translateY(' + (p.ty * h).toFixed(2) + 'px) rotate(' + p.rot.toFixed(3) + 'deg) scale(' + p.sx.toFixed(4) + ',' + p.sy.toFixed(4) + ')';
+      if (tpMascotSh) tpMascotSh.style.transform = 'scaleX(' + p.shadow.toFixed(3) + ')';
+      if (tpMascotData.type === 'anime' && tpFacePatches.length) {
+        const face = animeFace(tpMascotData, t);
+        for (const el of tpFacePatches) {
+          const on = el.dataset.blink ? face.blink : el.dataset.shape === face.mouth;
+          const op = on ? '1' : '0';
+          if (el.style.opacity !== op) el.style.opacity = op;
+        }
+      }
+    }
+    function updateTalkPack(t) {
+      if (!tpEl) return;
+      updateMascot(t);
+      const portrait = CFG.width < CFG.height;
+      for (const it of tpItems) {
+        const on = t >= it.s && t < it.e;
+        if (!on) {
+          if (it.el.style.opacity !== '0') it.el.style.opacity = '0';
+          continue;
+        }
+        const lt = t - it.s;
+        const rem = it.e - t;
+        if (it.kind === 'broll') {
+          it.el.style.opacity = Math.min(1, lt / 0.17, rem / 0.17).toFixed(3);
+          const zoom = 1 + 0.06 * Math.min(1, lt / Math.max(0.2, it.e - it.s));
+          const media = it.el.firstElementChild;
+          if (media) media.style.transform = 'scale(' + zoom.toFixed(4) + ')';
+        } else if (it.kind === 'kw') {
+          const k = easeOut3(lt / 0.28);
+          const rot = tpEl.querySelector('.k-tp-kw--sticker') ? (it.i % 2 ? 4 : -4) : 0;
+          it.el.style.opacity = Math.min(1, lt / 0.1, rem / 0.23).toFixed(3);
+          it.el.style.transform = (portrait ? 'translateX(-50%) ' : '') + 'scale(' + (0.55 + 0.45 * k).toFixed(3) + ') rotate(' + rot + 'deg)';
+        } else if (it.kind === 'ch') {
+          const k = easeOut3(lt / 0.35);
+          it.el.style.opacity = Math.min(1, rem / 0.27).toFixed(3);
+          it.el.style.transform = 'translateX(' + (-(1 - k) * CFG.width * 0.4).toFixed(1) + 'px)';
+        } else {
+          const k = easeOut3(lt / 0.4);
+          it.el.style.opacity = Math.min(1, rem / 0.33).toFixed(3);
+          it.el.style.transform = 'translateY(' + ((1 - k) * 30).toFixed(1) + 'px)';
+        }
+      }
+      if (tpProg) tpProg.style.width = (Math.min(1, t / Math.max(0.1, (CFG.totalFrames - 1) / CFG.fps)) * 100).toFixed(2) + '%';
+    }
+
     function renderFrameSync(frameNum) {
       const f = Math.max(0, Math.min(CFG.totalFrames - 1, Math.round(frameNum)));
       const t = f / CFG.fps;
       const pct = (f / Math.max(1, CFG.totalFrames - 1)) * 100;
       progFill.style.width = pct.toFixed(2) + '%';
+      updateTalkPack(t);
 
       let activeIdx = 0;
       for (let i = 0; i < CFG.timeline.length; i++) {
@@ -2216,7 +2454,8 @@ export function buildRichHtmlVideo(script) {
 
       // Global #world keyframe camera rig: directional pan/zoom + beat-locked combat shake + high-frequency strobe flash
       const isHeavyImpact = ['kinetic-impact', 'radial-climax', '3d-stage-opener', 'mosaic-pulse-wall', 'narrative-diorama'].includes(meta.layout) || CFG.narrationMode === 'subtitle-mv';
-      const camInt = Number.isFinite(Number(CFG.audioProfile?.cameraBeatIntensity)) ? Number(CFG.audioProfile.cameraBeatIntensity) : (isHeavyImpact ? 0.95 : 0.25);
+      // 口播剪辑 presenter shots: a steady camera (no beat shake, pan or punch on a person talking)
+      const camInt = meta.layout === 'presenter' ? 0 : Number.isFinite(Number(CFG.audioProfile?.cameraBeatIntensity)) ? Number(CFG.audioProfile.cameraBeatIntensity) : (isHeavyImpact ? 0.95 : 0.25);
       const isCombatMeta = /斩|杀|破|战|冲|马|骑|箭|刀|剑|枪|锋|交锋|突袭|决战|单于|匈奴/.test(String(meta.title || '') + ' ' + String(meta.narration || ''));
       const hasActionMeta = Boolean(meta.actionMode);
       const isCleanMeta = meta.actionMode === 'clean';
@@ -2254,15 +2493,30 @@ export function buildRichHtmlVideo(script) {
         kfScale = lerp(Number(ka.scale ?? 1), Number(kb.scale ?? 1), ke);
         kfRot = lerp(Number(ka.rotate || 0), Number(kb.rotate || 0), ke);
       } else if (camInt > 0.2) {
-        const dir = activeIdx % 4;
-        kfScale = dir % 2 === 0 ? lerp(1.0, 1.0 + 0.07 * camInt, p) : lerp(1.0 + 0.08 * camInt, 1.0, p);
-        kfX = dir === 0 ? lerp(-16 * camInt, 16 * camInt, p) : dir === 1 ? lerp(18 * camInt, -18 * camInt, p) : 0;
-        kfY = dir === 2 ? lerp(12 * camInt, -12 * camInt, p) : dir === 3 ? lerp(-12 * camInt, 12 * camInt, p) : 0;
+        // inside a sub-shot the gentle travel restarts and changes direction with every cut
+        const cutTr = cutAt(meta, localFrameN);
+        const segP = cutTr ? clamp((localFrameN - cutTr.cut.start) / Math.max(1, cutTr.cut.end - cutTr.cut.start - 1)) : p;
+        const dir = (activeIdx + (cutTr ? cutTr.index * 3 : 0)) % 4;
+        kfScale = dir % 2 === 0 ? lerp(1.0, 1.0 + 0.07 * camInt, segP) : lerp(1.0 + 0.08 * camInt, 1.0, segP);
+        kfX = dir === 0 ? lerp(-16 * camInt, 16 * camInt, segP) : dir === 1 ? lerp(18 * camInt, -18 * camInt, segP) : 0;
+        kfY = dir === 2 ? lerp(12 * camInt, -12 * camInt, segP) : dir === 3 ? lerp(-12 * camInt, 12 * camInt, segP) : 0;
       }
       const punch = camInt > 0.2 && pr(localT, 0, 0.34) < 1 ? (1 - EZ.out(pr(localT, 0, 0.34))) * (isCombatMeta ? 0.12 : 0.06) * camInt : 0;
       const camZoom = Math.max(1, kfScale + bpStrong * (isCombatMeta ? 0.048 : 0.018) * camInt + punch);
       const camRot = kfRot + (isCombatMeta && bpStrong > 0.5 ? Math.sin(t * 64) * 1.1 * camInt : 0);
-      worldEl.style.transform = 'translate(' + (kfX + shX + beatShakeX).toFixed(1) + 'px,' + (kfY + shY + beatShakeY).toFixed(1) + 'px) rotate(' + camRot.toFixed(2) + 'deg) scale(' + camZoom.toFixed(4) + ')';
+      // hard re-frame of the active sub-shot: zoom about its focus point (appended, so it applies inside the camera)
+      let reframe = '';
+      const cutRf = cutAt(meta, localFrameN);
+      if (cutRf) {
+        const spec = CUT_SPEC[cutRf.cut.framing] || CUT_SPEC.wide;
+        const age = localFrameN - cutRf.cut.start;
+        const settle = cutRf.index > 0 && age >= 0 && age < 8 ? Math.exp(-age * 0.5) * 0.03 : 0;
+        const sr = spec[0] * (1 + settle);
+        const fx = cutRf.cut.focus && Number.isFinite(Number(cutRf.cut.focus.x)) ? clamp(Number(cutRf.cut.focus.x)) : spec[1];
+        const fy = cutRf.cut.focus && Number.isFinite(Number(cutRf.cut.focus.y)) ? clamp(Number(cutRf.cut.focus.y)) : spec[2];
+        if (sr > 1.0005) reframe = ' translate(' + ((1 - sr) * (fx - 0.5) * CFG.width).toFixed(1) + 'px,' + ((1 - sr) * (fy - 0.5) * CFG.height).toFixed(1) + 'px) scale(' + sr.toFixed(4) + ')';
+      }
+      worldEl.style.transform = 'translate(' + (kfX + shX + beatShakeX).toFixed(1) + 'px,' + (kfY + shY + beatShakeY).toFixed(1) + 'px) rotate(' + camRot.toFixed(2) + 'deg) scale(' + camZoom.toFixed(4) + ')' + reframe;
       const strobeEl = document.getElementById('fx-strobe');
       if (strobeEl) {
         // one decaying pulse per cut (a double pulse is two flashes), only when the cut's flash was kept
@@ -2628,7 +2882,7 @@ export function buildRichHtmlVideo(script) {
 
       // Render Foreground VFX Canvas (#fxt)
       fxt.clearRect(0, 0, CFG.width, CFG.height);
-      drawHudTelemetryOverlay(fxt, f, t, activeIdx, CFG.timeline.length, beatPulse(t, false));
+      if (meta.layout !== 'presenter') drawHudTelemetryOverlay(fxt, f, t, activeIdx, CFG.timeline.length, beatPulse(t, false));
       if (meta.layout === 'radial-climax') {
         drawRadialLines(fxt, t, CFG.width / 2, CFG.height / 2, 0.65, CFG.rgbAccent);
         drawGlow(fxt, CFG.width / 2, CFG.height / 2, 420, CFG.rgbGold, 0.16 + beatPulse(t, true) * 0.1);
@@ -2653,18 +2907,25 @@ export function buildRichHtmlVideo(script) {
       // Synchronized Bottom Single-Line Subtitle
       const subs = meta.subtitles || [];
       let activeSub = null;
+      // on a shared boundary the line that starts there wins, so a chunk changes exactly on its cut
+      let activeStart = -Infinity;
       for (const sb of subs) {
-        if (localT >= Number(sb.startSec || 0) && localT <= Number(sb.endSec || 999)) {
+        const s0 = Number(sb.startSec || 0);
+        if (localT >= s0 && localT <= Number(sb.endSec || 999) && s0 >= activeStart) {
           activeSub = sb;
-          break;
+          activeStart = s0;
         }
       }
       if (!activeSub && subs.length > 0 && localT >= Number(subs[subs.length - 1].startSec || 0)) {
         activeSub = subs[subs.length - 1];
       }
+      const subCut = activeSub ? null : cutAt(meta, f - (meta.startFrame || 0));
       let txt = '';
       if (activeSub) {
         txt = activeSub.text;
+      } else if (subCut && subCut.cut.text) {
+        // a sub-shot's own subtitle chunk (scene.cuts[].text)
+        txt = subCut.cut.text;
       } else if (subs.length > 0) {
         txt = localT < Number(subs[0].startSec || 0) ? subs[0].text : subs[subs.length - 1].text;
       } else {
@@ -2803,35 +3064,231 @@ export function buildRichHtmlVideo(script) {
       }
     }
 
+    // Scene videos. Frame capture (?render=1) waits until the seeked picture is really on screen ('seeked' plus a
+    // presented video frame): a 70 ms guess left long-GOP clips showing the previous request's picture. The studio's
+    // live preview calls __seekToFrame on every tick: there a clip plays natively (muted — the voice is the studio's
+    // master audio) and is re-synced only on drift, and when the ticks stop it parks on the exact frame.
+    const CAPTURE_MODE = new URLSearchParams(location.search).get('render') === '1';
+    const liveVideo = { lastFrame: -1, lastAt: 0, idle: 0, playing: new Set() };
+    function activeSceneIndexAt(f) {
+      let idx = 0;
+      for (let i = 0; i < CFG.timeline.length; i++) {
+        if (f >= CFG.timeline[i].startFrame) idx = i;
+      }
+      return idx;
+    }
+    function activateSceneAt(f) {
+      // a display:none scene never presents a video frame, so the scene is switched on before its videos seek
+      const activeIdx = activeSceneIndexAt(f);
+      sceneEls.forEach((s, idx) => {
+        const isActive = idx === activeIdx;
+        if (s.scEl.classList.contains('active') !== isActive) s.scEl.classList.toggle('active', isActive);
+      });
+      return activeIdx;
+    }
+    function videoTargetAt(v, cur, f) {
+      const vidDur = Number.isFinite(v.duration) && v.duration > 0.1 ? v.duration : 10;
+      const localT = Math.max(0, f / CFG.fps - cur.meta.startSec);
+      // a presenter clip plays the cut recording continuously from its own start frame (never loops); a quarter frame
+      // in keeps the target inside the wanted frame despite float rounding of frame times
+      if (v.classList.contains('k-presenter-video')) {
+        const startAt = Number(v.dataset && v.dataset.startFrame) || 0;
+        return { target: Math.min(vidDur - 0.04, startAt / CFG.fps + localT + 0.25 / CFG.fps), loop: false, dur: vidDur };
+      }
+      // b-roll loops inside its chosen window (素材库镜头分析 / 手动入点出点), the whole clip by default
+      const ts = Math.max(0, Math.min(vidDur - 0.1, Number(v.dataset && v.dataset.trimStart) || 0));
+      const te = Number(v.dataset && v.dataset.trimEnd) > ts + 0.1 ? Math.min(vidDur, Number(v.dataset.trimEnd)) : vidDur;
+      const seg = Math.max(0.1, te - ts);
+      return { target: ts + ((localT + 0.25 / CFG.fps) % seg), loop: true, dur: seg, start: ts };
+    }
+    /** capture: a clip that has not loaded its metadata yet (just scrolled into a cutaway, slow disk) is waited for */
+    function videoReady(v, capMs) {
+      if (!v || v.readyState >= 1) return Promise.resolve(Boolean(v));
+      return new Promise((res) => {
+        let done = false;
+        const finish = (ok) => {
+          if (done) return;
+          done = true;
+          clearTimeout(cap);
+          v.removeEventListener('loadedmetadata', onMeta);
+          v.removeEventListener('error', onErr);
+          res(ok);
+        };
+        const onMeta = () => finish(true);
+        const onErr = () => finish(false);
+        const cap = setTimeout(() => finish(v.readyState >= 1), capMs);
+        v.addEventListener('loadedmetadata', onMeta);
+        v.addEventListener('error', onErr);
+        try { if (v.preload !== 'auto') v.preload = 'auto'; v.load && v.networkState === 0 && v.load(); } catch {}
+      });
+    }
+    async function seekWhenReady(v, targetOf, capMs) {
+      if (!(await videoReady(v, 6000))) return;
+      await seekVideoExact(v, targetOf(), capMs);
+    }
+    function seekVideoExact(v, target, capMs) {
+      if (Math.abs(v.currentTime - target) < 0.004 && !v.seeking) return Promise.resolve();
+      // a clip laid out on screen waits until the compositor shows the frame at the target time (the presented frame's
+      // own media time is checked, so an older frame painted meanwhile does not count); an undisplayed clip never
+      // presents frames, and one that stays unpainted (fully transparent) gives up 250 ms after 'seeked'
+      const watchPresent = typeof v.requestVideoFrameCallback === 'function' && v.offsetWidth > 0 && v.offsetHeight > 0;
+      return new Promise((res) => {
+        let done = false;
+        let seeked = false;
+        let presented = !watchPresent;
+        let settle = 0;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(cap);
+          clearTimeout(settle);
+          v.removeEventListener('seeked', onSeeked);
+          res();
+        };
+        const onSeeked = () => {
+          seeked = true;
+          if (presented) finish();
+          else settle = setTimeout(finish, 250);
+        };
+        const onFrame = (_now, meta) => {
+          if (done) return;
+          const mt = meta && Number.isFinite(meta.mediaTime) ? meta.mediaTime : null;
+          if (mt === null || (target - mt > -0.002 && target - mt < 0.1)) {
+            presented = true;
+            if (seeked) finish();
+          } else {
+            try { v.requestVideoFrameCallback(onFrame); } catch { presented = true; }
+          }
+        };
+        const cap = setTimeout(finish, capMs);
+        v.addEventListener('seeked', onSeeked);
+        try {
+          if (!v.paused) v.pause();
+          v.currentTime = target;
+        } catch { finish(); return; }
+        if (watchPresent) {
+          try { v.requestVideoFrameCallback(onFrame); } catch { presented = true; }
+        }
+      });
+    }
+    function parkLiveVideos(f) {
+      // the studio stopped ticking (paused / scrubbing ended): stop native playback and show the exact frame
+      const cur = sceneEls[activeSceneIndexAt(f)];
+      liveVideo.playing.forEach((v) => { try { v.pause(); v.playbackRate = 1; } catch {} });
+      liveVideo.playing.clear();
+      for (const b of activeBrollAt(f)) { try { if (b.v.readyState >= 1) b.v.currentTime = b.target; } catch {} }
+      if (!cur) return;
+      cur.videos.forEach((v) => {
+        if (!v || v.readyState < 1) return;
+        try { v.currentTime = videoTargetAt(v, cur, f).target; } catch {}
+      });
+    }
+    function syncLiveVideos(cur, f, sequential) {
+      cur.videos.forEach((v) => {
+        if (!v || v.readyState < 1) return;
+        const { target, loop, dur, start = 0 } = videoTargetAt(v, cur, f);
+        // a clip playing a window of a longer file must not run on past the window's end: outside it → re-seek
+        const fileDur = Number.isFinite(v.duration) && v.duration > 0.1 ? v.duration : dur;
+        const windowed = loop && (start > 0.01 || dur < fileDur - 0.05);
+        const outside = windowed && (v.currentTime < start - 0.05 || v.currentTime > start + dur + 0.05);
+        let drift = Math.abs(v.currentTime - target);
+        if (loop) drift = Math.min(drift, Math.abs(dur - drift));
+        if (outside) drift = Infinity;
+        if (!sequential) {
+          if (!v.paused) v.pause();
+          v.playbackRate = 1;
+          liveVideo.playing.delete(v);
+          if (drift > 0.02) { try { v.currentTime = target; } catch {} }
+          return;
+        }
+        v.loop = loop && !windowed;
+        if (drift > 0.3) {
+          try { v.currentTime = target; } catch {}
+          v.playbackRate = 1;
+        } else if (!loop) {
+          // a talking head stays lip-synced to the master audio: small drift is pulled in by the playback rate
+          // (a re-seek would stall the picture), only a big jump re-seeks
+          const ahead = v.currentTime - target;
+          const rate = Math.abs(ahead) < 0.03 ? 1 : ahead > 0 ? 0.94 : 1.06;
+          if (v.playbackRate !== rate) v.playbackRate = rate;
+        }
+        if (v.paused && !(v.ended && !loop)) {
+          const p = v.play();
+          if (p && p.catch) p.catch(() => {});
+        }
+        liveVideo.playing.add(v);
+      });
+    }
+    /** 口播包装 B-roll clips that are on screen at frame f, with their source time */
+    function activeBrollAt(f) {
+      const t = f / CFG.fps;
+      const out = [];
+      for (const it of tpItems) {
+        if (it.kind !== 'broll' || !it.video) continue;
+        if (t < it.s || t >= it.e) continue;
+        const vidDur = Number.isFinite(it.video.duration) && it.video.duration > 0.1 ? it.video.duration : 3600;
+        out.push({ v: it.video, target: Math.min(vidDur - 0.04, (Number(it.video.dataset.trimStart) || 0) + (t - it.s) + 0.25 / CFG.fps) });
+      }
+      return out;
+    }
     async function seekVideosForActiveScene(frameNum) {
       const f = Math.max(0, Math.min(CFG.totalFrames - 1, Math.round(frameNum)));
-      const t = f / CFG.fps;
-      let activeIdx = 0;
-      for (let i = 0; i < CFG.timeline.length; i++) {
-        if (f >= CFG.timeline[i].startFrame) activeIdx = i;
-      }
+      const activeIdx = activateSceneAt(f);
       const cur = sceneEls[activeIdx];
-      if (!cur || !cur.videos.length) return;
-      const localT = Math.max(0, t - cur.meta.startSec);
-      const tasks = cur.videos.map((v) => {
-        if (!v || v.readyState < 1) return Promise.resolve();
-        const vidDur = Number.isFinite(v.duration) && v.duration > 0.1 ? v.duration : 10;
-        const target = localT % vidDur;
-        if (Math.abs(v.currentTime - target) < 0.022) return Promise.resolve();
-        return new Promise((res) => {
-          let done = false;
-          const finish = () => {
-            if (done) return;
-            done = true;
-            v.removeEventListener('seeked', finish);
-            res();
-          };
-          v.addEventListener('seeked', finish);
-          try { v.currentTime = target; } catch { finish(); }
-          setTimeout(finish, 70);
-        });
+      // the packaging layer first: a cutaway must be visible before its clip seeks (an invisible clip presents no frame)
+      updateTalkPack(f / CFG.fps);
+      const broll = activeBrollAt(f);
+      const brollVids = broll.map((b) => b.v);
+      // videos of scenes / cutaways that just went off screen stop playing
+      liveVideo.playing.forEach((v) => {
+        if ((!cur || !cur.videos.includes(v)) && !brollVids.includes(v)) { try { v.pause(); } catch {} liveVideo.playing.delete(v); }
       });
-      await Promise.all(tasks);
+      if (CAPTURE_MODE) {
+        // targets are computed after the metadata is in (a clip's duration bounds its target)
+        // the cartoon presenter's clip loops on its own clock
+        const mascotTarget = () => {
+          // a talking clip (「我的动漫形象」) plays once from the start; a library loop repeats
+          if (tpMascotVideo.dataset.clip) {
+            const dur = Number(tpMascotVideo.duration) > 0.1 ? Number(tpMascotVideo.duration) : 3600;
+            return Math.min(dur - 0.04, f / CFG.fps + 0.25 / CFG.fps);
+          }
+          const loop = Number(tpMascotVideo.dataset.loop) || Number(tpMascotVideo.duration) || 1;
+          return ((f / CFG.fps) % Math.max(0.1, loop)) + 0.25 / CFG.fps;
+        };
+        await Promise.all([
+          ...(cur ? cur.videos : []).map((v) => (!v ? null : seekWhenReady(v, () => videoTargetAt(v, cur, f).target, 4000))),
+          ...broll.map((b) => seekWhenReady(b.v, () => activeBrollAt(f).find((x) => x.v === b.v)?.target ?? b.target, 4000)),
+          ...(tpMascotVideo ? [seekWhenReady(tpMascotVideo, mascotTarget, 4000)] : []),
+        ]);
+        return;
+      }
+      if (tpMascotVideo && tpMascotVideo.dataset.clip) {
+        // the talking clip follows the cut's clock (the voice): re-sync on drift, stop at its end
+        if (tpMascotVideo.readyState >= 1) {
+          const t = f / CFG.fps;
+          const dur = Number(tpMascotVideo.duration) > 0.1 ? Number(tpMascotVideo.duration) : 3600;
+          if (t >= dur - 0.05) { if (!tpMascotVideo.paused) { try { tpMascotVideo.pause(); } catch {} } }
+          else {
+            if (Math.abs(tpMascotVideo.currentTime - t) > 0.25) { try { tpMascotVideo.currentTime = t; } catch {} }
+            if (tpMascotVideo.paused && tpMascotVideo.readyState >= 2) { const p = tpMascotVideo.play(); if (p && p.catch) p.catch(() => {}); }
+          }
+        }
+      } else if (tpMascotVideo && tpMascotVideo.paused && tpMascotVideo.readyState >= 2) { const p = tpMascotVideo.play(); if (p && p.catch) p.catch(() => {}); }
+      for (const b of broll) {
+        if (b.v.readyState < 1) continue;
+        const drift = Math.abs(b.v.currentTime - b.target);
+        if (drift > 0.3) { try { b.v.currentTime = b.target; } catch {} }
+        if (b.v.paused) { const p = b.v.play(); if (p && p.catch) p.catch(() => {}); }
+        liveVideo.playing.add(b.v);
+      }
+      if ((!cur || !cur.videos.length) && !broll.length) return;
+      const now = performance.now();
+      const sequential = liveVideo.lastFrame >= 0 && f >= liveVideo.lastFrame && f - liveVideo.lastFrame <= 6 && now - liveVideo.lastAt < 200;
+      liveVideo.lastFrame = f;
+      liveVideo.lastAt = now;
+      clearTimeout(liveVideo.idle);
+      liveVideo.idle = setTimeout(() => parkLiveVideos(f), 220);
+      if (cur && cur.videos.length) syncLiveVideos(cur, f, sequential);
     }
 
     window.__seekToFrame = async (frame) => {

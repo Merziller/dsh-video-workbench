@@ -67,7 +67,7 @@ body:
     id: plugin_version
     attributes:
       label: 插件版本
-      placeholder: v0.6.0
+      placeholder: v0.7.0
   - type: textarea
     id: attachment
     attributes:

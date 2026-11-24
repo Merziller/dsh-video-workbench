@@ -8,7 +8,7 @@ description: Universal Dual-Engine AI Video Studio (Remotion 4.x + Three.js 3D &
 > **Original Author**: Merziller · **QQ**: `1411574209` · **WeChat**: `Merziller` · **Email**: `k26789228@gmail.com`  
 > **Repository**: https://github.com/Merziller/dsh-video-workbench (MIT License — retain original author attribution in forks/redistributions)
 
-## Capabilities (41 MCP Tools + AI Agent War Room Web Studio + 影核广场 CinePulse Hub)
+## Capabilities (48 MCP Tools + AI Agent War Room Web Studio + 影核广场 CinePulse Hub)
 
 1. **Dual-Engine Video Creation**:
    - **Remotion 4.x TSX + Three.js 3D (`<FreeformThreeStage />`) + Dynamic SVG + `NarrativeDioramaStage`** (backlit hero silhouettes, charging cavalry, waving banners, crescent sword slash VFX, red-black conquest maps, 3D bamboo slips)
@@ -21,8 +21,14 @@ description: Universal Dual-Engine AI Video Studio (Remotion 4.x + Three.js 3D &
    - Supports Volcengine Seedream/Seedance, Kling AI (JWT/Bearer), Flux, Suno Music, MiniMax Music-2.0 / Speech-02-HD / Hailuo Video, ElevenLabs, plus open Custom HTTP/JSON protocol (sync & async polling) for Image, Video, and Audio.
 5. **Optional Multi-Engine TTS (`install_tts_engine` / `generate_speech`) & Silent Windowless Daemon**:
    - Works out-of-the-box with **0GB GPU Windows Native SAPI** or **Pure-Music Beat-Sync (no TTS)**, OR optionally one-click installs `Edge-TTS`, `IndexTTS-2.5`, `IndexTTS-2`, or `GPT-SoVITS`. Launches silently with zero black CMD window (`start-workbench.vbs` / `start-workbench.cmd` / `stop-workbench.cmd`).
-6. **AI Agent War Room Web Studio (v0.6.0 UI)**:
+6. **AI Agent War Room Web Studio (since v0.6.0)**:
    - Native war-room UI with three switchable skins — **棱镜实验室 Prism Lab (default)**, **星舰剪辑甲板 Nova Deck**, **墨韵织机 Ink Loom**. Every panel (分步精修 step studio, 任务中心 tasks, 影核广场 templates, 配音中心 voices, 云端媒体中心 cloud media, 数字人 avatar, 算力体检 hardware, 设置 · 模型与密钥 settings) is native to the skin; the brief box opens a big editor; 「本地极速草稿」 mode renders without any LLM.
+7. **AI 剪辑 — the user's own footage, fully local (no LLM, no cost)**:
+   - `speech_engine` (local speech recognition status / install), `transcribe_media` (any clip → text + SRT), `rough_cut_talking_head` (talking-head rough cut: pauses, fillers, stutters, retakes; real captions; packaging `pack`: keywords, chapters, B-roll from the library, `captions`, `screen` for screen recordings, `mascot` = a cartoon presenter from a library picture / plain-background loop), `index_footage` (shots with quality / motion / speech; long uploads then contribute only the window each scene needs), `make_highlight_reel` (Vlog highlights cut to a song's beats).
+8. **可填空模板 (`manage_template_plaza` `slots` / `fill`)**: keep a plaza template's shots, timing, layouts, transitions and sound design and fill in the user's words, pictures, clips and music.
+9. **由当前智能体代写 — host-agent writing (`configure_llm_model({ mode: 'host-agent' })` + `host_llm_task`)**: for users without an API key (e.g. a Codex / Claude Code subscription). Tools that need a model return `{ background: true, hostJobId }` and queue writing tasks; you answer them with your own model through `host_llm_task` (`next` → write the reply exactly as asked, JSON when asked → `reply`) until the job shows up in `finishedJobs`. Never read or reuse the agent's login / subscription credentials.
+10. **「我的动漫形象」 — a reusable talking anime presenter (`manage_anime_presenter`)**: make a character once from the user's photo (anime likeness by the user's own cloud image service — paid per picture, `confirmedCost: true` only after the user agreed — or by the optional local model) or from a cartoon picture; check the face marks (`update face`); use it in talking-head cuts with `rough_cut_talking_head` `pack.mascot { characterId, engine, corner, size }`. Engines: `sprite` (default, free, local: mouth shape per syllable + blinks + nods + breathing, works on every computer), `tha3` (free, optional local Talking Head Anime 3 install; NVIDIA fast, CPU slow), `vidu` / `volc` / `runway` (the user's own key, entered in the studio panel 「云端动漫数字人 · 密钥」, billed per second ≈ 1.9 / 18 / 1.5 元 per minute: `estimate` → user agrees → `confirmedRmb`; otherwise the cut falls back to the free tier).
+11. **Visual self-review per sub-shot (`visualReviewFine`, default on) and model usage**: every re-framed sub-shot gets its own review still; a crop issue is fixed by a looser framing without a code rewrite; rewritten shots are re-checked and a worse batch is reverted. Every run writes `output/llm-usage.json` (calls, tokens, pictures, per stage).
 
 ## Recommended Agent Workflow
 
@@ -45,3 +51,9 @@ description: Universal Dual-Engine AI Video Studio (Remotion 4.x + Three.js 3D &
    - Users can submit their own work to 影核广场 from the Studio (「投稿到影核广场」, sent by the user via a GitHub issue form or e-mail); see `docs/plaza-community.md`.
 5. **Optional Local TTS Installation**:
    - Call `install_tts_engine({ action: 'list' })` or `install_tts_engine({ action: 'install', engineId: 'edge-tts' | 'indextts25' | 'gptvoice', mirror: 'cn' })`.
+6. **Fill a template (模板填空)**:
+   - `manage_template_plaza({ action: 'slots', templateId, projectDir })` lists every blank (with the template's text as `example`, a `maxLength`, picture places with `required` / `kind`) and the project's media (`library`).
+   - Write the texts yourself (keep each line about as long as its example so the shot timing still fits; an empty blank keeps the template's words), pick library asset ids for picture places and `film.music` (an asset id, `generate`, or empty = the library's first song), then `manage_template_plaza({ action: 'fill', projectDir, templateId, fills })`.
+   - When the template speaks (`narrationMode` is not `subtitle-mv`), voice every scene (`generate_speech` per scene, or tell the user to press 「一键配音」), then `video_render`.
+7. **Edit the user's own recording**: `speech_engine({ action: 'status' })` (install only after the user agrees, ~260 MB) → `rough_cut_talking_head({ projectDir, render: true })`; for a pile of holiday clips use `make_highlight_reel({ projectDir })`.
+8. **No API key?** Suggest 「由当前智能体代写」: `configure_llm_model({ mode: 'host-agent' })`, then serve the queued writing tasks with `host_llm_task`.

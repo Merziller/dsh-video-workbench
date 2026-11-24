@@ -22,8 +22,22 @@ import {
   writeScriptJson,
 } from '../shared/index.js'
 import { analyzeAudioBeatStructure } from './beat-analyzer.js'
-import { callLlmChat, extractJsonFromLlmText, getSafeLlmConfigSummary } from './llm-client.js'
+import { callLlmChat, describeVisionStatus, extractJsonFromLlmText, formatLlmWait, getLlmTimeoutMs } from './llm-client.js'
 import { applyStyleDecision } from './style-presets.js'
+import { classifyVisionError, noteVisionOutcome, prepareVisionCall } from './vision-capability.js'
+
+/** The plain-Chinese, secret-free part of a vision gate / outcome (a gate also carries the model endpoint and key). */
+function pickVisionWords(s = {}) {
+  return {
+    ok: Boolean(s.ok),
+    code: String(s.code || ''),
+    short: String(s.short || ''),
+    reason: String(s.reason || ''),
+    fix: String(s.fix || ''),
+    ...(s.detail ? { detail: String(s.detail).slice(0, 200) } : {}),
+    ...(s.model ? { model: String(s.model) } : {}),
+  }
+}
 
 function getBrandKitPath(projectDir = '') {
   if (projectDir && existsSync(resolve(projectDir))) {
@@ -342,6 +356,7 @@ export async function analyzeReferenceVideo(options = {}) {
     applyToScript = true,
     useVision = true,
     callLlmChatFn = null,
+    fetchImpl,
     signal,
     onProgress,
   } = options
@@ -454,11 +469,36 @@ export async function analyzeReferenceVideo(options = {}) {
     analyzedAt: new Date().toISOString(),
   }
 
-  const llmSummary = getSafeLlmConfigSummary()
-  const invoker = typeof callLlmChatFn === 'function' ? callLlmChatFn : (llmSummary.configured ? (p) => callLlmChat({ ...p, signal }) : null)
+  // 看图 (vision): the shared capability logic decides whether the configured model can look at the contact sheet. When
+  // it is not used, `visionStatus` records why in plain Chinese (shown on the panel badge, returned to agents) instead
+  // of a generic "not called" label.
+  const timeoutMs = getLlmTimeoutMs()
+  const waitNote = (what) => ({ elapsedMs }) =>
+    onProgress?.({ stage: 'ref-vision', progress: 80, message: `${what}…已等待 ${formatLlmWait(elapsedMs)}（最长 ${formatLlmWait(timeoutMs)}）` })
+  let visionStatus = null
+  let visionGate = null
+  let invoker = null
+  if (!useVision) visionStatus = { used: false, ...pickVisionWords({ code: 'disabled', ...describeVisionStatus('disabled') }) }
+  else if (!sheetPath || !existsSync(sheetPath)) visionStatus = { used: false, ...pickVisionWords({ code: 'no-frames', ...describeVisionStatus('no-frames') }) }
+  else if (typeof callLlmChatFn === 'function') invoker = callLlmChatFn
+  else {
+    onProgress?.({ stage: 'ref-vision', progress: 74, message: '正在确认当前大模型能否看图…' })
+    visionGate = await prepareVisionCall({
+      fetchImpl,
+      signal,
+      onWait: waitNote('正在用一张很小的测试图确认模型能否看图'),
+      onProbe: (t) => onProgress?.({ stage: 'ref-vision', progress: 75, message: `第一次使用模型 ${t.model} 看图：先用一张很小的测试图确认它能看图…` }),
+    })
+    if (visionGate.ok) invoker = (p) => callLlmChat({ ...p, overrideConfig: visionGate.config, fetchImpl, signal })
+    else {
+      visionStatus = { used: false, ...pickVisionWords(visionGate) }
+      onProgress?.({ stage: 'ref-vision', progress: 78, message: `没有用 AI 看图：${visionStatus.reason}` })
+    }
+  }
 
-  if (useVision && invoker && sheetPath && existsSync(sheetPath)) {
-    onProgress?.({ stage: 'ref-vision', progress: 78, message: `正在调用多模态大模型 (${llmSummary.model || 'Vision LLM'}) 深度拆解参考视频画风、人物、特效、转场与镜头公式...` })
+  if (invoker) {
+    const visionModelName = visionGate?.model || ''
+    onProgress?.({ stage: 'ref-vision', progress: 78, message: `正在调用多模态大模型 (${visionModelName || 'Vision LLM'}) 深度拆解参考视频画风、人物、特效、转场与镜头公式（最长等待 ${formatLlmWait(timeoutMs)}）...` })
     try {
       const sheetB64 = readFileSync(sheetPath).toString('base64')
       const visionSystem = `你是顶级电影拉片大师与 AI 动态图形视觉架构师。
@@ -514,38 +554,57 @@ export async function analyzeReferenceVideo(options = {}) {
         messages: [{ role: 'user', content: visionUserContent }],
         temperature: 0.3,
         maxTokens: 2800,
-        timeoutMs: 180_000,
+        timeoutMs,
         signal,
+        // the reply is one JSON object (also tells 宿主智能体代写 to answer with JSON only)
+        responseFormat: 'json',
+        purpose: '参考视频看图拆解',
+        onWait: waitNote(`AI 正在看图拆解参考视频（${visionModelName || '多模态大模型'}）`),
       })
       const parsed = extractJsonFromLlmText(reply?.text)
-      if (parsed && typeof parsed === 'object') {
-        blueprint = {
-          ...blueprint,
-          title: String(parsed.title || blueprint.genreLabel).trim(),
-          genre: String(parsed.genre || blueprint.genre).trim(),
-          genreLabel: String(parsed.genreLabel || blueprint.genreLabel).trim(),
-          style: String(parsed.style || blueprint.style).trim(),
-          narrationMode: ['subtitle-mv', 'tts-beat-sync', 'tts'].includes(String(parsed.narrationMode || '').trim())
-            ? String(parsed.narrationMode).trim()
-            : blueprint.narrationMode,
-          visualStyle: String(parsed.visualStyle || blueprint.visualStyle).trim(),
-          colorPalette: parsed.colorPalette && typeof parsed.colorPalette === 'object'
-            ? { ...blueprint.colorPalette, ...parsed.colorPalette }
-            : blueprint.colorPalette,
-          characterDesign: String(parsed.characterDesign || blueprint.characterDesign).trim(),
-          vfxSignature: Array.isArray(parsed.vfxSignature) && parsed.vfxSignature.length > 0 ? parsed.vfxSignature.slice(0, 8) : blueprint.vfxSignature,
-          transitionSignature: Array.isArray(parsed.transitionSignature) && parsed.transitionSignature.length > 0 ? parsed.transitionSignature.slice(0, 6) : blueprint.transitionSignature,
-          subtitleStyle: parsed.subtitleStyle === 'pill' ? 'pill' : 'cinematic',
-          subtitleNotes: String(parsed.subtitleNotes || '').trim(),
-          shotFormula: Array.isArray(parsed.shotFormula) && parsed.shotFormula.length >= 3 ? parsed.shotFormula.slice(0, 8) : blueprint.shotFormula,
-          replicationPrompt: String(parsed.replicationPrompt || '').trim(),
-          visionAnalyzed: true,
-          visionModel: reply?.model || llmSummary.model || '',
-        }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`无法从模型回复中解析 JSON。片段: ${String(reply?.text || '').slice(0, 120)}`)
       }
+      blueprint = {
+        ...blueprint,
+        title: String(parsed.title || blueprint.genreLabel).trim(),
+        genre: String(parsed.genre || blueprint.genre).trim(),
+        genreLabel: String(parsed.genreLabel || blueprint.genreLabel).trim(),
+        style: String(parsed.style || blueprint.style).trim(),
+        narrationMode: ['subtitle-mv', 'tts-beat-sync', 'tts'].includes(String(parsed.narrationMode || '').trim())
+          ? String(parsed.narrationMode).trim()
+          : blueprint.narrationMode,
+        visualStyle: String(parsed.visualStyle || blueprint.visualStyle).trim(),
+        colorPalette: parsed.colorPalette && typeof parsed.colorPalette === 'object'
+          ? { ...blueprint.colorPalette, ...parsed.colorPalette }
+          : blueprint.colorPalette,
+        characterDesign: String(parsed.characterDesign || blueprint.characterDesign).trim(),
+        vfxSignature: Array.isArray(parsed.vfxSignature) && parsed.vfxSignature.length > 0 ? parsed.vfxSignature.slice(0, 8) : blueprint.vfxSignature,
+        transitionSignature: Array.isArray(parsed.transitionSignature) && parsed.transitionSignature.length > 0 ? parsed.transitionSignature.slice(0, 6) : blueprint.transitionSignature,
+        subtitleStyle: parsed.subtitleStyle === 'pill' ? 'pill' : 'cinematic',
+        subtitleNotes: String(parsed.subtitleNotes || '').trim(),
+        shotFormula: Array.isArray(parsed.shotFormula) && parsed.shotFormula.length >= 3 ? parsed.shotFormula.slice(0, 8) : blueprint.shotFormula,
+        replicationPrompt: String(parsed.replicationPrompt || '').trim(),
+        visionAnalyzed: true,
+        visionModel: reply?.model || visionModelName || '',
+      }
+      const looked = visionGate ? noteVisionOutcome(visionGate, { ok: true }) : null
+      visionStatus = { used: true, ...pickVisionWords(looked || { ok: true, code: 'used', ...describeVisionStatus('used', { model: blueprint.visionModel }) }), model: blueprint.visionModel }
     } catch (err) {
+      if (signal?.aborted) throw err
       blueprint.visionError = err?.message || String(err)
+      // a rejected picture is remembered for this model (the next analysis skips straight to the reason)
+      const failed = visionGate ? noteVisionOutcome(visionGate, { error: err }) : classifyVisionError(err, { model: visionModelName, timeoutMs })
+      visionStatus = { used: true, ...pickVisionWords(failed) }
+      onProgress?.({ stage: 'ref-vision', progress: 82, message: `AI 看图拆解没有成功：${failed.reason}（已改用本地测量结果，节奏数据仍然准确）` })
     }
+  }
+  blueprint.visionStatus = {
+    ...visionStatus,
+    model: (visionStatus && visionStatus.model) || visionGate?.model || '',
+    dedicated: Boolean(visionGate?.dedicated),
+    source: visionGate?.source || '',
+    checkedAt: new Date().toISOString(),
   }
 
   if (!blueprint.replicationPrompt) {

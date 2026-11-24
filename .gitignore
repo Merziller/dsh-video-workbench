@@ -10,6 +10,7 @@ secrets.json
 .dsh-video-avatar-config.json
 .dsh-video-hardware-pref.json
 .dsh-video-cloud-media.json
+.dsh-video-anime-cloud.json
 templates/cinepulse-hub-custom/
 
 # Dependencies & Package Manager Caches
@@ -117,3 +118,8 @@ Desktop.ini
 !/design-prototypes/ink-loom/_port/rebuild.cjs
 !/design-prototypes/ink-loom/_port/[0-9]*.txt
 !/design-prototypes/ink-loom/_port/bak/ink-loom.2026-11-21T15-26-26-149Z.35-kit-wire.html
+
+# Optional local AI engines installed by the plugin's one-click installers (speech recognition, lip-sync): never committed
+ai-engines/
+# 宿主智能体代写 queue (writing tasks for the agent hosting the plugin; may contain prompts and screenshots)
+.host-llm/

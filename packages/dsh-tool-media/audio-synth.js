@@ -194,6 +194,8 @@ export async function ensureProjectAudioAssets(projectDir, script, assetsManifes
       bgmPath = script.bgm.path
       bgmSource = 'tts-engine'
     }
+  } else if (bgmMode === 'generated') {
+    // the user chose the built-in generator (e.g. 模板填空 「按模板节奏自动生成」): songs in the library are not used
   } else if (importedMusic.length > 0 && candidateExists(importedMusic[0].path)) {
     bgmPath = importedMusic[0].path
     bgmSource = 'user-imported'
@@ -205,7 +207,7 @@ export async function ensureProjectAudioAssets(projectDir, script, assetsManifes
   }
 
   if (!bgmPath) {
-    if (importedMusic.length > 0) {
+    if (importedMusic.length > 0 && bgmMode !== 'generated') {
       bgmPath = importedMusic[0].path
       bgmSource = 'user-imported'
     } else {

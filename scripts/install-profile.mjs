@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { loadEnv, REPO_ROOT, resolveEnvPath } from '../packages/shared/index.js'
+import { loadEnv, PACKAGE_ROOT, REPO_ROOT, resolveEnvPath } from '../packages/shared/index.js'
 
 export function ensureWorkspaceLinks() {
   // All inter-package imports use direct relative ESM paths; remove any stale `@dsh-video` junction folder if desired.
@@ -22,7 +22,7 @@ function linkSingleRootBundle(profileNmDir) {
     rmSync(bundleLink, { recursive: true, force: true })
   } catch {}
   try {
-    symlinkSync(REPO_ROOT, bundleLink, 'junction')
+    symlinkSync(PACKAGE_ROOT, bundleLink, 'junction')
   } catch {}
 }
 
@@ -53,8 +53,8 @@ export function setupDshVideoProfile() {
 
   // Keep standalone `video` runner explicit plugin paths
   const pluginPaths = [
-    join(REPO_ROOT, 'packages', 'dsh-preset-video', 'index.js').replace(/\\/g, '/'),
-    join(REPO_ROOT, 'packages', 'dsh-web-video-workbench', 'lib', 'index.js').replace(/\\/g, '/'),
+    join(PACKAGE_ROOT, 'packages', 'dsh-preset-video', 'index.js').replace(/\\/g, '/'),
+    join(PACKAGE_ROOT, 'packages', 'dsh-web-video-workbench', 'lib', 'index.js').replace(/\\/g, '/'),
   ]
 
   const patchYml = [
@@ -92,9 +92,12 @@ export function setupDshVideoProfile() {
     const userDesktopProfile = join(homedir(), '.dsh', 'profiles', 'desktop')
     desktopPatchPath = join(userDesktopProfile, 'cordis.patch.yml')
     desktopPkgPath = join(userDesktopProfile, 'package.json')
+    // A copy installed by a package manager (`dsh plugin add`, npm, pnpm) keeps its data outside the package and is
+    // owned by the host: re-pointing its node_modules entry and `dependencies` spec would replace the install with a link
+    const managedInstall = REPO_ROOT !== PACKAGE_ROOT
 
-    if (existsSync(userDesktopProfile) && existsSync(desktopPkgPath)) {
-      // 1. Link single root bundle directory `desktop/node_modules/dsh-video-workbench` -> REPO_ROOT
+    if (!managedInstall && existsSync(userDesktopProfile) && existsSync(desktopPkgPath)) {
+      // 1. Link single root bundle directory `desktop/node_modules/dsh-video-workbench` -> PACKAGE_ROOT (the checkout)
       linkSingleRootBundle(join(userDesktopProfile, 'node_modules'))
 
       // 2. Register `dsh-video-workbench` in `desktop/package.json` (`dsh.profile.bundles` + `dependencies`)
@@ -112,7 +115,7 @@ export function setupDshVideoProfile() {
       pkg.dependencies = pkg.dependencies && typeof pkg.dependencies === 'object' ? pkg.dependencies : {}
       delete pkg.dependencies['@dsh-video/web-video-workbench']
       delete pkg.dependencies['@dsh-video/preset-video']
-      pkg.dependencies['dsh-video-workbench'] = `link:${REPO_ROOT.replace(/\\/g, '/')}`
+      pkg.dependencies['dsh-video-workbench'] = `link:${PACKAGE_ROOT.replace(/\\/g, '/')}`
 
       copyFileSync(desktopPkgPath, `${desktopPkgPath}.bak-video-workbench`)
       writeFileSync(desktopPkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8')
@@ -167,7 +170,7 @@ export function setupDshVideoProfile() {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(join(REPO_ROOT, 'scripts', 'install-profile.mjs'))) {
+if (process.argv[1] && resolve(process.argv[1]) === resolve(join(PACKAGE_ROOT, 'scripts', 'install-profile.mjs'))) {
   const res = setupDshVideoProfile()
   console.log('[setup:profile] Configured DSH `video` profile:', JSON.stringify(res, null, 2))
 }

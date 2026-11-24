@@ -233,11 +233,17 @@ export async function masterVoiceTracks({
     if (Array.isArray(sceneIds) && sceneIds.length > 0 && !sceneIds.includes(sc.id)) {
       return false
     }
+    // 口播剪辑 host voice: cut as one continuous take and already enhanced + loudness-matched — re-mastering scene by
+    // scene would only add level jumps between neighbouring slices of the same sentence
+    if (sc.voiceSource === 'host') return false
     const rawWav = sc.audioFile ? (isAbsolute(sc.audioFile) ? sc.audioFile : resolve(absDir, sc.audioFile)) : ''
     return Boolean(rawWav && existsSync(rawWav))
   })
 
   if (targets.length === 0) {
+    if ((script.scenes || []).some((sc) => sc.voiceSource === 'host')) {
+      throw new Error('口播剪辑用的是你本人的原声，剪辑时已经做过人声增强和响度统一，不需要再做 AI 修音。')
+    }
     throw new Error('当前工程尚无已生成的干声配音 WAV，请先生成配音后再执行 AI 大模型修音。')
   }
 
@@ -314,7 +320,6 @@ export async function masterVoiceTracks({
         messages: [{ role: 'user', content: userPayload }],
         temperature: 0.25,
         maxTokens: 4096,
-        timeoutMs: 90_000,
       })
       const parsed = extractJsonFromLlmText(llmRes.text)
       if (Array.isArray(parsed?.perScene)) {

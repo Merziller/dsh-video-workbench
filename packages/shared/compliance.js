@@ -487,6 +487,15 @@ export function computeSafeZonePreflight(scriptData, options = {}) {
  * Mandatory legal AI synthesis compliance disclosure reflecting actual generation modes used.
  */
 export function buildComplianceNoticeText(scriptData = {}) {
+  // 口播剪辑: the picture and the voice are the person's own recording — only the editing and the captions are automatic
+  if (scriptData?.productionType === 'talk-edit') {
+    const music = scriptData?.bgm?.enabled === false ? '' : (scriptData?.audioSpec?.bgmMode || scriptData?.bgmMode) === 'uploaded' ? ' · 用户授权背景音乐' : ' · AI 合成配乐'
+    return {
+      badgeText: 'AI 辅助剪辑',
+      endNoticeTitle: '内容生成合规声明 · AI Editing Disclosure',
+      endNoticeBody: `本视频由 DSH Video Workbench (by Merziller) 剪辑：真人出镜原声 · 本地语音识别生成字幕 · 自动粗剪${music}`,
+    }
+  }
   const bgmMode = scriptData?.audioSpec?.bgmMode || scriptData?.bgmMode || 'llm-coded'
   const creationMode = scriptData?.creationMode || 'ai-coded'
   const narrationMode = scriptData?.narrationMode || 'tts'

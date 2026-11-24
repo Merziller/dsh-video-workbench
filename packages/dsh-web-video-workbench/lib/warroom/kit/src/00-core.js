@@ -284,6 +284,26 @@
   /** projectDir-scoped POST helper: merges `{ projectDir }` into the body */
   PK.postP = (path, body = {}, opts = {}) => PK.post(path, { projectDir: PK.needProject(), ...body }, opts)
 
+  /**
+   * How long a panel waits for a request that wraps text-model calls (AI 润色 / 精修 / 协助 / 封面提示词 / 看图检测 …):
+   * the server's model-call limit (`llmConfig.timeoutMs` — 10 minutes unless DSH_LLM_TIMEOUT_MS says otherwise) per
+   * model call the request may make, plus a margin for retries and the work around the call. The panel never gives
+   * up before the server does. Usage: `PK.post('llm-test', body, { timeout: PK.llmTimeout() })`.
+   */
+  PK.LLM_TIMEOUT_MS = 600000
+  PK.llmTimeout = (calls = 1) => {
+    const d = PK.store && PK.store.data
+    const server = U.num(d && d.llmConfig && d.llmConfig.timeoutMs, 0)
+    return Math.max(PK.LLM_TIMEOUT_MS, server) * Math.max(1, U.num(calls, 1)) + 120000
+  }
+  /** busy text of a request that wraps model calls; in 由当前智能体代写 mode the agent in the conversation answers it */
+  PK.llmBusy = (text) => {
+    const live = PK.state && PK.state.status && PK.state.status.llm
+    const d = PK.store && PK.store.data
+    const hostWrites = (live && live.mode === 'host-agent') || Boolean(d && d.llmConfig && d.llmConfig.mode === 'host-agent')
+    return hostWrites ? `${text} 等待智能体完成写作任务` : text
+  }
+
   /** Raw binary upload (BRIDGE.md §4b `upload`): bgm/upload · reference/upload · skin/upload · assets/upload */
   PK.upload = async (path, file, opts = {}) => {
     const buf = await U.fileToArrayBuffer(file)
@@ -318,7 +338,9 @@
   PK.job = async (jobId, opts = {}) => {
     const interval = U.num(opts.interval, 900)
     const started = Date.now()
-    const maxMs = U.num(opts.maxMs, 3600000)
+    // two hours, and never less than eight model calls at the server's limit: an AI 精修 job may refine, repair and
+    // look at its frames (the server allows it about 65 minutes at the default limit) — the panel never gives up first
+    const maxMs = U.num(opts.maxMs, Math.max(7200000, PK.llmTimeout(8)))
     for (;;) {
       if (opts.signal && opts.signal.aborted) throw new PKError('已取消', { code: 'aborted' })
       const d = await PK.api('GET', 'jobs', { query: { id: jobId }, raw: true })
@@ -332,7 +354,7 @@
         } catch {}
       }
       if (st === 'done' || st === 'completed' || st === 'success') return job.result || b.result || job
-      if (st === 'failed' || st === 'error') throw new PKError(String(job.error || b.error || '后台任务失败'), { job })
+      if (st === 'failed' || st === 'error') throw new PKError(String(job.error || b.error || '后台任务失败'), { job, code: job.code || '' })
       if (Date.now() - started > maxMs) throw new PKError('后台任务超时', { code: 'timeout' })
       await U.sleep(interval)
     }

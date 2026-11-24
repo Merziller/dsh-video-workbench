@@ -626,7 +626,6 @@ export async function generateAiCodedSfxCues({
       messages: [{ role: 'user', content: user }],
       temperature: 0.35,
       maxTokens: 2048,
-      timeoutMs: 60_000,
     })
     const parsed = extractJsonFromLlmText(res.text)
     let code = String(parsed?.code || '').trim()

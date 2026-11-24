@@ -103,9 +103,8 @@ export async function renderVendorClipIsolated({
   const tmpRawMp4 = join(reg.vendorDir, '.raw-render.mp4')
   const cleanClipAbs = join(reg.vendorDir, `vendor-${sanitizeSlug(reg.name)}-${reg.bundleSha256.slice(0, 8)}.mp4`)
 
-  const { resolveBrowserExecutable } = await import('../dsh-tool-video-suite/index.js')
-  const { renderHtmlVideoToMp4 } = await import('../dsh-tool-video-suite/frame-renderer.js')
-  const browserBin = resolveBrowserExecutable()
+  const { renderHtmlVideoToMp4, resolveHtmlCaptureBrowser } = await import('../dsh-tool-video-suite/frame-renderer.js')
+  const browserBin = resolveHtmlCaptureBrowser()
   if (!browserBin) {
     throw new Error('未找到 Chromium / Edge 无头浏览器，无法渲染隔离 .motion 动画片段')
   }

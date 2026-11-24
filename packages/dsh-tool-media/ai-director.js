@@ -30,6 +30,8 @@ import { buildBeatGrid, ensureProjectAudioAssets } from './audio-synth.js'
 import { reassertLockedScenes, reconcileUserEdits } from './scene-locks.js'
 import { applyLockedHtmlStore, syncLockedHtmlStore } from './region-refine.js'
 import { applyStyleDecision, resolveStyleRequest, styleMoodKey } from './style-presets.js'
+import { stripTalkEditFields } from './talk-edit.js'
+import { ensureFootageWindows } from './footage-index.js'
 
 const TRANSITIONS = ['iris-circle', 'block-wipe', 'glitch-cut', 'zoom-punch', 'light-wipe']
 const MOTIONS = ['zoom-in', 'pan-left', 'zoom-out', 'pan-right']
@@ -272,6 +274,7 @@ export async function planVideoFromAssets(options = {}) {
     voiceId = 'auto',
     audience = '大众与创作者',
     goal = '呈现具备动态视觉排版、空间运镜、粒子光效、节拍音效、配乐与配音的完整成片',
+    onProgress,
   } = options
 
   if (!projectDir) throw new Error('projectDir is required')
@@ -284,7 +287,8 @@ export async function planVideoFromAssets(options = {}) {
   let existing = {}
   if (existsSync(join(absDir, 'script.json'))) {
     try {
-      existing = readScriptJson(absDir).data
+      // a 口播剪辑's caption style / host-voice settings never carry over into an AI film
+      existing = stripTalkEditFields(readScriptJson(absDir).data)
     } catch {}
   }
   // HTML engine: capture locked scenes' <template> blocks before index.html is regenerated below (first capture wins)
@@ -775,6 +779,13 @@ export async function planVideoFromAssets(options = {}) {
     },
     scenes,
   }
+
+  // 长视频只用需要的那段: long uploaded clips get an in / out window per scene (sharp, steady, not reused) instead of
+  // always playing from their first second — the footage index is built on the fly when missing (local, free)
+  try {
+    const fw = await ensureFootageWindows({ projectDir: absDir, script: nextScript })
+    if (fw.assigned) onProgress?.({ stage: 'footage', progress: 90, message: `已为 ${fw.assigned} 个视频镜头挑好要用的片段` })
+  } catch {}
 
   // Human edit protection: locked scenes keep content + timing, user overrides are re-applied (user wins)
   const editMerge = reconcileUserEdits({ projectDir: absDir, prevScript: existing, nextScript, stage: 'local-director' })

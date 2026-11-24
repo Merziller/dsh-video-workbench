@@ -73,6 +73,112 @@ export function leaksBrief(text, briefs = []) {
   return briefs.some((b) => b && briefOverlapRatio(text, b) >= 0.55)
 }
 
+/* ---------- Production-directive phrases printed on screen ---------- */
+
+// Effect / camera / motion / typography / editing operations. A short on-screen label made only of these words (and
+// the modifiers below) is a motion or production directive that leaked onto the screen as content — e.g. the
+// bamboo slips reading 「竹节弹簧回弹」「书法笔画描边」「书法字逐字砸」「斜向刀光长尾」. At least one of these words
+// must be present; the modifiers alone never make a directive (「书法」「刀光剑影」「金色年华」 stay).
+const DIRECTIVE_TERMS = [
+  // typography / text animation
+  '描边', '勾边', '笔画', '笔触', '逐字', '逐行', '逐句', '逐词', '砸字', '字砸', '砸入', '砸下', '砸', '打字机', '字幕条', '空心字', '立体字', '字间距', '书写动画', '手写动画',
+  // motion
+  '回弹', '弹簧', '弹性', '弹跳', '弹入', '弹出', '缓动', '缓入', '缓出', '长尾', '拖尾', '拖影', '残影', '位移', '平移', '横移', '纵移', '推拉', '震屏', '屏震', '抖屏', '抖动', '晃动',
+  '慢放', '快放', '倒放', '定格', '升格', '降格', '慢动作', '入场', '出场', '退场', '飞入', '飞出', '滑入', '滑出', '甩入', '甩出', '甩尾', '缩放', '旋转', '翻转', '渐显', '渐隐',
+  '淡入', '淡出', '闪烁', '频闪', '闪动', '入场动画', '出场动画',
+  // camera
+  '推镜', '拉镜', '摇镜', '移镜', '跟镜', '甩镜', '运镜', '推近', '拉远', '拉近', '特写', '大特写', '近景', '中景', '远景', '全景', '大远景', '俯拍', '仰拍', '航拍', '跟拍',
+  '环拍', '景深', '虚焦', '对焦', '失焦', '机位', '广角', '长焦', '鱼眼', '主观镜头', '过肩', '推轨', '摇臂', '镜头',
+  // editing / transitions
+  '转场', '闪切', '闪白', '闪黑', '硬切', '跳切', '叠化', '溶解', '划像', '擦除', '遮罩', '蒙版', '卡点', '踩点', '切镜', '黑场', '白场', '分屏', '画中画', '鼓点', '重拍',
+  // effects
+  '光效', '特效', '动效', '粒子', '辉光', '光晕', '扫光', '光扫', '溅射', '晕染', '噪点', '颗粒感', '暗角', '色差', '故障风', '外发光', '内发光', '关键帧', '速度线', '光斑',
+  '体积光', '冲击波', '残像', '抽帧', '重影', '动态模糊', '径向模糊',
+  // English
+  'zoom', 'dolly', 'closeup', 'slowmo', 'slowmotion', 'glitch', 'whip', 'swipe', 'wipe', 'fade', 'dissolve', 'parallax', 'bounce', 'overshoot', 'typewriter', 'kinetic',
+  'motionblur', 'particles', 'particle', 'glow', 'bloom', 'lensflare', 'flare', 'shake', 'transition', 'crossfade', 'jumpcut', 'smashcut', 'flashcut', 'matchcut', 'kenburns',
+  'vfx', 'easing', 'easein', 'easeout', 'keyframe', 'speedlines', 'beatsync', 'popin', 'slidein', 'slideout', 'flyin', 'flyout', 'pushin', 'pullout', 'whippan',
+]
+// Modifiers, materials and subjects that appear inside directives but are ordinary words on their own
+const DIRECTIVE_MODIFIERS = [
+  '竹节', '竹简', '竹片', '书法', '书法字', '毛笔字', '毛笔', '墨迹', '墨色', '字', '大字', '文字', '汉字', '标题', '标题字', '字幕', '刀光', '剑光', '刀锋', '光', '光线', '光影',
+  '斜向', '横向', '纵向', '斜', '横', '竖', '向上', '向下', '向左', '向右', '上', '下', '左', '右', '画面', '背景', '前景', '镜', '金色', '金', '红色', '白色', '黑色', '线条',
+  '边框', '卡片', '质感', '纹理', '高光', '阴影', '投影', '速度', '慢', '快', '慢速', '快速', '急速', '缓慢', '缓缓', '轻微', '轻', '重', '强', '弱', '大', '小', '长', '短',
+  '内', '外', '进', '出', '入', '向', '式', '感', '版', '效果', '风格', '节奏', '层', '分层', '叠加', '全屏', '动态', '循环', '连续', '依次', '逐个', '每拍', '拍', '秒', '帧',
+  '次', '遍', '个', '的', '与', '和', '及', '加', '再', '后', '先', '带', '做', '并', '同时', '配合', '跟随', '随', '一', '二', '两', '三', '动作', '运动', '处理', '收尾',
+  '开场', '起势', '爆发', '冲击', '力度', '强调', '突出', '放大', '缩小', '推', '拉', '摇', '移', '跟', '甩', '切', '闪', '震', '抖', '弹', '旋', '转',
+  'in', 'out', 'up', 'down', 'left', 'right', 'slow', 'fast', 'hard', 'soft', 'quick', 'big', 'small', 'with', 'and', 'x', 'fx', 'effect', 'effects', 'style', 'anim',
+  'animation', 'motion', 'camera', 'shot', 'cam', 'lens', 'text', 'title', 'line', 'lines', 'letter', 'letters', 'word', 'words', 'by', 'per', 'each', 'frame', 'frames',
+  'sec', 's', 'ms', 'push', 'pull', 'pan', 'tilt', 'spin', 'rotate', 'flip', 'scale', 'blur', 'stroke', 'trail', 'streak', 'beat', 'cut', 'flash', 'pop', 'slide', 'fly',
+]
+const DIRECTIVE_VOCAB = new Map([...DIRECTIVE_MODIFIERS.map((t) => [t, false]), ...DIRECTIVE_TERMS.map((t) => [t, true])])
+const DIRECTIVE_MAX_TERM = Math.max(...[...DIRECTIVE_VOCAB.keys()].map((t) => t.length))
+// separators inside an on-screen label (kept when content is rebuilt)
+const LABEL_SEP_RE = /([，,、·・•|｜/／;；:：+＋&＆~～→⇒>]+|\s+[-—–]+\s+|\s*—+\s*)/
+const LABEL_STRIP_RE = /[\s"“”'‘’「」『』《》〈〉【】\[\]()（）·・•.,，、:：;；!！?？~～…—–\-_|｜/／+＋&＆→⇒>*＊#＃]+/g
+const BRACKETED_RE = /[（(【\[「『]([^（）()【】\[\]「」『』]{1,24})[）)】\]」』]/g
+
+/**
+ * True when a short on-screen label is nothing but a production directive (effect / camera / motion / typography
+ * vocabulary): 「竹节弹簧回弹」「书法笔画描边」「推镜」「Zoom In」. Real content — anything with a word outside that
+ * vocabulary (「刀光剑影」「封狼居胥」「书法」) — is never a directive.
+ */
+export function isDirectivePhrase(text) {
+  const s = String(text ?? '').toLowerCase().replace(LABEL_STRIP_RE, '')
+  if (!s || s.length > 18) return false
+  // word break over the vocabulary: state[i] = -1 unreachable, 0 covered by modifiers only, 1 covered with a directive term
+  const state = new Array(s.length + 1).fill(-1)
+  state[0] = 0
+  for (let i = 0; i < s.length; i++) {
+    if (state[i] < 0) continue
+    const num = /^[0-9.]+/.exec(s.slice(i))
+    if (num) state[i + num[0].length] = Math.max(state[i + num[0].length], state[i])
+    for (let len = 1; len <= DIRECTIVE_MAX_TERM && i + len <= s.length; len++) {
+      const kind = DIRECTIVE_VOCAB.get(s.slice(i, i + len))
+      if (kind === undefined) continue
+      const next = kind ? 1 : state[i]
+      if (next > state[i + len]) state[i + len] = next
+    }
+  }
+  return state[s.length] === 1
+}
+
+/**
+ * Remove production-directive phrases from an on-screen label and keep the real content: a whole-directive label
+ * becomes '', directive parts of a list-like label ("封狼居胥 · 书法字逐字砸") and bracketed stage directions
+ * ("（推镜）霍去病策马而来") are dropped. `bracketsOnly` (spoken / subtitle text) removes bracketed directions only.
+ */
+export function stripDirectivePhrases(text, { bracketsOnly = false } = {}) {
+  const s = String(text ?? '')
+  if (!s.trim()) return s
+  let out = s.replace(BRACKETED_RE, (m, inner) => (isDirectivePhrase(inner) ? ' ' : m))
+  if (!bracketsOnly) {
+    if (isDirectivePhrase(out)) return ''
+    const parts = out.split(LABEL_SEP_RE)
+    const kept = []
+    let dropped = false
+    for (let i = 0; i < parts.length; i += 2) {
+      const seg = parts[i]
+      if (seg.trim() && isDirectivePhrase(seg)) {
+        dropped = true
+        continue
+      }
+      if (seg.trim()) kept.push({ seg, sep: parts[i + 1] || '' })
+    }
+    if (dropped) out = kept.map((k, idx) => (idx < kept.length - 1 ? k.seg + k.sep : k.seg)).join('')
+  }
+  if (out === s) return s
+  return out.replace(/\s{2,}/g, ' ').replace(/^[\s，,、·・•|｜/／;；:：+＋&＆~～→⇒>—–-]+|[\s，,、·・•|｜/／;；:：+＋&＆~～→⇒>—–-]+$/g, '').trim()
+}
+
+// A film about video making or a creative tool (editing tutorials, this workbench, a comic-studio feature tour) uses
+// effect words as content: keep them there
+const EDITING_TOPIC_RE = /剪辑|视频制作|视频剪|后期|特效制作|动效设计|调色|剪映|premiere|after\s*effects|达芬奇|davinci|final\s*cut|workbench|工作台|教程|tutorial|软件|客户端|功能介绍|功能演示|产品介绍|产品演示|插件|分镜/i
+function isEditingTopic(script) {
+  if (/tutorial/i.test(String(script?.genre || ''))) return true
+  return [script?.title, script?.displayTitle, script?.topic, script?.genreLabel].some((v) => typeof v === 'string' && EDITING_TOPIC_RE.test(v))
+}
+
 const IMPERATIVE_PREFIX_RE = /^(?:请你?|麻烦|帮我|给我|我想|我要|想要)?\s*(?:制作|生成|创作|拍摄|做|产出|设计|出)(?:一部|一条|一个|一段|一支|一份)?\s*(?:\d+\s*(?:秒|分钟|分)(?:左右)?(?:的)?)?\s*(?:不限制时长的|不限时长的|完整的|详细的|高质量的|专业的)?/
 
 /** Short, audience-safe title (≤ 18 chars) derived from an arbitrary brief; '' when none can be trusted. */
@@ -274,7 +380,12 @@ function scrubText(text, briefs, { allowEmpty = true } = {}) {
  * Final gate before write / render. Mutates `script` in place and returns { script, removed[] }.
  * Spoken (narration / subtitles) and on-screen (titles / tags / highlights) fields are all scrubbed.
  */
-export const SCRUBBED_SCENE_TEXT_KEYS = ['narration', 'subtitleText', 'subtitleLine', 'title', 'tag', 'windowTitle', 'counterLabel', 'caption', 'text']
+export const SCRUBBED_SCENE_TEXT_KEYS = ['narration', 'subtitleText', 'subtitleLine', 'title', 'tag', 'windowTitle', 'counterLabel', 'caption', 'text', 'kicker', 'headline', 'subheadline']
+// spoken / subtitle text and scene titles only lose bracketed stage directions ("（推镜）"); the other keys are labels
+const SPOKEN_SCENE_TEXT_KEYS = new Set(['narration', 'subtitleText', 'subtitleLine', 'title'])
+// on-screen word lists of a scene (slips, plaques, keyword stamps…)
+const SCENE_LABEL_LIST_KEYS = ['highlights', 'accentWords', 'keywords']
+const STAGE_LABEL_LIST_KEYS = ['plaques', 'slips', 'calligraphy']
 
 /** Key for `trusted`: a scene text field the user changed in the current save (see writeScriptJson's trustedSceneText). */
 export const trustedSceneTextKey = (sceneId, field) => `${sceneId}\u0000${field}`
@@ -298,15 +409,46 @@ export function sanitizeScriptForRender(script, { trusted = null } = {}) {
     return Boolean(o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, key) && String(o[key] ?? '') === String(sc[key] ?? ''))
   }
 
-  const scrub = (obj, key, opts) => {
+  // On-screen labels must not show motion / production directives (「竹节弹簧回弹」「书法字逐字砸」) — except in films
+  // about video making, where effect words are the content (an editing tutorial listing 「转场 · 特效」).
+  const directives = !isEditingTopic(script)
+  // mode 'label': whole-directive labels / segments are removed; 'spoken': only bracketed stage directions
+  const clean = (text, mode, opts) => {
+    const t = scrubText(text, briefs, opts)
+    if (!directives || typeof t !== 'string' || !mode) return t
+    return stripDirectivePhrases(t, { bracketsOnly: mode === 'spoken' })
+  }
+  const scrub = (obj, key, opts, mode = 'label') => {
     if (!obj || typeof obj[key] !== 'string') return
     const before = obj[key]
-    const after = scrubText(before, briefs, opts)
+    const after = clean(before, mode, opts)
     if (after !== before) {
       removed.push({ field: key, before: before.slice(0, 60) })
       obj[key] = after
     }
   }
+  // word lists (strings, or objects with a text / label / title) → cleaned, emptied entries dropped
+  const scrubList = (list, field) =>
+    list
+      .map((item) => {
+        if (typeof item === 'string') {
+          const after = clean(item, 'label')
+          if (after !== item) removed.push({ field, before: item.slice(0, 60) })
+          return after
+        }
+        if (!item || typeof item !== 'object') return item
+        let out = item
+        for (const k of ['text', 'label', 'title']) {
+          if (typeof out[k] !== 'string') continue
+          const after = clean(out[k], 'label')
+          if (after !== out[k]) {
+            removed.push({ field: `${field}.${k}`, before: out[k].slice(0, 60) })
+            out = { ...out, [k]: after }
+          }
+        }
+        return out
+      })
+      .filter((item) => (typeof item === 'string' ? Boolean(item) : !(item && typeof item === 'object' && ['text', 'label'].some((k) => k in item) && !String(item.text || item.label || '').trim())))
 
   // Script-level on-screen title. A short title naturally reuses words of the brief ("DSH Video Workbench：双引擎全链路…"),
   // so only a title longer than 40 chars (a pasted brief) gets the brief-overlap test; every title is checked for
@@ -328,18 +470,32 @@ export function sanitizeScriptForRender(script, { trusted = null } = {}) {
   for (const sc of script.scenes || []) {
     for (const key of SCRUBBED_SCENE_TEXT_KEYS) {
       if (userOwned(sc, key)) continue
-      scrub(sc, key)
+      scrub(sc, key, undefined, SPOKEN_SCENE_TEXT_KEYS.has(key) ? 'spoken' : 'label')
     }
     // subtitle chunks / cues are cut from the narration (or the on-screen subtitle text): user-written → keep them too
     const userSpoken = ['narration', 'subtitleText', 'subtitleLine'].some((k) => userOwned(sc, k))
     if (Array.isArray(sc.subChunks) && !userSpoken) {
-      sc.subChunks = sc.subChunks.map((c) => scrubText(c, briefs)).filter(Boolean)
+      sc.subChunks = sc.subChunks.map((c) => clean(c, 'spoken')).filter(Boolean)
     }
     if (Array.isArray(sc.subtitles) && !userSpoken) {
-      sc.subtitles = sc.subtitles.filter((c) => c && scrubText(c.text, briefs))
+      sc.subtitles = sc.subtitles
+        .map((c) => {
+          if (!c || typeof c.text !== 'string') return c
+          const text = clean(c.text, 'spoken')
+          return text === c.text ? c : { ...c, text }
+        })
+        .filter((c) => c && scrubText(c.text, briefs))
     }
-    if (Array.isArray(sc.highlights)) {
-      sc.highlights = sc.highlights.map((h) => scrubText(h, briefs)).filter(Boolean)
+    // beat-aligned sub-shots carry their subtitle chunk (scene.cuts[].text); the cut itself (timing) always stays
+    if (Array.isArray(sc.cuts) && !userSpoken) {
+      sc.cuts = sc.cuts.map((c) => {
+        if (!c || typeof c.text !== 'string') return c
+        const text = clean(c.text, 'spoken')
+        return text === c.text ? c : { ...c, text }
+      })
+    }
+    for (const key of SCENE_LABEL_LIST_KEYS) {
+      if (Array.isArray(sc[key]) && !userOwned(sc, key)) sc[key] = scrubList(sc[key], key)
     }
     for (const side of ['compareLeft', 'compareRight']) {
       if (sc[side] && typeof sc[side] === 'object') {
@@ -351,9 +507,9 @@ export function sanitizeScriptForRender(script, { trusted = null } = {}) {
       for (const m of sc.metrics) scrub(m, 'label')
     }
     if (sc.stageSpec && typeof sc.stageSpec === 'object') {
-      for (const key of ['headline', 'subheadline']) scrub(sc.stageSpec, key)
-      if (Array.isArray(sc.stageSpec.plaques)) {
-        sc.stageSpec.plaques = sc.stageSpec.plaques.map((p) => scrubText(p, briefs)).filter(Boolean)
+      for (const key of ['headline', 'subheadline', 'sealText']) scrub(sc.stageSpec, key)
+      for (const key of STAGE_LABEL_LIST_KEYS) {
+        if (Array.isArray(sc.stageSpec[key])) sc.stageSpec[key] = scrubList(sc.stageSpec[key], `stageSpec.${key}`)
       }
     }
     if (!String(sc.narration || '').trim() && String(sc.title || '').trim() && sc.voiceMode !== 'silent') {

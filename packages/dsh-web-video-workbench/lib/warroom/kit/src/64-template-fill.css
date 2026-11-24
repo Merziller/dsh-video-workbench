@@ -1,0 +1,34 @@
+/* 模板填空 (64-template-fill.js): one card per shot — its words and its picture places */
+.pk-tf-shot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--pk-line);
+  border-radius: var(--pk-radius-sm);
+  background: var(--pk-bg2);
+}
+.pk-tf-shot.is-changed {
+  border-color: color-mix(in srgb, var(--pk-acc) 45%, var(--pk-line));
+}
+.pk-tf-shot-h {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--pk-ink2);
+}
+.pk-tf-shot-h b {
+  color: var(--pk-ink);
+  font-size: 14px;
+}
+.pk-tf-thumb {
+  flex: none;
+  width: 64px;
+  height: 36px;
+  object-fit: cover;
+  border: 1px solid var(--pk-line);
+  border-radius: 4px;
+  background: var(--pk-bg3);
+}

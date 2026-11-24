@@ -17,15 +17,22 @@ import {
 } from '../shared/index.js'
 import {
   analyzeFrozenFrames,
+  analyzeHeldPictures,
   analyzeJumpCuts,
   analyzeMotionActivity,
+  analyzeShotRhythm,
+  buildHeldPictureCheck,
   buildSceneTimeline,
+  buildShotRhythmCheck,
   buildTemporalQaChecks,
+  classifyFilmRhythm,
+  collectHoldFrames,
   collectIntentionalImpactTimes,
   collectTemporalSignals,
   DEFAULT_TEMPORAL_QA_OPTIONS,
   detectOutlierFrameBursts,
   detectPhotosensitiveFlashes,
+  segmentHeldPictures,
 } from './qa-detectors.js'
 import { buildDeterminismCheck, runDeterminismCheck } from './determinism-check.js'
 
@@ -91,9 +98,41 @@ export async function runTemporalQaAnalysis({ mp4Path, script, fps, durationSec,
     freeze,
     jumps,
     motion,
-    checks: buildTemporalQaChecks({ flash, freeze, jumps, motion }),
+    checks: buildTemporalQaChecks({ flash, freeze, jumps, motion, capabilities: sig.capabilities }),
+    capabilities: sig.capabilities || null,
+    degraded: sig.degraded || [],
     frameCount: sig.frameCount,
     analysisMs: sig.analysisMs,
+  }
+}
+
+/**
+ * Held pictures and shot rhythm (one small 4 fps decode pass, ≈ 1–2 s for a 2–3 minute film): how much of the film
+ * shows the same picture for ≥ 4 s, and where. Beat films (subtitle MV / beat-synced / dynamic or 高燃 pacing) fail
+ * on long holds; other films only get a hint for extreme ones. `filmRhythm` ('beat' | 'narration') overrides the
+ * classification read from script.json.
+ */
+export async function runHeldPictureAnalysis({ mp4Path, script, durationSec, width, height, fps, filmRhythm, options = {}, signal } = {}) {
+  const { ffmpeg } = resolveBinaries()
+  const startedAt = Date.now()
+  const decoded = await collectHoldFrames({ ffmpeg, mp4Path, width, height, durationSec, signal })
+  const { segments } = segmentHeldPictures({ ...decoded, options })
+  // scene timing in script.json is in the plan's own frame rate
+  const timeline = buildSceneTimeline(script || {}, Number(script?.fps) || fps || 30)
+  const rhythm = classifyFilmRhythm(script, filmRhythm)
+  const held = analyzeHeldPictures({
+    segments,
+    totalSec: Number(durationSec) || segments[segments.length - 1]?.endSec || 0,
+    timeline,
+    rhythm,
+    allowedIntervals: script?.qa?.allowedHolds || [],
+    options,
+  })
+  const shot = analyzeShotRhythm({ timeline, held, totalSec: durationSec, options })
+  return {
+    held: { ...held, method: `${decoded.W}×${decoded.H} 灰度 · ${decoded.fps} fps · ${decoded.GW}×${decoded.GH} 粗网格`, analysisMs: Date.now() - startedAt },
+    shot,
+    checks: [buildHeldPictureCheck(held), buildShotRhythmCheck(shot, { beat: rhythm.kind === 'beat' })].filter(Boolean),
   }
 }
 
@@ -267,7 +306,8 @@ export async function runTypecheckOnProject(projectDir) {
 
 /**
  * Post-render automated FFmpeg quality audit (`ffprobe` + `blackdetect` + `ebur128` LUFS),
- * plus temporal checks (photosensitive flash risk · frozen frames · unplanned jump cuts)
+ * plus temporal checks (photosensitive flash risk · frozen frames · unplanned jump cuts), held pictures / shot rhythm
+ * (same picture for too long — a failure for beat films, see runHeldPictureAnalysis)
  * and an optional `deep` determinism check (same frame rendered twice, pixel hashes compared).
  * Persists result to `output/qa_report.json`.
  */
@@ -312,6 +352,9 @@ export async function runPostRenderQa({
   temporal,
   freezeThresholdSec,
   temporalOptions = {},
+  heldPicture,
+  heldPictureOptions = {},
+  filmRhythm,
   determinismFrames,
   exposure = null,
   signal,
@@ -351,6 +394,28 @@ export async function runPostRenderQa({
   const actualDurationSec = Number(probeJson.format?.duration || 0)
   const expectedDurationSec = Number(script?.totalDurationSec || actualDurationSec)
   const durationDiffSec = Number(Math.abs(actualDurationSec - expectedDurationSec).toFixed(3))
+  const videoFps = parseFrameRate(vStream.avg_frame_rate || vStream.r_frame_rate, Number(script?.fps) || 30)
+
+  // Held pictures run on every QA: a small 4 fps decode started now, so it overlaps the full-size analysis passes
+  // below (≈ 1–3 s for a 2–3 minute film). DSH_QA_HOLDS=0 disables it.
+  const heldEnabled = heldPicture !== undefined ? Boolean(heldPicture) : process.env.DSH_QA_HOLDS !== '0'
+  const heldTask =
+    heldEnabled && vStream.codec_name && actualDurationSec > 1
+      ? runHeldPictureAnalysis({
+          mp4Path: targetMp4,
+          script,
+          durationSec: actualDurationSec,
+          width: Number(vStream.width) || 0,
+          height: Number(vStream.height) || 0,
+          fps: videoFps,
+          filmRhythm,
+          options: heldPictureOptions,
+          signal,
+        }).then(
+          (value) => ({ value }),
+          (error) => ({ error }),
+        )
+      : null
 
   // Run blackdetect + EBU R128 loudness in a single FFmpeg analysis pass
   const filterRes = await runCommandRedirected(
@@ -496,7 +561,6 @@ export async function runPostRenderQa({
   let temporalReport = null
   const temporalEnabled = temporal !== undefined ? Boolean(temporal) : process.env.DSH_QA_TEMPORAL !== '0'
   if (temporalEnabled && vStream.codec_name && actualDurationSec > 0.3) {
-    const videoFps = parseFrameRate(vStream.avg_frame_rate || vStream.r_frame_rate, Number(script?.fps) || 30)
     try {
       temporalReport = await runTemporalQaAnalysis({
         mp4Path: targetMp4,
@@ -515,6 +579,28 @@ export async function runPostRenderQa({
         passed: true,
         severity: 'skipped',
         value: `已跳过：${String(err?.message || err).slice(0, 160)}`,
+      })
+    }
+  }
+
+  let heldReport = null
+  if (heldTask) {
+    const outcome = await heldTask
+    if (outcome.value) {
+      heldReport = outcome.value
+      // frame-to-frame activity and held pictures measure different things: explain when they seem to disagree
+      const motionRow = checks.find((c) => /^画面动势/.test(String(c.name || '')))
+      if (motionRow && heldReport.held.severity !== 'pass' && motionRow.severity !== 'warning') {
+        motionRow.value = `${motionRow.value}；注意：画面里有元素一直在动（光效/粒子/小动画），但整体构图很少换，见「画面停留检测」`
+      }
+      checks.push(...heldReport.checks)
+    } else {
+      if (signal?.aborted) throw outcome.error
+      checks.push({
+        name: '画面停留检测（同一画面停留多久）',
+        passed: true,
+        severity: 'skipped',
+        value: `已跳过：${String(outcome.error?.message || outcome.error).slice(0, 160)}`,
       })
     }
   }
@@ -538,6 +624,10 @@ export async function runPostRenderQa({
   }
 
   const passed = checks.every((c) => c.passed)
+  const failedChecks = checks.filter((c) => c.passed === false)
+  const warningChecks = checks.filter((c) => c.severity === 'warning')
+  // short check names for the one-line verdict ("画面停留检测（卡点片…）" → "画面停留检测")
+  const shortName = (c) => String(c.name || '检查项').replace(/\s*[（(].*$/, '')
   const report = {
     ok: true,
     passed,
@@ -561,9 +651,19 @@ export async function runPostRenderQa({
     jumpCuts: temporalReport?.jumps || null,
     motionActivity: temporalReport?.motion ? { ...temporalReport.motion, perSec: undefined } : null,
     temporalAnalysisMs: temporalReport?.analysisMs ?? null,
+    // held pictures: share of the film showing the same picture ≥ 4 s, every hold with time range and scene ids
+    heldPictures: heldReport?.held || null,
+    // planned shot lengths (script.json) against the measured picture changes
+    shotRhythm: heldReport?.shot || null,
+    // which FFmpeg filters the temporal pass used, and what was measured differently because a filter is missing
+    qaCapabilities: temporalReport ? { filters: temporalReport.capabilities, notes: temporalReport.degraded } : null,
     determinism,
     deep: Boolean(deep),
-    warnings: checks.filter((c) => c.severity === 'warning').map((c) => `${c.name}：${c.value}`),
+    headline: passed
+      ? `成片质检通过${warningChecks.length ? `（${warningChecks.length} 项提示：${warningChecks.map(shortName).join('、')}）` : ''}`
+      : `成片质检未通过：${failedChecks.map(shortName).join('、')}`,
+    failures: failedChecks.map((c) => `${c.name}：${c.value}`),
+    warnings: warningChecks.map((c) => `${c.name}：${c.value}`),
     checks,
     checkedAt: new Date().toISOString(),
   }

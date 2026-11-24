@@ -244,6 +244,12 @@
       /** async helper: show the frame busy strip while fn runs; toasts errors; returns fn's result or undefined */
       async task(label, fn, opts = {}) {
         frame.busy(label)
+        // long work (a model call may take minutes) shows its running time in the strip instead of looking frozen
+        const t0 = Date.now()
+        const tick = setInterval(() => {
+          const s = Math.round((Date.now() - t0) / 1000)
+          if (s >= 5 && !frame.closed) frame.busy(`${label} · 已用时 ${U.fmtDur(s)}`)
+        }, 1000)
         try {
           const r = await fn()
           if (opts.ok) PK.toast(typeof opts.ok === 'function' ? opts.ok(r) : opts.ok, 'success')
@@ -252,6 +258,7 @@
           PK.reportError(err, opts.fail)
           return undefined
         } finally {
+          clearInterval(tick)
           frame.busy(false)
           if (opts.rerender !== false) ctx.update()
         }
@@ -366,12 +373,13 @@
         {
           label: 'AI 一键润色',
           icon: 'wand',
-          busyText: 'AI 润色中…',
+          busyText: PK.llmBusy('AI 润色中…'),
           run: async (text) => {
             if (!text.trim()) throw new PK.Error('先写一句你的想法，再让 AI 润色扩写')
             if (!PK.hasProject()) throw new PK.Error('请先新建或打开一个视频工程', { code: 'no-project' })
             await PK.action('setDirector', { patch: { topic: text } })
-            await PK.action('polishTopic', { topic: text }, { timeout: 300000 })
+            // the host polls the async polish job; the model may take up to its full limit (10 minutes by default)
+            await PK.action('polishTopic', { topic: text }, { timeout: PK.llmTimeout() })
             // the host updates director.topic when the polish completes; wait for that state push
             await PK.waitState((s) => s && s.director && s.director.topic && s.director.topic !== text, 4000)
             const polished = String((PK.state && PK.state.director && PK.state.director.topic) || '')

@@ -40,14 +40,16 @@ import {
 } from './audio-synth.js'
 import { generateAiCodedBgmTrack, synthesizeTtsEngineAudioCue } from './audio-coder.js'
 import { normalizeTransitionKind, runSchemaDirectorWithDegradation } from './plan-schema.js'
+import * as planSchemaApi from './plan-schema.js'
 import { masterVoiceTracks } from './voice-master.js'
 import { buildRichHtmlVideo, resolvePalette } from './html-generator.js'
-import { callLlmChat, extractJsonFromLlmText, resolveLlmConfig } from './llm-client.js'
+import { callLlmChat, extractJsonFromLlmText, formatLlmWait, getLlmTimeoutMs, resolveLlmConfig } from './llm-client.js'
 import { applyFigureStyleChoice, buildFigureStylePlanDirective, inferFigureStyle, resolveFigureStyleNote, writeFigureKitRemotionLib } from './figure-kit.js'
 import { writeNarrativeDioramaRemotionLib } from './narrative-diorama.js'
 import { auditToolUsage, buildToolUpgradePrompt, planSceneTools, summarizeToolAudit } from './scene-tool-plan.js'
-import { buildVisualFixRequest, buildVisualReviewRequest, isVisionUnsupportedError, parseVisualReview } from './visual-review.js'
-import { planSceneKeyframes, renderSceneKeyframes } from '../dsh-tool-video-suite/scene-keyframes.js'
+import { buildVisualFixRequest, buildVisualReviewRequest, loosenCroppedCuts, parseVisualReview } from './visual-review.js'
+import { noteVisionOutcome, prepareVisionCall, stripImagesFromMessages, visionStatusLine } from './vision-capability.js'
+import { measureSceneMotion, planSceneReviewFrames, renderSceneKeyframes, STATIC_SCENE_GRID_TOL } from '../dsh-tool-video-suite/scene-keyframes.js'
 import { syncRemotionPublicAssets, writeRemotionProjectFiles } from './remotion-generator.js'
 import { buildMediaDimsMap, groundVisualAssets } from './vision-grounding.js'
 import { billingErrorFromText, createBillingSentinel, isBillingError, toBillingError } from './cloud-ledger.js'
@@ -72,11 +74,13 @@ import {
   writeLockedRegistryBlock,
 } from './scene-locks.js'
 import { applyLockedHtmlStore, filterRefinePatch, prepareTargetedRefine, restoreLockedHtmlScenes, syncLockedHtmlStore } from './region-refine.js'
+import { stripTalkEditFields } from './talk-edit.js'
 import {
   buildBatchedRemotionScenesPrompt,
   buildDirectorPromptPackage,
   buildHtmlCoderSkillsPrompt,
   buildRemotionCoderSkillsPrompt,
+  subShotWindowsForPrompt,
   writeShotcraftRemotionLib,
 } from './shotcraft-lib.js'
 import {
@@ -409,6 +413,66 @@ ${spreads}
   writeFileSync(join(scenesDir, 'index.ts'), applyLockedRegistryBlock(indexCode, lockedModules), 'utf8')
 }
 
+const escapeRx = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * Scene ids of a batch that have no component in the batch's export dictionary (`export const BATCH_NN_SCENES = {
+ * 'scene-03': Scene_scene_03, … }`). A missing id renders the built-in template picture instead of the scene code.
+ * Code without any scene component (an isolated / failed batch) is not judged here.
+ */
+export function findUnregisteredSceneIds(code, exportName, sceneIds = []) {
+  const src = String(code || '')
+  if (!src.includes('useCurrentFrame') || !exportName) return []
+  const decl = new RegExp(`export\\s+const\\s+${escapeRx(exportName)}\\b`).exec(src)
+  if (!decl) return [...sceneIds]
+  // the dictionary literal after the export (or the whole file when the export points at an object built above)
+  const after = src.slice(decl.index)
+  const inline = /^[^=;]*=\s*\{/.test(after.slice(0, 240))
+  const region = inline ? after : src
+  return sceneIds.filter((id) => {
+    const lit = escapeRx(id)
+    if (new RegExp(`(['"\`])${lit}\\1\\s*:|\\[\\s*(['"\`])${lit}\\2\\s*\\]\\s*:`).test(region)) return false
+    // identifier keys ({ scene01: … }) for ids that are valid identifiers
+    return !(/^[A-Za-z_$][\w$]*$/.test(id) && new RegExp(`[{,\\s]${lit}\\s*[:,}]`).test(region))
+  })
+}
+
+/** Repair-loop message for scenes missing from a batch's export dictionary (sent to the coder model). */
+export function describeUnregisteredScenes(filePath, exportName, missing = []) {
+  const first = String(missing[0] || '')
+  return `${filePath}: 导出字典 ${exportName} 里缺少镜头 ${missing.map((id) => `'${id}'`).join('、')} 的组件——每个镜头 id 都必须在 ${exportName} 里注册一个组件（例如 '${first}': Scene_${first.replace(/[^a-zA-Z0-9]/g, '_')}），否则这些镜头会退回内置模板画面。`
+}
+
+/**
+ * Shot count of an 「AI 编码出片」 plan against the main storyboard's expectation (plan-schema.js resolvePlanShotNeeds
+ * over the film's duration policy and pacing). A sparse plan gets a plain-Chinese notice; on a beat-locked film its long
+ * shots are densified by the beat-aligned sub-shots (beat-analyzer.js scene.cuts).
+ */
+export function assessPlanDensity({ shots = 0, policy = {}, narrationMode = '', pacingMode = 'auto', topic = '', style = '' } = {}) {
+  let pacing = null
+  try {
+    pacing = typeof planSchemaApi.resolvePacingProfile === 'function' ? planSchemaApi.resolvePacingProfile({ topic, style, narrationMode, pacingMode }) : null
+  } catch {}
+  const beatDriven = narrationMode === 'subtitle-mv' || narrationMode === 'tts-beat-sync' || pacing?.id === 'dynamic'
+  let needs = null
+  try {
+    if (typeof planSchemaApi.resolvePlanShotNeeds === 'function') {
+      needs = planSchemaApi.resolvePlanShotNeeds({ policyMin: policy?.targetShotsMin, policyMax: policy?.targetShotsMax, targetSec: policy?.targetSec, pacingProfile: pacing, beatDriven })
+    }
+  } catch {}
+  const needMin = Math.max(2, Math.round(Number(needs?.needMin) || Number(policy?.targetShotsMin) || 2))
+  const needMax = Math.max(needMin, Math.round(Number(needs?.needMax) || Number(policy?.targetShotsMax) || needMin))
+  const n = Math.max(0, Math.round(Number(shots) || 0))
+  const sparse = n > 0 && n < needMin
+  const message = sparse
+    ? `分镜偏少：这一版只有 ${n} 个镜头，本片的节奏需要 ${needMin}～${needMax} 个。` +
+      (beatDriven
+        ? '较长的镜头会按音乐节拍自动切成几个画面（每隔几拍换一次景别和字幕），不会一张画面停十几秒；想要内容更丰富，可以补充分镜后重新生成。'
+        : '每个镜头会停留比较久，画面可能显得拖沓，建议在分镜表里补充镜头后重新生成。')
+    : ''
+  return { shots: n, needMin, needMax, beatDriven, sparse, message }
+}
+
 /**
  * Genre-Agnostic Modular Batched AI Remotion Scene Coder:
  * Splits scenes into batches (`src/scenes/Batch01.tsx` .. `BatchNN.tsx`), invokes LLM coding
@@ -425,6 +489,11 @@ export async function authorBatchedRemotionScenes({
   concurrency = 1,
   maxRepairRounds = 2,
   visualReview = true,
+  // 「逐个机位看图」: one still per sub-shot / about every 4 s, plus a re-check of the rewritten shots (the pipeline turns it
+  // on unless the user switched it off; direct callers opt in)
+  visualReviewFine = false,
+  // local scene-motion check (renders stills; the pipeline turns it on, direct callers opt in)
+  motionCheck = false,
   signal,
   onProgress,
 }) {
@@ -602,7 +671,8 @@ export async function authorBatchedRemotionScenes({
             messages: [{ role: 'user', content: pkg.user }],
             temperature: attempt === 1 ? 0.35 : 0.25,
             maxTokens: item.batchScenes.length >= 5 ? 16000 : 14000,
-            timeoutMs: 600_000,
+            timeoutMs: getLlmTimeoutMs(),
+            purpose: '编写镜头代码',
             signal,
           })
           extracted = extractTsxFromReply(res?.text, item.filePath, item.exportName)
@@ -667,7 +737,8 @@ export async function authorBatchedRemotionScenes({
               messages: [{ role: 'user', content: subPkg.user.replaceAll(item.filePath, subFile) }],
               temperature: 0.28,
               maxTokens: 10000,
-              timeoutMs: 360_000,
+              timeoutMs: getLlmTimeoutMs(),
+              purpose: '编写镜头代码',
               signal,
             })
             const subCode = extractTsxFromReply(subRes?.text, subFile, subExport)
@@ -729,30 +800,225 @@ export async function authorBatchedRemotionScenes({
   const upgradedInfos = []
   const finalToolAudit = () => summarizeToolAudit(batchInfos.map((info) => auditToolUsage(info.code, info.batchScenes.map((sc) => sc.id), filmToolPlan)), filmToolPlan)
   let visualReviewDone = false
+  let visualRecheckDone = false
   let visualReport = null
+  // a scene id missing from its batch's export dictionary is sent back to the coder once (then reported, not looped)
+  let registryRepairsLeft = 1
+  let unregisteredSceneIds = []
+  // scene-motion check (local stills, no model): one rewrite pass for scenes whose picture never changes
+  let motionCheckDone = false
+  let motionReport = null
+
+  const runSceneMotionCheck = async () => {
+    const report = { checkedScenes: 0, stills: 0, staticScenes: [], fixedBatches: [], skipped: '' }
+    motionReport = report
+    const authored = batchInfos.filter((b) => b.code.includes('useCurrentFrame'))
+    const wanted = authored.flatMap((b) => b.batchScenes.map((sc) => sc.id)).filter((id) => !unregisteredSceneIds.includes(id))
+    if (!wanted.length) {
+      report.skipped = '没有可检查的镜头'
+      return 0
+    }
+    onProgress?.('repair', 72, `画面变化检查：正在为 ${wanted.length} 个镜头截取画面…`)
+    let measured
+    try {
+      measured = await measureSceneMotion({ projectDir: absDir, scenes, fps: Number(lockedScript.fps) || 30, sceneIds: wanted, maxStills: 96, signal })
+    } catch (err) {
+      if (err?.name === 'AbortError' || signal?.aborted) throw err
+      report.skipped = `截取画面失败（${String(err?.message || err).slice(0, 80)}）`
+      return 0
+    }
+    if (!measured?.ok) {
+      report.skipped = `截取画面失败（${String(measured?.reason || '未知原因').slice(0, 80)}）`
+      return 0
+    }
+    report.checkedScenes = Object.keys(measured.scenes).length
+    report.stills = Object.values(measured.scenes).reduce((a, m) => a + (m.stills || 0), 0)
+    const stat = Object.entries(measured.scenes).filter(([, m]) => m.stills >= 2 && m.maxStep < STATIC_SCENE_GRID_TOL).map(([id]) => id)
+    report.staticScenes = stat
+    if (!stat.length) return 0
+    const flaggedInfos = authored.filter((info) => info.batchScenes.some((sc) => stat.includes(sc.id)))
+    onProgress?.('repair', 73, `画面变化检查：${stat.length} 个镜头的画面几乎不动，正在让 AI 重写 ${flaggedInfos.length} 个分批…`)
+    let rewritten = 0
+    for (const info of flaggedInfos) {
+      if (signal?.aborted) throw createAbortError()
+      const staticHere = info.batchScenes.filter((sc) => stat.includes(sc.id))
+      const prompt = JSON.stringify(
+        {
+          task: `请修改 ${info.filePath}：下列镜头的画面从头到尾几乎没有变化`,
+          staticScenes: staticHere.map((sc) => ({
+            id: sc.id,
+            title: sc.title,
+            durationSec: sc.durationSec,
+            subShots: subShotWindowsForPrompt(sc, Number(lockedScript.fps) || 30),
+            issue: `在这一镜里均匀截取的 ${measured.scenes[sc.id]?.stills || 0} 张画面（有子镜头时取每个子镜头的中段）几乎一模一样，看起来像一张静止的图片。`,
+          })),
+          instruction:
+            '保留整体风格与题材，但让画面真正变化：有 subShots 时按 scene.cut.index 为每个子镜头换一个新构图（换主体位置、景别、人物动作，或出现新的关键词、数字、图形、道具），子镜头内的动画用 frame - scene.cut.start 计时；没有子镜头时在镜头中段安排一次明显的新动作或新信息层。不要只靠缓慢推镜或粒子漂移，不要加全屏闪白。其他镜头的代码保持不变。',
+          currentCode: info.code,
+          requiredExportName: info.exportName,
+          requiredSceneIds: info.batchScenes.map((s) => s.id),
+          strictReminder: `仅输出严格 JSON { "files": { "${info.filePath}": "<完整修复代码>" } }，禁止使用 Math.random()、@keyframes 或 transition 冒号写法，确保 tsc --noEmit 零错误。`,
+        },
+        null,
+        2,
+      )
+      try {
+        const res = await invokeLlm({
+          system: info.systemPrompt,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.25,
+          maxTokens: info.batchScenes.length >= 5 ? 16000 : 14000,
+          timeoutMs: getLlmTimeoutMs(),
+          purpose: '画面变化返工',
+          signal,
+        })
+        const fixedCode = extractTsxFromReply(res?.text, info.filePath, info.exportName)
+        if (fixedCode && fixedCode.includes('useCurrentFrame')) {
+          // the compiling code stays as the fallback if the rewrite never compiles
+          if (typeof info.preUpgradeCode !== 'string') info.preUpgradeCode = info.code
+          info.code = fixedCode
+          rewritten++
+          report.fixedBatches.push(info.filePath)
+        }
+      } catch (err) {
+        if (err?.name === 'AbortError' || signal?.aborted) throw err
+        if (isBillingError(err)) throw toBillingError(err, { scope: 'llm', provider: resolvedCfg?.model || '' })
+      }
+    }
+    return rewritten
+  }
 
   // 画面自检: render keyframes of the compiled scenes, let the multimodal model look at them batch by batch, and send
   // the shots with a major problem back to the coder once (screenshots attached). Returns the number of batches rewritten.
+  // 「逐个机位看图」 (visualReviewFine): one still per sub-shot (机位) / about every 4 s instead of the 35% / 80% pair, and
+  // the rewritten or re-framed shots are looked at once more afterwards (runVisualRecheck). In both modes a title or face
+  // cut off by a sub-shot's zoom (「crop」) is fixed by a looser framing for that 机位 — no model call.
+  const MAX_REVIEW_IMAGES = 24
+  const MAX_REVIEW_STILLS = 240
+  const reviewFps = Number(lockedScript.fps) || 30
+  const reviewW = Number(lockedScript.width) || 1920
+  const reviewH = Number(lockedScript.height) || 1080
+  const reviewScale = Math.min(1, 960 / Math.max(reviewW, reviewH))
+  let reviewVision = null
+  // scenes that had a major problem in the first look (after local fixes), for the re-check's resolved / remaining lists
+  let firstReviewMajor = new Set()
+  // every still of a scene at most this many times (whole film ≤ MAX_REVIEW_STILLS stills)
+  const reviewFramesFor = (ids, fine) =>
+    planSceneReviewFrames(scenes, reviewFps, { fine, maxPerScene: Math.max(2, Math.min(6, Math.floor(MAX_REVIEW_STILLS / Math.max(1, ids.size)))) }).filter((k) => ids.has(k.sceneId))
+  // review calls: whole scenes of one batch, at most MAX_REVIEW_IMAGES stills per call
+  const reviewUnits = (targets, frames) => {
+    const units = []
+    for (const { info, scenes: list } of targets) {
+      let cur = null
+      for (const sc of list) {
+        const fs = frames.filter((f) => f.sceneId === sc.id)
+        if (!fs.length) continue
+        if (!cur || cur.frames.length + fs.length > MAX_REVIEW_IMAGES) {
+          cur = { info, scenes: [], frames: [] }
+          units.push(cur)
+        }
+        cur.scenes.push(sc)
+        cur.frames.push(...fs)
+      }
+    }
+    return units
+  }
+  // look at the units (2 calls at a time): { results: [{ unit, review }], rejected, lastError }
+  const reviewWithVision = async (units, vision, purpose) => {
+    // a dedicated 看图模型 reviews; the coder model still rewrites (without the screenshots it may not be able to read)
+    const reviewOverride = vision.dedicated ? { overrideConfig: vision.config } : {}
+    const results = []
+    let rejected = ''
+    let lastError = ''
+    let next = 0
+    const worker = async () => {
+      while (next < units.length && !rejected) {
+        const unit = units[next++]
+        const ids = unit.scenes.map((sc) => sc.id)
+        const req = buildVisualReviewRequest({
+          batchScenes: unit.scenes,
+          frames: unit.frames,
+          genreLabel: lockedScript.genreLabel || lockedScript.genre || '',
+          figureStyle: filmFigureStyle,
+          figureStyleNote: filmFigureNote,
+          // the film's cast: the review checks every person of a shot's cast is visible, with their look
+          cast: filmCast,
+          width: reviewW,
+          height: reviewH,
+          fine: visualReviewFine,
+        })
+        try {
+          const res = await invokeLlm({ ...reviewOverride, system: req.system, messages: req.messages, temperature: 0.1, maxTokens: Math.min(6000, Math.max(2600, 520 * ids.length)), purpose, signal })
+          const parsed = parseVisualReview(res?.text, ids, { batchScenes: unit.scenes, cast: filmCast })
+          if (!parsed.looked) {
+            // the reply never says what it saw: the gateway took the pictures but the model did not look (remembered)
+            rejected = rejected || visionStatusLine(noteVisionOutcome(vision, { code: 'not-looked' }))
+            continue
+          }
+          noteVisionOutcome(vision, { ok: true })
+          results.push({ unit, review: parsed.scenes })
+        } catch (err) {
+          if (err?.name === 'AbortError' || signal?.aborted) throw err
+          if (isBillingError(err)) throw toBillingError(err, { scope: 'llm', provider: resolvedCfg?.model || '' })
+          // a refused picture (remembered for this model) or a timeout stops the review; other errors skip one call
+          const c = noteVisionOutcome(vision, { error: err })
+          if (c.conclusive || c.code === 'timeout') rejected = rejected || visionStatusLine(c)
+          else lastError = visionStatusLine(c)
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(2, units.length) }, () => worker()))
+    return { results, rejected, lastError }
+  }
+  // the problems a rewrite still has to solve: crops already fixed by a looser framing are left out
+  const pendingReview = (review) =>
+    Object.fromEntries(
+      Object.entries(review).map(([id, v]) => {
+        const issues = v.issues.filter((it) => !it.resolvedLocally)
+        return [id, { ...v, issues, severity: issues.length ? v.severity : 'none' }]
+      }),
+    )
+
   const runVisualSelfReview = async () => {
-    const report = { reviewedScenes: 0, frameCount: 0, majorScenes: 0, fixedScenes: 0, failedBatches: 0, fixedBatches: [], scenes: {}, skipped: '' }
+    const report = {
+      detail: visualReviewFine ? 'fine' : 'standard',
+      reviewedScenes: 0,
+      frameCount: 0,
+      majorScenes: 0,
+      fixedScenes: 0,
+      localFixedScenes: 0,
+      remainingMajor: 0,
+      failedBatches: 0,
+      fixedBatches: [],
+      loosenedCuts: [],
+      scenes: {},
+      skipped: '',
+    }
     visualReport = report
     const authored = batchInfos.filter((b) => b.code.includes('useCurrentFrame'))
     if (!authored.length) {
       report.skipped = '没有可检查的镜头'
       return 0
     }
-    const W = Number(lockedScript.width) || 1920
-    const H = Number(lockedScript.height) || 1080
-    const fps = Number(lockedScript.fps) || 30
+    // 看图能力 first (shared with 参考复刻 / 截图定位): a model that cannot see would make the keyframe rendering below
+    // wasted work — skip with the reason in plain Chinese
+    onProgress?.('repair', 73, '画面自检：正在确认当前大模型能否看图…')
+    const vision = await prepareVisionCall({ mainConfig: llmConfig, fetchImpl, signal })
+    if (!vision.ok) {
+      report.skipped = visionStatusLine(vision)
+      report.visionCode = vision.code
+      return 0
+    }
+    reviewVision = vision
     const wanted = new Set(authored.flatMap((b) => b.batchScenes.map((sc) => sc.id)))
-    const keyframes = planSceneKeyframes(scenes, fps).filter((k) => wanted.has(k.sceneId))
-    onProgress?.('repair', 74, `画面自检：正在渲染 ${wanted.size} 个镜头的关键帧…`)
+    const keyframes = reviewFramesFor(wanted, visualReviewFine)
+    onProgress?.('repair', 74, `画面自检：正在渲染 ${wanted.size} 个镜头的${visualReviewFine ? ` ${keyframes.length} 张截图（逐个机位）` : '关键帧'}…`)
     let rendered
     try {
       rendered = await renderSceneKeyframes({
         projectDir: absDir,
         keyframes,
-        scale: Math.min(1, 960 / Math.max(W, H)),
+        scale: reviewScale,
         outDir: join(absDir, 'output', 'visual-review'),
         signal,
       })
@@ -766,45 +1032,22 @@ export async function authorBatchedRemotionScenes({
       return 0
     }
     report.frameCount = rendered.frames.length
-    onProgress?.('repair', 75, `画面自检：大模型正在逐镜查看 ${report.frameCount} 张关键帧…`)
-    const reviews = []
-    let visionRejected = ''
-    let nextReview = 0
-    const reviewWorker = async () => {
-      while (nextReview < authored.length && !visionRejected) {
-        const info = authored[nextReview++]
-        const ids = info.batchScenes.map((sc) => sc.id)
-        const frames = rendered.frames.filter((f) => ids.includes(f.sceneId))
-        if (!frames.length) continue
-        const req = buildVisualReviewRequest({
-          batchScenes: info.batchScenes,
-          frames,
-          genreLabel: lockedScript.genreLabel || lockedScript.genre || '',
-          figureStyle: filmFigureStyle,
-          figureStyleNote: filmFigureNote,
-          width: W,
-          height: H,
-        })
-        try {
-          const res = await invokeLlm({ system: req.system, messages: req.messages, temperature: 0.1, maxTokens: 2600, timeoutMs: 240_000, signal })
-          const parsed = parseVisualReview(res?.text, ids)
-          if (!parsed.looked) {
-            visionRejected = visionRejected || '当前模型没有返回看图结果（可能不支持图片输入）'
-            continue
-          }
-          reviews.push({ info, review: parsed.scenes, frames })
-        } catch (err) {
-          if (err?.name === 'AbortError' || signal?.aborted) throw err
-          if (isBillingError(err)) throw toBillingError(err, { scope: 'llm', provider: resolvedCfg?.model || '' })
-          if (isVisionUnsupportedError(err)) visionRejected = visionRejected || '当前模型不支持图片输入'
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(2, authored.length) }, () => reviewWorker()))
-    if (!reviews.length) {
-      report.skipped = visionRejected || '看图模型没有返回结果'
+    onProgress?.('repair', 75, `画面自检：大模型（${vision.model || '看图模型'}）正在逐镜查看 ${report.frameCount} 张${visualReviewFine ? '截图' : '关键帧'}…`)
+    const units = reviewUnits(authored.map((info) => ({ info, scenes: info.batchScenes })), rendered.frames)
+    const { results, rejected, lastError } = await reviewWithVision(units, vision, '画面自检看图')
+    if (!results.length) {
+      report.skipped = rejected || lastError || '看图模型没有返回结果'
       return 0
     }
+    // one entry per batch: its merged verdicts and stills
+    const perInfo = new Map()
+    for (const { unit, review } of results) {
+      const e = perInfo.get(unit.info) || { info: unit.info, review: {}, frames: [] }
+      Object.assign(e.review, review)
+      e.frames.push(...unit.frames)
+      perInfo.set(unit.info, e)
+    }
+    const reviews = [...perInfo.values()]
     for (const r of reviews) {
       for (const [id, v] of Object.entries(r.review)) {
         report.scenes[id] = v
@@ -812,33 +1055,62 @@ export async function authorBatchedRemotionScenes({
         if (v.severity === 'major') report.majorScenes++
       }
     }
-    const flagged = reviews.filter((r) => Object.values(r.review).some((v) => v.severity === 'major'))
+    // 「crop」: a looser framing for that 机位 (no model call). script.json is what the composition imports, so the
+    // re-check and the final render see the new framings.
+    // (the crop findings it took care of are marked resolvedLocally and left out of the rewrite)
+    const loose = loosenCroppedCuts(scenes, Object.fromEntries(reviews.flatMap((r) => Object.entries(r.review))))
+    if (loose.loosened.length) {
+      report.loosenedCuts = loose.loosened
+      // only the re-framed shots' cuts change on disk (the pipeline writes the whole script after the coder anyway)
+      try {
+        const disk = readScriptJson(absDir).data
+        if (disk && Array.isArray(disk.scenes)) {
+          const ids = new Set(loose.loosened.map((l) => l.sceneId))
+          const mem = new Map(scenes.map((s) => [s.id, s]))
+          for (const s of disk.scenes) {
+            const m = mem.get(s.id)
+            if (ids.has(s.id) && m && Array.isArray(m.cuts)) s.cuts = m.cuts.map((c) => ({ ...c, ...(c.focus ? { focus: { ...c.focus } } : {}) }))
+          }
+          writeFileSync(join(absDir, 'script.json'), JSON.stringify(disk, null, 2) + '\n', 'utf8')
+        }
+      } catch {}
+    }
+    const flagged = reviews
+      .map((r) => ({ ...r, review: pendingReview(r.review) }))
+      .filter((r) => Object.values(r.review).some((v) => v.severity === 'major'))
+    firstReviewMajor = new Set(flagged.flatMap((r) => Object.entries(r.review).filter(([, v]) => v.severity === 'major').map(([id]) => id)))
+    report.localFixedScenes = Math.max(0, report.majorScenes - firstReviewMajor.size)
+    report.remainingMajor = firstReviewMajor.size
     if (!flagged.length) return 0
-    onProgress?.('repair', 76, `画面自检：${report.majorScenes} 个镜头有明显问题，正在带截图定向返工 ${flagged.length} 个分批…`)
+    onProgress?.('repair', 76, `画面自检：${firstReviewMajor.size} 个镜头有明显问题，正在带截图定向返工 ${flagged.length} 个分批…`)
     let rewritten = 0
     let nextFix = 0
     const fixWorker = async () => {
       while (nextFix < flagged.length) {
         const { info, review, frames } = flagged[nextFix++]
-        const req = buildVisualFixRequest({ filePath: info.filePath, exportName: info.exportName, code: info.code, batchScenes: info.batchScenes, review, frames, figureStyle: filmFigureStyle, figureStyleNote: filmFigureNote })
+        const req = buildVisualFixRequest({ filePath: info.filePath, exportName: info.exportName, code: info.code, batchScenes: info.batchScenes, review, frames, figureStyle: filmFigureStyle, figureStyleNote: filmFigureNote, cast: filmCast })
         try {
           const res = await invokeLlm({
             system: info.systemPrompt,
-            messages: req.messages,
+            // reviewed by a dedicated 看图模型: the coder model gets the written findings without the screenshots
+            messages: vision.dedicated ? stripImagesFromMessages(req.messages) : req.messages,
             temperature: 0.25,
             maxTokens: info.batchScenes.length >= 5 ? 16000 : 14000,
-            timeoutMs: 600_000,
+            purpose: '画面自检返工',
             signal,
           })
           const fixedCode = extractTsxFromReply(res?.text, info.filePath, info.exportName)
           if (fixedCode && fixedCode.includes('useCurrentFrame')) {
-            // the code before the rewrite compiled: keep it to fall back to if the rewrite never compiles
+            // the code before the rewrite compiled: keep it to fall back to if the rewrite never compiles, or if the
+            // re-check (逐个机位看图) finds the rewrite worse
             info.preUpgradeCode = info.code
+            info.preVisualFixCode = info.code
+            info.visualMajorBefore = Object.values(review).filter((v) => v.severity === 'major').length
             info.code = fixedCode
             info.visualFixed = true
             rewritten++
             report.fixedBatches.push(info.filePath)
-            report.fixedScenes += Object.values(review).filter((v) => v.severity === 'major').length
+            report.fixedScenes += info.visualMajorBefore
           }
         } catch (err) {
           if (err?.name === 'AbortError' || signal?.aborted) throw err
@@ -847,7 +1119,89 @@ export async function authorBatchedRemotionScenes({
       }
     }
     await Promise.all(Array.from({ length: Math.min(2, flagged.length) }, () => fixWorker()))
+    report.remainingMajor = Math.max(0, firstReviewMajor.size - report.fixedScenes)
     return rewritten
+  }
+
+  // 「逐个机位看图」 re-check: once the rewritten batches compile, look at them (and the shots whose framing was loosened)
+  // again. A batch the rewrite made worse (more shots with a major problem than before) goes back to its compiling
+  // pre-rewrite code. Returns the number of batches reverted.
+  const runVisualRecheck = async () => {
+    const report = visualReport
+    if (!report || !reviewVision) return 0
+    const rewrittenInfos = batchInfos.filter((b) => b.visualFixed && b.code.includes('useCurrentFrame'))
+    const looseIds = new Set((report.loosenedCuts || []).map((l) => l.sceneId))
+    const looseTargets = batchInfos
+      .filter((b) => !b.visualFixed && b.code.includes('useCurrentFrame'))
+      .map((info) => ({ info, scenes: info.batchScenes.filter((sc) => looseIds.has(sc.id)) }))
+      .filter((t) => t.scenes.length > 0)
+    // a rewrite may change every shot of its batch: the whole batch is looked at
+    const targets = [...rewrittenInfos.map((info) => ({ info, scenes: info.batchScenes })), ...looseTargets]
+    if (!targets.length) return 0
+    const rc = { reviewedScenes: 0, resolvedScenes: [], remainingScenes: [], revertedBatches: [], skipped: '' }
+    report.recheck = rc
+    const wanted = new Set(targets.flatMap((t) => t.scenes.map((sc) => sc.id)))
+    const keyframes = reviewFramesFor(wanted, true)
+    onProgress?.('repair', 77, `画面复查：正在重新截取 ${wanted.size} 个返工过的镜头…`)
+    let rendered
+    try {
+      rendered = await renderSceneKeyframes({ projectDir: absDir, keyframes, scale: reviewScale, outDir: join(absDir, 'output', 'visual-review', 'recheck'), signal })
+    } catch (err) {
+      if (err?.name === 'AbortError' || signal?.aborted) throw err
+      rc.skipped = `截图失败（${String(err?.message || err).slice(0, 80)}）`
+      return 0
+    }
+    if (!rendered?.ok) {
+      rc.skipped = `截图失败（${String(rendered?.reason || '未知原因').slice(0, 80)}）`
+      return 0
+    }
+    onProgress?.('repair', 78, `画面复查：大模型正在查看 ${rendered.frames.length} 张返工后的截图…`)
+    const { results, rejected, lastError } = await reviewWithVision(reviewUnits(targets, rendered.frames), reviewVision, '返工后复查')
+    if (!results.length) {
+      rc.skipped = rejected || lastError || '看图模型没有返回结果'
+      return 0
+    }
+    const after = {}
+    for (const { review } of results) Object.assign(after, review)
+    rc.reviewedScenes = Object.keys(after).length
+    const finalMajor = new Set()
+    let reverted = 0
+    for (const info of rewrittenInfos) {
+      const ids = info.batchScenes.map((sc) => sc.id)
+      const seen = ids.filter((id) => after[id])
+      if (!seen.length) continue
+      const majorAfter = seen.filter((id) => after[id].severity === 'major').length
+      if (majorAfter > (Number(info.visualMajorBefore) || 0) && typeof info.preVisualFixCode === 'string') {
+        // the rewrite made this batch worse: back to the picture before it (that code compiled); its shots keep the
+        // problems of the first look
+        info.code = info.preVisualFixCode
+        info.visualFixed = false
+        info.visualReverted = true
+        delete info.preUpgradeCode
+        rc.revertedBatches.push(info.filePath)
+        reverted++
+        for (const id of ids) if (firstReviewMajor.has(id)) finalMajor.add(id)
+        continue
+      }
+      for (const id of seen) {
+        report.scenes[id] = { ...after[id], recheck: true }
+        if (after[id].severity === 'major') finalMajor.add(id)
+      }
+    }
+    for (const t of looseTargets) {
+      for (const sc of t.scenes) {
+        if (!after[sc.id]) continue
+        report.scenes[sc.id] = { ...after[sc.id], recheck: true }
+        if (after[sc.id].severity === 'major') finalMajor.add(sc.id)
+      }
+    }
+    const firstProblems = new Set([...firstReviewMajor, ...looseIds])
+    rc.resolvedScenes = [...firstProblems].filter((id) => after[id] && !finalMajor.has(id))
+    rc.remainingScenes = [...finalMajor]
+    // shots with a problem that were neither rewritten nor re-framed (their rewrite never came back) stay as they were
+    const untouched = [...firstReviewMajor].filter((id) => !wanted.has(id))
+    report.remainingMajor = finalMajor.size + untouched.length
+    return reverted
   }
 
   for (let round = 0; round <= maxRepairRounds + extraRounds; round++) {
@@ -856,11 +1210,19 @@ export async function authorBatchedRemotionScenes({
     const sandbox = scanAiGeneratedCodeSandbox(currentFiles, { engine: 'remotion', hasMasterAudio })
     const lint = await executeVideoLint({ projectDir: absDir, engine: 'remotion' })
     const tsc = await runTypecheckOnProject(absDir)
+    // every scene id of an authored batch needs a component in that batch's export dictionary: a missing one would
+    // silently fall back to the built-in template picture
+    const unregistered = batchInfos
+      .map((info) => ({ info, missing: findUnregisteredSceneIds(info.code, info.exportName, info.batchScenes.map((sc) => sc.id)) }))
+      .filter((x) => x.missing.length > 0)
+    unregisteredSceneIds = unregistered.flatMap((x) => x.missing)
+    const registryErrors = registryRepairsLeft > 0 ? unregistered.map(({ info, missing }) => describeUnregisteredScenes(info.filePath, info.exportName, missing)) : []
 
     const allErrors = [
       ...(sandbox.errors || []),
       ...(lint.errors || []),
       ...(tsc.errors || []),
+      ...registryErrors,
     ]
 
     repairHistory.push({
@@ -887,7 +1249,8 @@ export async function authorBatchedRemotionScenes({
               messages: [{ role: 'user', content: buildToolUpgradePrompt({ filePath: info.filePath, exportName: info.exportName, code: info.code, violations: audit.violations, batchScenes: info.batchScenes }) }],
               temperature: 0.25,
               maxTokens: info.batchScenes.length >= 5 ? 16000 : 14000,
-              timeoutMs: 600_000,
+              timeoutMs: getLlmTimeoutMs(),
+              purpose: '工具返工',
               signal,
             })
             const upgraded = extractTsxFromReply(res?.text, info.filePath, info.exportName)
@@ -911,11 +1274,28 @@ export async function authorBatchedRemotionScenes({
         }
       }
     }
+    if (allErrors.length === 0 && motionCheck && !motionCheckDone && process.env.DSH_VIDEO_MOTION_CHECK !== '0' && batchInfos.some((b) => b.code.includes('useCurrentFrame'))) {
+      motionCheckDone = true
+      const rewritten = await runSceneMotionCheck()
+      if (rewritten > 0) {
+        extraRounds += 2
+        continue
+      }
+    }
     if (allErrors.length === 0 && visualReview && !visualReviewDone && batchInfos.some((b) => b.code.includes('useCurrentFrame'))) {
       visualReviewDone = true
       const rewritten = await runVisualSelfReview()
       if (rewritten > 0) {
         extraRounds += 2
+        continue
+      }
+    }
+    // 「逐个机位看图」: the rewritten / re-framed shots are looked at once more; a batch made worse goes back
+    if (allErrors.length === 0 && visualReview && visualReviewFine && visualReviewDone && !visualRecheckDone && (batchInfos.some((b) => b.visualFixed) || (visualReport?.loosenedCuts || []).length > 0)) {
+      visualRecheckDone = true
+      const reverted = await runVisualRecheck()
+      if (reverted > 0) {
+        extraRounds += 1
         continue
       }
     }
@@ -947,8 +1327,19 @@ export async function authorBatchedRemotionScenes({
         tsc,
         toolAudit: { before: toolAuditBefore, after: finalToolAudit(), upgradedBatches: upgradedInfos.map((i) => i.filePath) },
         visualReview: visualReport,
+        motionCheck: motionReport,
+        // scenes still without a component after the repair: they render with the built-in template picture
+        unregisteredSceneIds,
         ...lockedInfo,
       }
+    }
+    // the registry repair is spent on this pass; a scene still missing afterwards is reported, never looped on
+    if (registryErrors.length > 0) registryRepairsLeft--
+    if (round >= maxRepairRounds + extraRounds && registryErrors.length > 0 && allErrors.length === registryErrors.length) {
+      // only missing registrations are left and no repair round remains: never isolate compiling code for them —
+      // one more check round ships it and reports the missing scenes
+      extraRounds += 1
+      continue
     }
 
     // Group errors per BatchXX file so only failing modules undergo targeted LLM repair
@@ -1055,7 +1446,8 @@ export async function authorBatchedRemotionScenes({
           messages: [{ role: 'user', content: repairPrompt }],
           temperature: 0.2,
           maxTokens: 10000,
-          timeoutMs: 360_000,
+          timeoutMs: getLlmTimeoutMs(),
+          purpose: '修复代码',
           signal,
         })
         const fixedCode = extractTsxFromReply(fixRes?.text, info.filePath, info.exportName)
@@ -1134,7 +1526,8 @@ export async function runAiStudioPipeline(options = {}) {
   let existingScript = null
   if (existsSync(join(absDir, 'script.json'))) {
     try {
-      existingScript = readScriptJson(absDir).data
+      // a 口播剪辑's caption style / host-voice settings never carry over into an AI film
+      existingScript = stripTalkEditFields(readScriptJson(absDir).data)
     } catch {}
   }
 
@@ -1354,6 +1747,18 @@ export async function runAiStudioPipeline(options = {}) {
       throw new Error('大模型未返回有效的分镜列表 (scenes)，请检查模型配置或重试。')
     }
   }
+
+  // Same shot expectation as the main storyboard: a plan too sparse for its pacing is told to the user in plain words
+  // (a beat-locked film is densified by the beat-aligned sub-shots when its timing is quantised below)
+  const planDensity = assessPlanDensity({
+    shots: Array.isArray(plan?.scenes) ? plan.scenes.length : 0,
+    policy: coderDurationPolicy,
+    narrationMode: resolvedNarrationMode,
+    pacingMode: pacingMode || existingScript?.pacingMode || 'auto',
+    topic: coreTopic,
+    style: plan?.style || existingScript?.style || '',
+  })
+  if (planDensity.sparse) emit('architect', 16, planDensity.message)
 
   // Allow LLM to refine ratio if user chose 'auto'
   const finalDims =
@@ -1800,6 +2205,8 @@ export async function runAiStudioPipeline(options = {}) {
       startFrame: s.startFrame,
       durationInFrames: s.durationInFrames,
       durationSec: s.durationSec,
+      // beat-aligned sub-shots (beat-analyzer.js contract): the coder prompt turns them into per-window compositions
+      cuts: Array.isArray(s.cuts) && s.cuts.length >= 2 ? s.cuts : undefined,
       assetPaths: s.assetPaths || [],
       publicAssetFiles: (s.media || []).map((m) => String(m.path || '').replace(/^\/+/, '').replace(/\\/g, '/')),
       subtitles: s.subtitles || [],
@@ -1834,6 +2241,9 @@ export async function runAiStudioPipeline(options = {}) {
       fetchImpl,
       maxRepairRounds: repairRounds,
       visualReview: lockedScript.visualReview !== false,
+      // 「逐个机位看图」 is on unless the user switched it off
+      visualReviewFine: lockedScript.visualReviewFine !== false,
+      motionCheck: lockedScript.motionCheck !== false,
       onProgress: emit,
     })
     if (checkResult?.ok) {
@@ -1908,6 +2318,10 @@ export async function runAiStudioPipeline(options = {}) {
     schemaMeta,
     repairRoundsUsed: Math.max(0, checkResult.repairHistory.length - 1),
     generatedFiles: Object.keys(checkResult.files),
+    // shot count against the pacing's expectation (plain-Chinese notice when sparse)
+    planDensity,
+    // scenes whose code never registered a component (they show the built-in template picture)
+    unregisteredSceneIds: Array.isArray(checkResult.unregisteredSceneIds) && checkResult.unregisteredSceneIds.length ? checkResult.unregisteredSceneIds : undefined,
     builtAt: new Date().toISOString(),
   }
   writeScriptJson(absDir, lockedScript)
@@ -2062,7 +2476,11 @@ export async function refineAiScene({
     visibleFiles[rel] = code
   }
 
-  emit('coder', 35, `大模型正在按您的要求精修 (${prep.mode === 'global' ? '全局' : prep.affectedSceneIds.join(', ')})...`)
+  // AI 精修 / AI 立即改: the model gets the shared limit (10 minutes by default — this call used the old 180 s default
+  // and failed for slow models); while it works the job message shows how long it has been waiting
+  const llmTimeoutMs = getLlmTimeoutMs()
+  const refineLabel = `大模型正在按您的要求精修 (${prep.mode === 'global' ? '全局' : prep.affectedSceneIds.join(', ')})`
+  emit('coder', 35, `${refineLabel}...（最长等待 ${formatLlmWait(llmTimeoutMs)}）`)
   const system = `你是资深 ${engine === 'remotion' ? 'Remotion TSX + 原生 Three.js 3D + 动态 SVG' : 'HyperFrames HTML'} 视频创意工程师。
 用户正在微调一个已有视频工程。请完全根据用户的自然语言需求自由编写/修改对应的 3D 场景与 2D 动态 SVG 视觉（不受任何固定预设限制！在 Remotion 中可从 './lib/shotcraft' 或 '../lib/shotcraft' 导入 FreeformThreeStage, FreeformThreeApi, buildSmoothSvgPath, describeSvgArc, ThreeCyberStage, SvgArchitectureDiagram, HudDataDashboard, computeBeatSpring, BeatSpringPhysicsRig 等自由造景原语），输出严格 JSON：
 {
@@ -2110,6 +2528,8 @@ export async function refineAiScene({
       system,
       messages: [{ role: 'user', content: user }],
       temperature: 0.3,
+      timeoutMs: llmTimeoutMs,
+      onWait: ({ elapsedMs }) => emit('coder', 35, `${refineLabel}…已等待 ${formatLlmWait(elapsedMs)}（最长 ${formatLlmWait(llmTimeoutMs)}）`),
     })
   } catch (err) {
     if (isBillingError(err)) throw toBillingError(err, { scope: 'llm', provider: llmCfg?.model || '' })

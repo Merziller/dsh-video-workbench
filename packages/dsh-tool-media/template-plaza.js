@@ -78,6 +78,8 @@ function sanitizeTemplateScript(raw = {}) {
       const next = { ...sc }
       delete next.audioFile
       delete next.masteredAudioFile
+      // the reference clip of a local voice pack: a path on the author's computer
+      delete next.voiceRefAudio
       if (Array.isArray(next.media)) {
         next.media = next.media.map((m) => ({
           ...m,

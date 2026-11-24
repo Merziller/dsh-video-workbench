@@ -87,6 +87,21 @@ if (cmd === 'mcp') {
   } catch (err) {
     console.log(`• Vibecoding    : status unavailable (${err?.message || err})`)
   }
+} else if (cmd === 'install-preset') {
+  // 「视频制作模式」 for DSH NEXT, which reads presets from <dshHome>/.agent-presets/<id>/ at startup (restart DSH after)
+  const { installVideoMakerPresetFolder, resolveDshHomeDir } = await import('../packages/dsh-preset-video/preset-folder.js')
+  const { VIDEO_MAKER_SYSTEM_PROMPT } = await import('../packages/dsh-preset-video/index.js')
+  const dshHome = args[1] || resolveDshHomeDir()
+  const res = installVideoMakerPresetFolder({ personaText: VIDEO_MAKER_SYSTEM_PROMPT, version: pkg.version, dshHome })
+  const said = {
+    created: '已写入「视频制作模式」，重启 DSH 后在模式列表里选择',
+    updated: '已更新「视频制作模式」，重启 DSH 后生效',
+    unchanged: '「视频制作模式」已是最新，无需改动',
+    'kept-user': res.reason,
+    skipped: `跳过：${res.reason}`,
+  }
+  console.log(`${said[res.action] || res.action}${res.path ? `\n  ${res.path}` : ''}`)
+  process.exitCode = res.ok ? 0 : 1
 } else if (cmd === 'plaza') {
   // 影核广场维护（作者用）：review / accept / add / index —— see packages/dsh-tool-media/plaza-cli.js and docs/plaza-community.md
   const { runPlazaCli } = await import('../packages/dsh-tool-media/plaza-cli.js')
@@ -116,9 +131,10 @@ if (cmd === 'mcp') {
   console.log(`
 Commands:
   studio [--open]                  Launch standalone local Web Studio (http://127.0.0.1:4399)
-  mcp                              Start Universal MCP stdio server (29 tools for Claude/Codex/WorkBuddy/Cursor)
+  mcp                              Start Universal MCP stdio server (48 tools for Claude/Codex/WorkBuddy/Cursor)
   doctor                           Check hardware, FFmpeg, Remotion, TTS & registered tools
   install-tts --engine <id>        Install optional local TTS model (edge-tts / indextts25 / gptvoice / indextts2)
+  install-preset [dshHome]         DSH NEXT: add 「视频制作模式」 to <dshHome>/.agent-presets (restart DSH afterwards)
   print-config [claude|codex|workbuddy|cursor|dsh]  Print copy-paste MCP/plugin config for your agent
   plaza review|accept|add|index    影核广场维护：审核 / 收录投稿包、发布自己的工程、生成在线模板目录（plaza help）
 `)

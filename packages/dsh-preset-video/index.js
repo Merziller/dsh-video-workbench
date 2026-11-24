@@ -1,10 +1,12 @@
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { installVideoMakerPresetFolder } from './preset-folder.js'
 import {
   ensureWin11ProjectGuards,
   loadHardwarePreferences,
   PACKAGE_ROOT,
   probeHardwareProfile,
+  registerTool,
   REPO_ROOT,
   resolveLowSpecPolicy,
   saveHardwarePreferences,
@@ -52,7 +54,7 @@ export const VIDEO_MAKER_SYSTEM_PROMPT = `你是 DeepSeek Harness「视频制作
 ## 四、可用核心工具清单
 - 算力体检与低配保护：\`check_hardware_profile\`（实时检测 CPU / 内存 / GPU 显存 / 磁盘与低配保护开关 \`auto\` / \`safe\` / \`performance\`）
 - 素材与智能剪辑：\`import_assets\`、\`list_assets\`、\`curate_and_edit_assets\`（ffmpeg 裁切构图、调色增强、抠图匹配）、\`generate_sfx_bgm\`、\`plan_video_from_assets\`、\`produce_video\`、\`import_vendor_motion\`
-- 多 Agent 协同与数字人：\`run_agent_pipeline\`（⚡ 一键全自动出片 4-Agent 流水线：策划导演 -> 素材剪辑 -> 配音混音 -> 动效质检）、\`generate_avatar\`（透明通道 yuva420p 克隆真人 / 纯 AI 数字人口播叠层）
+- 多 Agent 协同与数字人：\`run_agent_pipeline\`（⚡ 一键全自动出片 4-Agent 流水线：策划导演 -> 素材剪辑 -> 配音混音 -> 动效质检）、\`generate_avatar\`（透明通道 yuva420p 克隆真人 / 纯 AI 数字人口播叠层）、\`manage_anime_presenter\`（「我的动漫形象」：用照片或卡通图做一次、每条口播都能用的动漫讲解员；免费档本机口型眨眼，显卡档本地模型，云端档按秒收费，花钱前必须先让用户确认价格）
 - 模型与 AI 编程：\`get_llm_config\`、\`configure_llm_model\`、\`ai_master_voice\`、\`ai_create_video\`、\`ai_refine_scene\`、\`video_qa\`
 - 语音与音色包：\`list_voices\`、\`import_voice_pack\`、\`match_scene_voices\`、\`generate_speech\`
 - 检测与交付：\`video_lint\`、\`video_snapshot\`、\`video_render\`、\`export_publish_pack\`
@@ -181,12 +183,14 @@ export function scaffoldVideoProject(projectDir, options = {}) {
 }
 
 export const name = 'dsh-preset-video'
+// apply() reads `ctx.tools`: strict Cordis hosts (DSH NEXT) refuse that property unless it is declared here
+export const inject = ['tools']
 
 export function apply(ctx) {
   // 0. Register `check_hardware_profile` tool so DSH Assistant can verify PC specs & low-spec protection accurately
   if (ctx?.tools && typeof ctx.tools.register === 'function') {
     try {
-      ctx.tools.register({
+      registerTool(ctx, {
         name: 'check_hardware_profile',
         description:
           'Probe host PC hardware (CPU cores, total/free RAM, GPU VRAM, disk space), return minimum vs recommended requirements, recommend optimal TTS engine for low-spec PCs, and inspect or update Low-Spec Protection mode (auto | safe | performance).',
@@ -250,7 +254,18 @@ export function apply(ctx) {
     ctx.inject(['agentPresets'], (innerCtx) => {
       try {
         const reg = innerCtx?.agentPresets
-        if (!reg || typeof reg.register !== 'function') return
+        if (!reg) return
+        if (typeof reg.register !== 'function') {
+          // DSH NEXT reads presets from <dshHome>/.agent-presets/<id>/ at startup instead of taking register() calls:
+          // write (or refresh) our own folder there; 「视频制作模式」 shows up in the mode list after DSH restarts
+          try {
+            const version = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8')).version || ''
+            const res = installVideoMakerPresetFolder({ personaText: VIDEO_MAKER_SYSTEM_PROMPT, version })
+            if (res.action === 'created' || res.action === 'updated') console.log(`[dsh-video-workbench] 「视频制作模式」 preset ${res.action}: ${res.path}（重启 DSH 后可在模式列表里选择）`)
+            else if (res.action === 'kept-user') console.log(`[dsh-video-workbench] ${res.reason}: ${res.path}`)
+          } catch {}
+          return
+        }
         if (reg.definitions instanceof Map && reg.definitions.has('video-maker')) return
         if (typeof reg.get === 'function') {
           try {
@@ -297,4 +312,4 @@ export function apply(ctx) {
   } catch {}
 }
 
-export default { name, apply }
+export default { name, inject, apply }

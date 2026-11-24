@@ -81,6 +81,21 @@ const requiredEntries = [
   'package/packages/dsh-tool-media/ambience-dsp.js',
   'package/packages/dsh-tool-video-suite/exposure-guard.js',
   'package/packages/dsh-tool-video-suite/true-peak-guard.js',
+  // v0.7.0: 「我的动漫形象」 (library, free tier, engines, optional local model + its vendored inference code, the BYOK
+  // cloud tier) and its web routes; the cost ledger of a run
+  'package/packages/dsh-tool-avatar/anime-character.js',
+  'package/packages/dsh-tool-avatar/anime-visemes.js',
+  'package/packages/dsh-tool-avatar/anime-sprite.js',
+  'package/packages/dsh-tool-avatar/anime-engines.js',
+  'package/packages/dsh-tool-avatar/anime-local.js',
+  'package/packages/dsh-tool-avatar/anime-installer.js',
+  'package/packages/dsh-tool-avatar/anime-cloud.js',
+  'package/packages/dsh-tool-avatar/ANIME-NOTICE.md',
+  'package/scripts/avatar/tha3_render.py',
+  'package/scripts/avatar/anime_stylize.py',
+  'package/scripts/avatar/tha3/__init__.py',
+  'package/scripts/avatar/tha3/LICENSE',
+  'package/packages/dsh-web-video-workbench/lib/routes-anime.js',
   'package/LICENSE',
   'package/NOTICE',
   'package/README.md',
@@ -98,6 +113,10 @@ const forbiddenPatterns = [
   /^package\/\.tmp\//,
   /\.mp4$/i,
   /\.wav$/i,
+  /\/__pycache__\//,
+  /\.pyc$/i,
+  // downloaded model weights never ship (the user's computer downloads them from the authors)
+  /\.(pt|pth|onnx|pb|safetensors|ckpt)$/i,
 ]
 // The only media allowed in the bundle: the short 影核广场 sample clips (built-in templates, metadata-stripped)
 const allowedMediaPatterns = [/^package\/templates\/cinepulse-hub\/[a-z0-9][a-z0-9_-]*\/preview\.mp4$/]

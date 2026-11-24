@@ -406,7 +406,8 @@ export function createKlingJwt(ak, sk) {
   return `${header}.${payload}.${sig}`
 }
 
-function buildKlingAuthHeader(rawKey = '') {
+/** `Authorization` value for Kling: a Bearer token as-is, or `AccessKey:SecretKey` signed into an HS256 JWT. */
+export function buildKlingAuthHeader(rawKey = '') {
   const s = String(rawKey || '').trim()
   if (!s) return ''
   if (s.includes(':') && !s.startsWith('eyJ')) {
@@ -417,7 +418,7 @@ function buildKlingAuthHeader(rawKey = '') {
   return s.startsWith('Bearer ') ? s : `Bearer ${s}`
 }
 
-function renderTemplateValue(templateStr = '', vars = {}, escapeForJson = false) {
+export function renderTemplateValue(templateStr = '', vars = {}, escapeForJson = false) {
   return String(templateStr || '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, k) => {
     const raw = vars[k] !== undefined ? vars[k] : ''
     if (typeof raw === 'boolean' || typeof raw === 'number') return String(raw)
@@ -427,7 +428,7 @@ function renderTemplateValue(templateStr = '', vars = {}, escapeForJson = false)
   })
 }
 
-function joinUrl(base = '', endpoint = '') {
+export function joinUrl(base = '', endpoint = '') {
   const b = String(base || '').trim().replace(/\/+$/, '')
   const e = String(endpoint || '').trim()
   if (!e) return b
@@ -539,7 +540,7 @@ function stillRunningError(label, taskId) {
   return err
 }
 
-function renderCustomHeaders(c, vars) {
+export function renderCustomHeaders(c, vars) {
   let headers = { 'Content-Type': 'application/json' }
   if (c.headersJson && String(c.headersJson).trim()) {
     try {
@@ -1925,7 +1926,7 @@ export async function assistCloudMediaPrompt(options = {}) {
     messages: [{ role: 'user', content: JSON.stringify(userPayload) }],
     temperature: 0.65,
     maxTokens: 1600,
-    timeoutMs: 90_000,
+    // no own timeout: 「AI 协助」 waits as long as every other model call (getLlmTimeoutMs, 10 min by default)
     responseFormat: 'json',
   })
   const parsed = extractJsonFromLlmText(reply?.text) || {}

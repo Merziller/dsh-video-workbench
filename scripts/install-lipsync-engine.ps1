@@ -9,6 +9,8 @@
     powershell -ExecutionPolicy Bypass -File scripts\install-lipsync-engine.ps1 -InstallDir D:\dsh-ai\lipsync
     powershell -ExecutionPolicy Bypass -File scripts\install-lipsync-engine.ps1 -InstallDir E:\dsh-ai\lipsync -Mirror global
     powershell -ExecutionPolicy Bypass -File scripts\install-lipsync-engine.ps1 -Status
+
+  MuseTalk needs an NVIDIA GPU with at least 4 GB VRAM; on other computers the installer refuses unless -Force is given.
 #>
 param(
   [ValidateSet('musetalk')]
@@ -18,7 +20,8 @@ param(
   [string]$Mirror = 'cn',
   [string]$Python = '',
   [switch]$Status,
-  [switch]$NoEnv
+  [switch]$NoEnv,
+  [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,5 +48,6 @@ if (-not $InstallDir) {
 $nodeArgs = @($MjsInstaller, '--engine', $Engine, '--dir', $InstallDir, '--mirror', $Mirror)
 if ($Python) { $nodeArgs += @('--python', $Python) }
 if ($NoEnv) { $nodeArgs += @('--no-env') }
+if ($Force) { $nodeArgs += @('--force') }
 & node @nodeArgs
 exit $LASTEXITCODE

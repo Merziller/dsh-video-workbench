@@ -287,6 +287,26 @@ try {
   /** projectDir-scoped POST helper: merges `{ projectDir }` into the body */
   PK.postP = (path, body = {}, opts = {}) => PK.post(path, { projectDir: PK.needProject(), ...body }, opts)
 
+  /**
+   * How long a panel waits for a request that wraps text-model calls (AI 润色 / 精修 / 协助 / 封面提示词 / 看图检测 …):
+   * the server's model-call limit (`llmConfig.timeoutMs` — 10 minutes unless DSH_LLM_TIMEOUT_MS says otherwise) per
+   * model call the request may make, plus a margin for retries and the work around the call. The panel never gives
+   * up before the server does. Usage: `PK.post('llm-test', body, { timeout: PK.llmTimeout() })`.
+   */
+  PK.LLM_TIMEOUT_MS = 600000
+  PK.llmTimeout = (calls = 1) => {
+    const d = PK.store && PK.store.data
+    const server = U.num(d && d.llmConfig && d.llmConfig.timeoutMs, 0)
+    return Math.max(PK.LLM_TIMEOUT_MS, server) * Math.max(1, U.num(calls, 1)) + 120000
+  }
+  /** busy text of a request that wraps model calls; in 由当前智能体代写 mode the agent in the conversation answers it */
+  PK.llmBusy = (text) => {
+    const live = PK.state && PK.state.status && PK.state.status.llm
+    const d = PK.store && PK.store.data
+    const hostWrites = (live && live.mode === 'host-agent') || Boolean(d && d.llmConfig && d.llmConfig.mode === 'host-agent')
+    return hostWrites ? `${text} 等待智能体完成写作任务` : text
+  }
+
   /** Raw binary upload (BRIDGE.md §4b `upload`): bgm/upload · reference/upload · skin/upload · assets/upload */
   PK.upload = async (path, file, opts = {}) => {
     const buf = await U.fileToArrayBuffer(file)
@@ -321,7 +341,9 @@ try {
   PK.job = async (jobId, opts = {}) => {
     const interval = U.num(opts.interval, 900)
     const started = Date.now()
-    const maxMs = U.num(opts.maxMs, 3600000)
+    // two hours, and never less than eight model calls at the server's limit: an AI 精修 job may refine, repair and
+    // look at its frames (the server allows it about 65 minutes at the default limit) — the panel never gives up first
+    const maxMs = U.num(opts.maxMs, Math.max(7200000, PK.llmTimeout(8)))
     for (;;) {
       if (opts.signal && opts.signal.aborted) throw new PKError('已取消', { code: 'aborted' })
       const d = await PK.api('GET', 'jobs', { query: { id: jobId }, raw: true })
@@ -335,7 +357,7 @@ try {
         } catch {}
       }
       if (st === 'done' || st === 'completed' || st === 'success') return job.result || b.result || job
-      if (st === 'failed' || st === 'error') throw new PKError(String(job.error || b.error || '后台任务失败'), { job })
+      if (st === 'failed' || st === 'error') throw new PKError(String(job.error || b.error || '后台任务失败'), { job, code: job.code || '' })
       if (Date.now() - started > maxMs) throw new PKError('后台任务超时', { code: 'timeout' })
       await U.sleep(interval)
     }
@@ -717,11 +739,21 @@ try {
           b.setAttribute('aria-busy', 'true')
           b.disabled = true
           if (lbl && o.busyText) lbl.textContent = o.busyText
+          // a long wait (a model call may take minutes) shows how long it has been running, so it never looks frozen
+          const t0 = Date.now()
+          const tick =
+            lbl && o.busyText
+              ? setInterval(() => {
+                  const s = Math.round((Date.now() - t0) / 1000)
+                  if (s >= 5 && b.isConnected) lbl.textContent = `${o.busyText} ${U.fmtDur(s)}`
+                }, 1000)
+              : 0
           try {
             await res
           } catch (err) {
             PK.reportError(err)
           } finally {
+            if (tick) clearInterval(tick)
             b.removeAttribute('aria-busy')
             b.disabled = Boolean(o.disabled)
             if (lbl && o.busyText) lbl.textContent = old
@@ -2429,6 +2461,12 @@ try {
       /** async helper: show the frame busy strip while fn runs; toasts errors; returns fn's result or undefined */
       async task(label, fn, opts = {}) {
         frame.busy(label)
+        // long work (a model call may take minutes) shows its running time in the strip instead of looking frozen
+        const t0 = Date.now()
+        const tick = setInterval(() => {
+          const s = Math.round((Date.now() - t0) / 1000)
+          if (s >= 5 && !frame.closed) frame.busy(`${label} · 已用时 ${U.fmtDur(s)}`)
+        }, 1000)
         try {
           const r = await fn()
           if (opts.ok) PK.toast(typeof opts.ok === 'function' ? opts.ok(r) : opts.ok, 'success')
@@ -2437,6 +2475,7 @@ try {
           PK.reportError(err, opts.fail)
           return undefined
         } finally {
+          clearInterval(tick)
           frame.busy(false)
           if (opts.rerender !== false) ctx.update()
         }
@@ -2551,12 +2590,13 @@ try {
         {
           label: 'AI 一键润色',
           icon: 'wand',
-          busyText: 'AI 润色中…',
+          busyText: PK.llmBusy('AI 润色中…'),
           run: async (text) => {
             if (!text.trim()) throw new PK.Error('先写一句你的想法，再让 AI 润色扩写')
             if (!PK.hasProject()) throw new PK.Error('请先新建或打开一个视频工程', { code: 'no-project' })
             await PK.action('setDirector', { patch: { topic: text } })
-            await PK.action('polishTopic', { topic: text }, { timeout: 300000 })
+            // the host polls the async polish job; the model may take up to its full limit (10 minutes by default)
+            await PK.action('polishTopic', { topic: text }, { timeout: PK.llmTimeout() })
             // the host updates director.topic when the polish completes; wait for that state push
             await PK.waitState((s) => s && s.director && s.director.topic && s.director.topic !== text, 4000)
             const polished = String((PK.state && PK.state.director && PK.state.director.topic) || '')
@@ -2995,6 +3035,346 @@ try {
   console.error('[PK] module 50-panels-base.js failed to load', err)
 }
 
+/* ---- 55-save-file.js ---- */
+try {
+/* ============================================================================================================
+ * PK · 另存为 — the user chooses where a project file (成片 MP4, 交付包 / 发布包文件 …) is saved, instead of the
+ * browser silently dropping it into its default 下载 folder.
+ *
+ *   PK.saveFile({ rel, dir?, name?, what? }) → Promise<{ ok, how: 'picker' | 'native' | 'download', cancelled?, path? }>
+ *     rel   file inside the project (e.g. 'output/final.mp4'); dir defaults to the open project
+ *     name  suggested file name (its extension is always the file's own); what  e.g. '成片' (dialog titles / messages)
+ *   Call it straight from a click handler: the browser's save window needs the click's user activation.
+ *
+ *   1. File System Access API (`showSaveFilePicker`) in this frame: folder + name are picked in the browser's own save
+ *      window, then the file is read from the studio server in 8 MB range requests — the same-origin project-file URL the
+ *      kit already hands to <video>, the only network read this module does — with a progress window (取消 stops it).
+ *   2. No picker here (Firefox / Safari, a cross-origin frame, a web view without it): the studio server, which runs on
+ *      this computer, opens the system's own 「另存为」 window and copies the file to the place picked there
+ *      (POST delivery/save-as, Windows; the destination never comes from the page). Only for a real click, never for
+ *      an automated browser.
+ *   3. Last resort: the plain browser download into the default 下载 folder, with a message saying exactly that.
+ *
+ * Plain left clicks on any `<a download>` link to a project file (`/api/video-workbench/asset?projectDir=…&rel=…`)
+ * use this flow too (交付 links, 发布资料包 files, lightbox 「下载」); Ctrl / Shift / Alt / middle clicks and 右键
+ * 「链接另存为」 keep the browser's own behaviour. `data-pk-save-what` on such a link sets `what`.
+ * ============================================================================================================ */
+;(function () {
+  'use strict'
+  const PK = window.PK
+  if (!PK || !PK.util || !PK.ui) return
+  const U = PK.util
+  const h = PK.h
+  const ui = PK.ui
+  const S = (v) => (v === undefined || v === null ? '' : String(v))
+  const ASSET_PATH = '/api/video-workbench/asset'
+  const CHUNK = 8 * 1024 * 1024
+
+  // [MIME type, label, what, well-known start folder] per extension (unknown extensions: no type filter)
+  const TYPES = {
+    mp4: ['video/mp4', 'MP4 视频', '视频', 'videos'],
+    mov: ['video/quicktime', 'MOV 视频', '视频', 'videos'],
+    webm: ['video/webm', 'WebM 视频', '视频', 'videos'],
+    mkv: ['video/x-matroska', 'MKV 视频', '视频', 'videos'],
+    wav: ['audio/wav', 'WAV 音频', '音频', 'music'],
+    mp3: ['audio/mpeg', 'MP3 音频', '音频', 'music'],
+    m4a: ['audio/mp4', 'M4A 音频', '音频', 'music'],
+    aac: ['audio/aac', 'AAC 音频', '音频', 'music'],
+    flac: ['audio/flac', 'FLAC 音频', '音频', 'music'],
+    png: ['image/png', 'PNG 图片', '图片', 'pictures'],
+    jpg: ['image/jpeg', 'JPEG 图片', '图片', 'pictures'],
+    jpeg: ['image/jpeg', 'JPEG 图片', '图片', 'pictures'],
+    webp: ['image/webp', 'WebP 图片', '图片', 'pictures'],
+    gif: ['image/gif', 'GIF 图片', '图片', 'pictures'],
+    srt: ['application/x-subrip', 'SRT 字幕', '字幕', 'documents'],
+    vtt: ['text/vtt', 'WebVTT 字幕', '字幕', 'documents'],
+    ass: ['text/plain', 'ASS 字幕', '字幕', 'documents'],
+    xml: ['application/xml', 'XML 剪辑时间线', '文件', 'documents'],
+    fcpxml: ['application/xml', 'Final Cut Pro 时间线', '文件', 'documents'],
+    edl: ['text/plain', 'EDL 剪辑表', '文件', 'documents'],
+    json: ['application/json', 'JSON 文件', '文件', 'documents'],
+    md: ['text/markdown', 'Markdown 文档', '文档', 'documents'],
+    txt: ['text/plain', '文本文件', '文件', 'documents'],
+    csv: ['text/csv', 'CSV 表格', '文件', 'documents'],
+    zip: ['application/zip', 'ZIP 压缩包', '压缩包', 'documents'],
+    cube: ['application/octet-stream', 'LUT 调色文件', '文件', 'documents'],
+  }
+  const extOf = (name) => {
+    const m = /\.([A-Za-z0-9]{1,10})$/.exec(S(name))
+    return m ? m[1].toLowerCase() : ''
+  }
+  const relOf = (p) => S(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '')
+  /** a file name the save windows accept, always ending with the real file's extension */
+  function safeName(name, rel) {
+    const ext = extOf(rel)
+    let base = S(name).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/\s+/g, ' ').trim()
+    if (ext && base.toLowerCase().endsWith(`.${ext}`)) base = base.slice(0, -ext.length - 1)
+    base = base.replace(/[. ]+$/, '').slice(0, 120).trim()
+    if (!base) base = U.baseName(rel).replace(/\.[^.]*$/, '') || 'file'
+    return ext ? `${base}.${ext}` : base
+  }
+  const assetUrl = (dir, rel) => `${ASSET_PATH}?projectDir=${encodeURIComponent(dir)}&rel=${encodeURIComponent(rel)}&v=save${Date.now().toString(36)}`
+
+  /** Chromium shows the picker only in a top-level page or a frame with the same origin as the top-level page */
+  function pickerAllowed() {
+    if (typeof window.showSaveFilePicker !== 'function' || window.isSecureContext === false) return false
+    try {
+      return window.top === window || window.top.location.origin === window.location.origin
+    } catch {
+      return false
+    }
+  }
+  function pickerOptions(name) {
+    const t = TYPES[extOf(name)]
+    const o = { suggestedName: name, id: 'dsh-vw-save' }
+    if (t) {
+      o.startIn = t[3]
+      o.types = [{ description: t[1], accept: { [t[0]]: [`.${extOf(name)}`] } }]
+    }
+    return o
+  }
+
+  /** small window with a progress bar; appears only when saving takes a moment. Close / Esc / 取消 = cancel. */
+  function progressWindow(title, name, onCancel) {
+    let f = null
+    let meter = null
+    let line = null
+    let last = { done: 0, total: -1 }
+    const paint = () => {
+      if (!f || f.closed) return
+      const known = last.total > 0
+      const pct = known ? (last.done / last.total) * 100 : 0
+      PK.clear(meter)
+      PK.append(meter, ui.meter(pct, { indeterminate: !known, label: '已保存', valueText: known ? `${Math.round(pct)}%` : U.fmtBytes(last.done) }))
+      line.textContent = known ? `${U.fmtBytes(last.done)} / ${U.fmtBytes(last.total)}` : ''
+    }
+    const show = () => {
+      if (f) return
+      f = PK.frame({
+        kind: 'dialog',
+        size: 'sm',
+        title,
+        en: 'SAVING',
+        dismissible: false,
+        onClose: (reason) => {
+          if (reason === 'cancel' || reason === 'x' || reason === 'esc') onCancel()
+        },
+      })
+      meter = h('div.pk-save-meter')
+      line = h('p.pk-hint')
+      PK.append(f.body, ui.text(`正在保存「${name}」到你选择的位置…`), meter, line)
+      f.setFoot([ui.spacer(), ui.btn('取消保存', () => f.close('cancel'), { kind: 'ghost' })])
+      paint()
+    }
+    const timer = setTimeout(show, 350)
+    return {
+      update(done, total) {
+        last = { done, total }
+        paint()
+      },
+      close() {
+        clearTimeout(timer)
+        if (f && !f.closed) f.close('done')
+      },
+    }
+  }
+
+  const abortError = () => {
+    const e = new Error('已取消')
+    e.name = 'AbortError'
+    return e
+  }
+  /** read the project file in range requests into the picked file (cancellable; the server never loads it whole) */
+  async function copyInto(url, writable, onProgress, signal) {
+    let offset = 0
+    let total = -1
+    for (;;) {
+      const res = await fetch(url, { headers: { Range: `bytes=${offset}-${offset + CHUNK - 1}` }, credentials: 'same-origin', cache: 'no-store', signal })
+      if (res.status === 200) {
+        // the server ignored the range: take the whole body as a stream
+        if (offset > 0) throw new PK.Error('读取文件时服务器不支持分段读取，请重试')
+        total = U.num(res.headers.get('content-length'), -1)
+        const reader = res.body.getReader()
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          await writable.write(value)
+          if (signal.aborted) throw abortError()
+          offset += value.byteLength
+          onProgress(offset, total)
+        }
+        return offset
+      }
+      if (res.status !== 206) throw new PK.Error(res.status === 404 ? '文件不存在了（可能被重新渲染或删除），请刷新后再试' : `读取文件失败（HTTP ${res.status}）`)
+      const m = /bytes\s+(\d+)-(\d+)\/(\d+)/i.exec(res.headers.get('content-range') || '')
+      const size = m ? Number(m[3]) : -1
+      if (total >= 0 && size !== total) throw new PK.Error('文件在保存过程中被改动了（例如重新渲染了成片），请重新保存')
+      total = size
+      const buf = new Uint8Array(await res.arrayBuffer())
+      if (buf.byteLength) await writable.write(buf)
+      // 取消 while the last piece was being written must still win: nothing is committed until close()
+      if (signal.aborted) throw abortError()
+      offset += buf.byteLength
+      onProgress(offset, total)
+      if (total < 0 || offset >= total || !buf.byteLength) return offset
+    }
+  }
+
+  async function saveViaPicker(handle, f) {
+    const shown = S(handle && handle.name) || f.name
+    const ctrl = new AbortController()
+    const win = progressWindow(`正在保存${f.what}`, shown, () => ctrl.abort())
+    let writable = null
+    try {
+      writable = await handle.createWritable()
+      await copyInto(f.url, writable, (done, total) => win.update(done, total), ctrl.signal)
+      if (ctrl.signal.aborted) throw abortError()
+      await writable.close()
+      writable = null
+      win.close()
+      PK.toast(`「${shown}」已保存到你选择的文件夹`, 'success', { title: `${f.what}已保存` })
+      return { ok: true, how: 'picker', name: shown }
+    } catch (err) {
+      if (writable) {
+        try {
+          await writable.abort()
+        } catch {}
+      }
+      win.close()
+      if (ctrl.signal.aborted) {
+        PK.toast(`已取消保存「${shown}」`, 'info')
+        return { ok: false, cancelled: true, how: 'picker' }
+      }
+      // reading the project file failed (PK.Error) vs. writing the picked file failed (no permission, disk full …)
+      if (err instanceof PK.Error) throw err
+      throw new PK.Error(`写入你选择的文件失败：${S(err && err.message) || '未知错误'}（可以换一个文件夹再试）`)
+    }
+  }
+
+  /** the system's own 「另存为」 window, opened by the studio server on this computer → null when that is not possible */
+  async function saveViaServerDialog(f) {
+    let win = null
+    const timer = setTimeout(() => {
+      win = PK.frame({ kind: 'dialog', size: 'sm', title: `选择${f.what}的保存位置`, en: 'SAVE AS', dismissible: false })
+      PK.append(
+        win.body,
+        ui.text('已经打开了系统的「另存为」窗口：请在那个窗口里选好文件夹和文件名，再点「保存」。'),
+        ui.hint('没看到这个窗口？它可能被其他窗口挡住了，看看屏幕下方的任务栏。选好后这里会自动完成保存。'),
+        ui.spinner('等待你选择保存位置…'),
+      )
+      win.setFoot([ui.spacer(), ui.btn('收起提示', () => win.close('x'), { kind: 'ghost' })])
+    }, 400)
+    try {
+      const r = await PK.post('delivery/save-as', { projectDir: f.dir, rel: f.rel, suggestedName: f.name, what: f.what }, { timeout: 11 * 60 * 1000 })
+      if (!r || r.cancelled) return { ok: false, cancelled: true, how: 'native' }
+      PK.toast(`已保存到：${S(r.savedPath)}`, 'success', { title: `${f.what}已保存`, timeout: 10000 })
+      return { ok: true, how: 'native', path: S(r.savedPath) }
+    } catch (err) {
+      const code = S(err && err.code)
+      if (code === 'NATIVE_DIALOG_BUSY') {
+        PK.toast(S(err.message), 'info', { title: '「另存为」窗口已经打开' })
+        return { ok: false, busy: true, how: 'native' }
+      }
+      // no dialog possible here (not Windows, switched off, a page from another computer, an older host) → plain download
+      if (/^NATIVE_DIALOG_(UNAVAILABLE|REMOTE)$/.test(code) || /未开放|Route not found/i.test(S(err && err.message))) return null
+      throw err
+    } finally {
+      clearTimeout(timer)
+      if (win && !win.closed) win.close('done')
+    }
+  }
+
+  function plainDownload(f) {
+    const a = h('a', { href: f.url, download: f.name, 'data-pk-plain-download': '1', style: { display: 'none' } })
+    document.body.appendChild(a)
+    a.click()
+    setTimeout(() => a.remove(), 0)
+    PK.toast(`「${f.name}」已开始下载，会保存到浏览器默认的「下载」文件夹。想每次自己选位置：在浏览器设置里打开「下载前询问每个文件的保存位置」。`, 'info', { title: '已开始下载', timeout: 12000 })
+    return { ok: true, how: 'download' }
+  }
+
+  let saving = false
+  PK.saveFile = (o = {}) => {
+    // stays synchronous up to showSaveFilePicker(): the browser's save window needs the click's user activation
+    const dir = S(o.dir) || PK.dir()
+    const rel = relOf(o.rel)
+    if (!dir || !rel) return Promise.reject(new PK.Error('没有可以保存的文件'))
+    if (saving) {
+      PK.toast('上一个文件还在保存，请等它完成', 'info')
+      return Promise.resolve({ ok: false, busy: true })
+    }
+    const t = TYPES[extOf(rel)]
+    const f = { dir, rel, name: safeName(o.name || U.baseName(rel), rel), what: S(o.what).trim() || (t ? t[2] : '文件'), url: assetUrl(dir, rel) }
+    const gesture = navigator.userActivation ? navigator.userActivation.isActive : true
+    let picking = null
+    if (pickerAllowed()) {
+      try {
+        picking = window.showSaveFilePicker(pickerOptions(f.name))
+      } catch (err) {
+        picking = Promise.reject(err)
+      }
+    }
+    saving = true
+    return (async () => {
+      if (picking) {
+        let handle = null
+        try {
+          handle = await picking
+        } catch (err) {
+          // the user closed the save window: nothing to do
+          if (err && err.name === 'AbortError') return { ok: false, cancelled: true, how: 'picker' }
+          // SecurityError / NotAllowedError / TypeError: this frame may not show it → the next way
+        }
+        if (handle) return await saveViaPicker(handle, f)
+      }
+      // a desktop window only for a real click, never for an automated browser
+      if (gesture && !navigator.webdriver) {
+        const r = await saveViaServerDialog(f)
+        if (r) return r
+      }
+      return plainDownload(f)
+    })()
+      .catch((err) => {
+        // every failure reads as one sentence (callers toast it as is)
+        throw new PK.Error(`保存「${f.name}」没有完成：${S(err && err.message) || '未知错误'}`, { code: S(err && err.code) })
+      })
+      .finally(() => {
+        saving = false
+      })
+  }
+
+  /** `<a download>` link → { dir, rel } when it points at a project file of the studio server */
+  function projectFileOf(a) {
+    let u = null
+    try {
+      u = new URL(a.getAttribute('href') || '', window.location.href)
+    } catch {
+      return null
+    }
+    if (u.origin !== window.location.origin || u.pathname !== ASSET_PATH) return null
+    const dir = u.searchParams.get('projectDir') || ''
+    const rel = u.searchParams.get('rel') || ''
+    return dir && rel ? { dir, rel } : null
+  }
+  document.addEventListener(
+    'click',
+    (ev) => {
+      if (ev.defaultPrevented || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return
+      const a = ev.target && typeof ev.target.closest === 'function' ? ev.target.closest('a[download][href]') : null
+      if (!a || a.hasAttribute('data-pk-plain-download')) return
+      const pf = projectFileOf(a)
+      if (!pf) return
+      ev.preventDefault()
+      PK.saveFile({ dir: pf.dir, rel: pf.rel, name: a.getAttribute('download') || '', what: a.getAttribute('data-pk-save-what') || '' }).catch((err) => PK.reportError(err))
+    },
+    true,
+  )
+})()
+
+} catch (err) {
+  console.error('[PK] module 55-save-file.js failed to load', err)
+}
+
 /* ---- 60-studio-assets.js ---- */
 try {
 /* ============================================================================================================
@@ -3068,7 +3448,7 @@ try {
     },
     badge: { 'top-right': '避开左上角的主标题', 'top-left': '传统角标位置', 'bottom-right': '贴底安全区展示', 'bottom-left': '左下安全区展示' },
     narration: { tts: 'AI 真人音色逐幕配音解说（标准）', 'tts-beat-sync': '配音的同时，切镜对齐背景音乐的重拍', 'subtitle-mv': '纯音乐卡点 MV：不配音，只有字幕和音效' },
-    bgm: { 'llm-coded': '大模型写代码合成原创配乐（需要先配置大模型）', uploaded: '用你上传的音乐，自动测量节拍', 'tts-engine': '用配音引擎生成沉浸式氛围音景' },
+    bgm: { 'llm-coded': '大模型写代码合成原创配乐（需要先配置大模型）', uploaded: '用你上传的音乐，自动测量节拍', 'tts-engine': '用配音引擎生成沉浸式氛围音景', generated: '本机按节拍合成配乐，不用素材库里的歌（不花钱）' },
     layout: { 'pip-br': '画面右下角小窗出镜', 'pip-bl': '画面左下角小窗出镜', fullscreen: '数字人占满全屏口播' },
   }
   const o2 = (pairs) => pairs.map(([value, label, hint]) => ({ value, label, hint: hint || '' }))
@@ -3079,7 +3459,7 @@ try {
     aspectRatios: o2([['auto', 'AI 智能判断'], ['16:9', '16:9 横屏'], ['9:16', '9:16 竖屏'], ['3:4', '3:4 竖版 · 小红书'], ['1:1', '1:1 方屏'], ['4:3', '4:3 复古']]),
     qualities: o2([['720p', '720P 极速预览'], ['1080p', '1080P 全高清'], ['2k', '2K 超清'], ['4k', '4K 超清母带']]),
     narrationModes: o2([['tts', 'AI 真人配音'], ['tts-beat-sync', '配音 + 踩拍切镜'], ['subtitle-mv', '纯音乐卡点 MV（免配音）']]),
-    bgmModes: o2([['llm-coded', 'AI 写代码作曲'], ['uploaded', '使用已上传 BGM'], ['tts-engine', 'TTS 氛围音景']]),
+    bgmModes: o2([['llm-coded', 'AI 写代码作曲'], ['uploaded', '使用已上传 BGM'], ['tts-engine', 'TTS 氛围音景'], ['generated', '本机合成配乐']]),
     pacingModes: o2([['auto', 'AI 自动节奏'], ['calm', '舒缓叙事 (4~7s/镜)'], ['balanced', '稳健解说 (3~5s/镜)'], ['dynamic', '高燃踩点 (0.5~3s/镜)']]),
     avatarLayouts: o2([['pip-br', '右下画中画'], ['pip-bl', '左下画中画'], ['fullscreen', '全屏口播']]),
     avatarModes: o2([['ai-human', 'AI 虚拟主播'], ['cloned-human', '克隆真人（上传 / 录制本人）']]),
@@ -3095,6 +3475,10 @@ try {
       ['flat', '扁平插画', '彩色扁平侧身人物，适合生活、产品、科普'],
       ['stick', '火柴人', '线条小人，适合搞笑段子、教程、简笔故事'],
       ['custom', '自定义（AI 自己设计角色）', 'Q版、动漫、绘本、像素等人物库没有的画风，在下面写清楚想要的样子'],
+    ]),
+    productionTypes: o2([
+      ['ai-film', 'AI 原创成片', '按你的需求由 AI 写文案、配音、做画面（动画、宣传片、科普、MV…）'],
+      ['talk-edit', '口播剪辑（我录好的真人视频）', '用你上传的出镜视频：自动去停顿、口头禅和重录，配真实字幕和轻音乐；本机运行不花钱'],
     ]),
     styleCards: [
       { value: 'auto', label: 'AI 自由匹配', hint: 'AI 按主题从这些风格里挑选，都不合适时自创新风格', swatch: 'linear-gradient(135deg, #7C5CFF, #22D3EE 55%, #F5B942)', kind: 'auto' },
@@ -4249,7 +4633,7 @@ try {
     const before = String(D().topic || '')
     if (!before.trim()) throw new PK.Error('请先写一句简单想法（例如：帮我做一个咖啡馆新品宣传片），再点 AI 润色')
     if (!llmReady()) return needLlm('AI 润色需要先连接大模型接口（设置 · 模型与密钥）')
-    if (!(await act('polishTopic', { topic: before }, { timeout: 660000 }))) return undefined // the host toasted why
+    if (!(await act('polishTopic', { topic: before }, { timeout: PK.llmTimeout() }))) return undefined // the host toasted why
     await PK.waitState((s0) => Boolean(s0 && s0.director && s0.director.topic !== before), 4000)
     if (String(D().topic || '') !== before) {
       L.unpolished = before
@@ -4561,7 +4945,8 @@ try {
     PK.needProject()
     if (!llmReady()) return needLlm('请先配置大模型接口，才能让 AI 编写纯代码配乐')
     await ctx.task('AI 大模型正在编写合成器代码并生成 48kHz 配乐母带…', async () => {
-      const d = await PK.postP('audio/llm-compose', {}, { timeout: 900000 })
+      // up to 3 model calls (SuperCollider score, then the JS synth with one retry) + rendering the 48 kHz track
+      const d = await PK.postP('audio/llm-compose', {}, { timeout: PK.llmTimeout(3) })
       await PK.action('setDirector', { patch: { bgmMode: 'llm-coded' } })
       L.bgmPreview = String((d && d.previewUrl) || '')
       PK.toast(`AI 配乐合成完毕${d && d.relScriptPath ? `（${d.relScriptPath}）` : ''}，可以直接点播放器试听`, 'success')
@@ -4608,7 +4993,7 @@ try {
     const rel = String(bgm.uploadedPath || bgm.path || '')
     if (!rel || bgm.enabled === false) return ui.hint('当前还没有生成或绑定配乐：出片时会按上面选的来源自动生成。')
     const lib = (assets || []).find((a) => a && a.path === rel)
-    const src = bgm.source === 'llm-coded' ? 'AI 编码配乐' : bgm.source === 'tts-engine' ? 'TTS 氛围音景' : bgm.source === 'user-imported' ? '你上传的配乐' : '配乐'
+    const src = bgm.source === 'llm-coded' ? 'AI 编码配乐' : bgm.source === 'tts-engine' ? 'TTS 氛围音景' : bgm.source === 'user-imported' ? '你上传的配乐' : bgm.source === 'generated' ? '本机合成配乐' : '配乐'
     const beat = U.num(bgm.bpm) > 0
       ? [`已测定节拍 ${Math.round(U.num(bgm.bpm))} BPM`, bgm.phaseSec !== undefined ? `首拍 ${U.num(bgm.phaseSec).toFixed(2)} 秒` : '', Array.isArray(bgm.downbeats) ? `${bgm.downbeats.length} 个重拍` : '', Array.isArray(bgm.drops) ? `${bgm.drops.length} 个高潮突降点` : ''].filter(Boolean).join(' · ')
       : ''
@@ -4724,6 +5109,7 @@ try {
     const fxHint = `${vibe.length ? `Vibecoding 工具箱（本机就绪 ${vibeReady}/${vibe.length}）` : 'Vibecoding 工具箱'}由 AI 按每一镜的需要自动调用，不用手动挑选；工具满足不了的效果，AI 会直接写代码实现。这里只定整体视效偏好。`
     const badgeOn = Boolean(dv(L, 'aiBadgeEnabled'))
     const reviewOn = dv(L, 'visualReview') !== false
+    const reviewFineOn = dv(L, 'visualReviewFine') !== false
     const badgePos = String(dv(L, 'aiBadgePosition') || 'top-right')
     const aspects = withHints(OP('aspectRatios'), HINTS.aspect)
     if (!aspects.some((o) => o.value === 'custom')) aspects.push({ value: 'custom', label: '自定义宽高', hint: HINTS.aspect.custom })
@@ -4751,6 +5137,14 @@ try {
       ui.field({ label: '视效偏好', en: 'VISUAL FX · AI TOOLS', hint: fxHint }, ui.select({ key: 'a60-fx', value: fx, options: withHints(OP('visual3dModes'), HINTS.fx), showHint: true, searchable: false, aria: '视效偏好', onChange: (v) => guard(() => setD(ctx, L, 'visual3dMode', v)) })),
       mode === 'ai-coded'
         ? ui.toggle({ value: reviewOn, label: '画面自检（AI 看图返工）', hint: '代码写完后先渲染每个镜头的关键帧，让大模型看图检查人物、构图、文字和亮度，有明显问题的镜头带截图返工一次。需要能看图的模型；每批镜头多 1~2 次大模型调用', onChange: (v) => guard(() => setD(ctx, L, 'visualReview', v)) })
+        : null,
+      mode === 'ai-coded' && reviewOn
+        ? ui.toggle({
+            value: reviewFineOn,
+            label: '逐个机位看图（更细的画面自检）',
+            hint: '较长的镜头会按节拍切成几个机位（远景 / 中景 / 特写）。打开后每个机位都截一张图给大模型看（长镜头约每 4 秒一张），能发现推近后标题、人物被裁掉等问题，被裁掉的机位会自动改成更宽的景别；返工过的镜头还会再复查一次，返工后反而更差就退回原来的画面。一条 1～2 分钟的片子大约多看 0～60 张图，大模型费用约多 5%～20%',
+            onChange: (v) => guard(() => setD(ctx, L, 'visualReviewFine', v)),
+          })
         : null,
       ui.toggle({ value: badgeOn, label: '添加 AI 创作角标', hint: '在画面角落标注「AI 辅助创作」，符合平台对 AI 内容的标注要求', onChange: (v) => guard(() => setD(ctx, L, 'aiBadgeEnabled', v)) }),
       badgeOn
@@ -4967,7 +5361,7 @@ try {
       ),
       ui.toggle({ value: Boolean(rv(L, 'useHostVocal')), label: '优先沿用真人出镜原声', hint: '素材里有真人出镜视频时，用视频原声代替 AI 配音', onChange: (v) => guard(() => setR(ctx, L, 'useHostVocal', v)) }),
       ui.toggle({ value: Boolean(rv(L, 'aiAuthorCode')), label: '允许大模型手写动效源码', hint: '关闭后只用内置版式，出片更快、更稳定', onChange: (v) => guard(() => setR(ctx, L, 'aiAuthorCode', v)) }),
-      ui.toggle({ value: dv(L, 'useDraftReference') !== false, label: 'AI 编码出片时参考现有草稿', hint: '沿用已生成草稿的分镜和配音时长作为节奏基准', onChange: (v) => guard(() => setD(ctx, L, 'useDraftReference', v)) }),
+      ui.toggle({ value: dv(L, 'useDraftReference') !== false, label: '出片时参考现有草稿', hint: '沿用已生成草稿的分镜和配音时长作为节奏基准（开始出片和 AI 编码出片都会参考）', onChange: (v) => guard(() => setD(ctx, L, 'useDraftReference', v)) }),
       ui.field(
         { label: '素材智能构图与调色', en: 'CURATE', hint: '按当前画面比例、清晰度、风格、截取 / 倍速和抠像设置，用 FFmpeg 批量裁切构图、统一调色（结果在 assets/edited/，原素材不变）。' },
         ui.row([ui.btn('立刻执行 FFmpeg 素材智能构图与调色', () => curate(ctx), { size: 'sm', icon: 'scissors', busyText: '精修中…' })]),
@@ -5007,6 +5401,7 @@ try {
       targetDurationSec: d.durationMode === 'custom' ? clampInt(d.targetDurationSec, 15, 600, 120) : 0,
       visual3dMode: d.visual3dMode || 'auto',
       visualReview: d.visualReview !== false,
+      visualReviewFine: d.visualReviewFine !== false,
       figureStyleChoice: d.figureStyleChoice || 'auto',
       figureStyleChoiceNote: d.figureStyleChoiceNote || '',
       narrationMode: d.narrationMode || 'tts',
@@ -5068,6 +5463,12 @@ try {
     PK.needProject()
     await settle(ctx) // the host starts the run from its own form: let the edit just made land there first
     const d = D()
+    if (d.productionType === 'talk-edit') {
+      // 口播剪辑: no brief, no model — the person's own recording (needs the free local speech engine)
+      if (!(await act('run', {}, { timeout: 180000 }))) return undefined
+      ctx.close()
+      return undefined
+    }
     if ((d.creationMode || 'ai-coded') === 'ai-coded' && !llmReady()) return needLlm('尚未配置 AI 大模型接口：请先填入 API Key，或把创作模式切换为「本地极速草稿」再一键出片')
     const topic = String(d.topic || '')
     if (!topic.trim()) {
@@ -5215,6 +5616,52 @@ try {
       ),
     )
   }
+  /* ---------------------------------------------------------------- 作品类型: AI 原创成片 / 口播剪辑 */
+  function productionTypeSection(ctx, L) {
+    const opts = OP('productionTypes')
+    const cur = String(dv(L, 'productionType') || 'ai-film') === 'talk-edit' ? 'talk-edit' : 'ai-film'
+    const curOpt = opts.find((o) => o.value === cur) || opts[0]
+    return ui.section(
+      { title: '作品类型', en: 'PRODUCTION', icon: 'layers', key: 'a60-ptype' },
+      ui.seg({
+        value: cur,
+        options: opts.map((o) => ({ value: o.value, label: o.label })),
+        aria: '作品类型',
+        onChange: (v) => guard(() => setD(ctx, L, 'productionType', v)),
+      }),
+      curOpt && curOpt.hint ? ui.hint(curOpt.hint) : null,
+    )
+  }
+  function talkEditSection(ctx, L, s) {
+    const te = (s.script && s.script.talkEdit) || null
+    const built = s.script && s.script.productionType === 'talk-edit' && te
+    return ui.section(
+      {
+        title: '口播剪辑',
+        en: 'TALKING HEAD',
+        icon: 'film',
+        desc: '用素材库里你本人出镜的视频：自动去掉长停顿、口头禅、结巴和重录（同一句说了几遍只留最后一遍），字幕按你真实说的话逐字出现，再配一首压在人声下面的轻音乐。全部在本机完成，不调用大模型、不花钱。',
+      },
+      built
+        ? ui.kv([
+            ['上次剪辑', String(te.summary || '—')],
+            ['用的视频', String((te.source && (te.source.name || te.source.path)) || '—')],
+          ])
+        : ui.note('还没有剪辑过。可以先打开「AI 剪辑」逐句看看要剪掉哪些地方（能一键恢复），也可以直接一键出片。', { level: 'info' }),
+      ui.row([ui.btn('打开 AI 剪辑：逐句查看与恢复', () => PK.open('talkEdit'), { kind: 'primary', icon: 'film' })], { wrap: true }),
+      ui.hint('第一次使用需要安装「本地语音识别」（免费、离线，约 260 MB），在 AI 剪辑面板里一键安装。'),
+    )
+  }
+  function produceTalkSection(ctx) {
+    const live = runLive()
+    const job = JOB.cur && JOB.cur.dir === PK.dir() ? JOB.cur : null
+    const lock = live || Boolean(job && job.status === 'running')
+    return ui.section(
+      { title: '开始出片', en: 'PRODUCE', icon: 'bolt', desc: '识别 → 粗剪 → 原声分段 → 真实字幕 → 配乐 → 渲染，全部在本机完成。' },
+      live ? ui.note('当前工程已经有出片任务在运行，完成或停止后才能再次出片。', { level: 'info', actions: [ui.btn('打开任务中心', () => PK.open('tasks'), { size: 'sm', icon: 'tasks' })] }) : null,
+      ui.stack([ui.btn('一键出片（口播剪辑）', () => doRun(ctx), { kind: 'primary', size: 'lg', block: true, icon: 'bolt', disabled: lock, busyText: '启动中…' }), ui.hint('会按「AI 剪辑」里的设置和你恢复 / 删掉的地方来剪。')], { gap: 4 }),
+    )
+  }
   function renderDirector(ctx, s) {
     const L = scope(s)
     const W = hook(ctx, s)
@@ -5232,8 +5679,12 @@ try {
       ui.btn('一键出片', () => doRun(ctx), { kind: 'primary', icon: 'bolt', disabled: runLive() || Boolean(job), busyText: '启动中…' }),
     ])
     W.sig = signature(ctx)
+    if (String(dv(L, 'productionType') || '') === 'talk-edit') {
+      // 口播剪辑: brief, style, voice and avatar do not apply (the person's own picture and voice are the film)
+      return ui.split([productionTypeSection(ctx, L), talkEditSection(ctx, L, s)], [bgmSection(ctx, L, s), produceTalkSection(ctx)], { ratio: 'minmax(0, 1.08fr) minmax(0, 1fr)' })
+    }
     return ui.split(
-      [briefSection(ctx, L), workSection(ctx, L), durationSection(ctx, L), styleSection(ctx, L, s), bgmSection(ctx, L, s)],
+      [productionTypeSection(ctx, L), briefSection(ctx, L), workSection(ctx, L), durationSection(ctx, L), styleSection(ctx, L, s), bgmSection(ctx, L, s)],
       [formatSection(ctx, L, s), voiceSection(ctx, L, s), avatarSection(ctx, L, s), advancedSection(ctx, L), produceSection(ctx, L, s)],
       { ratio: 'minmax(0, 1.08fr) minmax(0, 1fr)' },
     )
@@ -5665,6 +6116,8 @@ a.pk-btn{text-decoration:none}
     return Array.isArray(l) && l.length ? l : fallback
   }
   const findScene = (script, id) => ((script && Array.isArray(script.scenes) ? script.scenes : []).find((x) => x && x.id === id) || null)
+  /** 口播剪辑 scenes speak with the person's own recorded voice: never offered for AI re-dubbing or per-scene mastering */
+  const isHostVoice = (sc) => Boolean(sc && sc.voiceSource === 'host')
   const withCurrent = (list, value, label) => {
     if (value === undefined || value === null || value === '') return list
     return list.some((o) => String(o.value) === String(value)) ? list : [...list, { value, label: label || String(value), hint: '当前值' }]
@@ -5699,6 +6152,13 @@ a.pk-btn{text-decoration:none}
       o.icon ? PK.icon(o.icon, o.size === 'sm' ? 13 : 15) : null,
       h('span.pk-btn-l', null, label),
     )
+  /** download link of a deliverable: a plain click opens 「另存为」 (choose folder + name — PK.saveFile in 55-save-file.js);
+   *  it stays a real <a download>, so 右键「链接另存为」 and a kit without the save module keep working */
+  const saveLink = (label, href, o = {}) => {
+    const a = linkBtn(label, href, o)
+    if (o.what) a.setAttribute('data-pk-save-what', o.what)
+    return a
+  }
 
   /* ================================================================ draft patch model */
   const HIDDEN_KEYS = new Set(['voiceLocked', 'voiceCastBy', 'useBuiltinLayout', 'assetPaths'])
@@ -5971,8 +6431,9 @@ a.pk-btn{text-decoration:none}
     const subIds = Object.keys(snap.scenes).filter((id) => Object.prototype.hasOwnProperty.call(snap.scenes[id], 'subtitleText'))
     if (subIds.length && rec) await resyncGlobalSubs(saved, subIds)
     // narration edits: the voice + subtitles still speak the old text until the scene is re-dubbed
+    // (a 口播剪辑 scene keeps the person's own voice: its narration is the transcript, nothing is re-dubbed)
     const narrIds = Object.keys(snap.scenes).filter((id) => Object.prototype.hasOwnProperty.call(snap.scenes[id], 'narration'))
-    for (const id of narrIds) redubOf(PK.dir()).add(id)
+    for (const id of narrIds) if (!isHostVoice(findScene(saved, id))) redubOf(PK.dir()).add(id)
     subtractSaved(L, snap)
     PK.store.invalidate()
     const recorded = (rec && Array.isArray(rec.recorded) ? rec.recorded.length : 0) || 0
@@ -7089,7 +7550,7 @@ a.pk-btn{text-decoration:none}
         lead: sceneNo(i),
         thumb: thumbImg(thumb, () => h('div.pk-media-empty', null, PK.icon('film', 16))),
         title,
-        sub: `${num(sc.durationSec).toFixed(1)} 秒 · ${env.view.narrationMode === 'subtitle-mv' ? '纯字幕' : hasVoice ? '已配音' : '未配音'}${redubOf(PK.dir()).has(sc.id) ? ' · 需重配' : ''}`,
+        sub: `${num(sc.durationSec).toFixed(1)} 秒 · ${env.view.narrationMode === 'subtitle-mv' ? '纯字幕' : isHostVoice(sc) ? '本人原声' : hasVoice ? '已配音' : '未配音'}${redubOf(PK.dir()).has(sc.id) && !isHostVoice(sc) ? ' · 需重配' : ''}`,
         active: sc.id === L.sel,
         tip: `${sc.id} · ${sceneTitle(sc, i)}`,
         right: h(
@@ -7457,6 +7918,7 @@ a.pk-btn{text-decoration:none}
     const title = sceneTitle(sc, idx)
     const busy = env.busy
     const subMv = env.view.narrationMode === 'subtitle-mv'
+    const hostVoice = isHostVoice(sc)
     const fps = env.fps
     const emo = withCurrent([...new Set([...optList('emotions', []).map((o) => o.value), ...BASE_EMOTIONS])].map((e) => ({ value: e, label: e })), sc.emotion)
     const rate = String((num(sc.speechRate) || 1).toFixed(2))
@@ -7486,19 +7948,32 @@ a.pk-btn{text-decoration:none}
       names.length
         ? h('div.pk-sc-guard', null, PK.icon('check', 14), h('span', null, `已保护你的手动修改：${names.join('、')}（AI 重新出片时会保留）`), ui.btn('不再保护', () => clearProtection(env, sc.id, title, names), { size: 'sm', kind: 'ghost', disabled: busy }))
         : null,
-      redubOf(PK.dir()).has(sc.id) && !subMv
+      redubOf(PK.dir()).has(sc.id) && !subMv && !hostVoice
         ? ui.note('旁白已经改了，但配音和字幕还是旧的。点「重配此幕配音」让声音和字幕跟上新文字。', { level: 'warn', actions: [ui.btn('重配此幕配音', () => ttsScene(env, sc), { size: 'sm', icon: 'mic', kind: 'primary', disabled: busy })] })
         : null,
       ui.section(
         { title: '文案', en: 'COPY', icon: 'edit' },
         ui.field({ label: '画面主标题', en: 'TITLE' }, ui.textarea({ key: `sc-title-${sc.id}`, value: sc.title || '', rows: 1, minRows: 1, maxRows: 4, maxLength: 200, placeholder: '这一幕在画面上显示的大标题', onInput: (v) => env.edit('title', v), expand: { title: `画面主标题 · ${sc.id}` } })),
+        hostVoice
+          ? ui.field(
+              { label: '原话（语音识别）', en: 'TRANSCRIPT', hint: '这是从你录制的视频里识别出来的原话，只作记录。改这里不会改变声音；字幕的错别字请改下方「屏幕字幕」；要删掉某句话，请回到「AI 剪辑」面板。' },
+              ui.textarea({ key: `sc-narr-${sc.id}`, value: sc.narration || '', rows: 3, minRows: 2, maxRows: 10, counter: true, placeholder: '识别出的原话', onInput: (v) => env.edit('narration', v), expand: { title: `原话 · ${sc.id}「${title}」` } }),
+            )
+          : ui.field(
+              { label: subMv ? '画面文案' : '口播旁白', en: 'NARRATION', hint: subMv ? '纯音乐卡点模式没有配音：画面上显示的是下方「屏幕字幕」。改完文案后点「用文案重新生成字幕」同步过去。' : '改完记得点下方「重配此幕配音」，声音和字幕才会换成新文字' },
+              ui.textarea({ key: `sc-narr-${sc.id}`, value: sc.narration || '', rows: 4, minRows: 3, maxRows: 12, counter: true, placeholder: subMv ? '这一幕要表达的文字' : '这一幕要说的话（也是默认字幕）', onInput: (v) => env.edit('narration', v), expand: { title: `${subMv ? '画面文案' : '口播旁白'} · ${sc.id}「${title}」`, hint: subMv ? '纯音乐卡点模式的画面文案。' : '这是 AI 配音要念的内容，也是默认字幕。写口语化的短句效果最好。' } }),
+            ),
         ui.field(
-          { label: subMv ? '画面文案' : '口播旁白', en: 'NARRATION', hint: subMv ? '纯音乐卡点模式没有配音：画面上显示的是下方「屏幕字幕」。改完文案后点「用文案重新生成字幕」同步过去。' : '改完记得点下方「重配此幕配音」，声音和字幕才会换成新文字' },
-          ui.textarea({ key: `sc-narr-${sc.id}`, value: sc.narration || '', rows: 4, minRows: 3, maxRows: 12, counter: true, placeholder: subMv ? '这一幕要表达的文字' : '这一幕要说的话（也是默认字幕）', onInput: (v) => env.edit('narration', v), expand: { title: `${subMv ? '画面文案' : '口播旁白'} · ${sc.id}「${title}」`, hint: subMv ? '纯音乐卡点模式的画面文案。' : '这是 AI 配音要念的内容，也是默认字幕。写口语化的短句效果最好。' } }),
-        ),
-        ui.field(
-          { label: '屏幕字幕', en: 'SUBTITLE', hint: subMv ? '画面上实际显示的文字。清空后保存 = 按上面的文案重新生成。' : '默认按旁白自动断句。改这里只改变屏幕上显示的字幕文字（保存后按新文字重新排版）；清空后保存 = 按旁白重新生成；重新配音时字幕会按旁白重新断句。' },
-          ui.textarea({ key: `sc-sub-${sc.id}`, value: sc.subtitleText || '', rows: 2, minRows: 2, maxRows: 8, counter: true, placeholder: subMv ? '留空 = 按画面文案自动生成字幕' : '留空 = 跟随旁白自动生成字幕', onInput: (v) => env.edit('subtitleText', v), expand: { title: `屏幕字幕 · ${sc.id}「${title}」` } }),
+          {
+            label: '屏幕字幕',
+            en: 'SUBTITLE',
+            hint: hostVoice
+              ? '画面上的字幕，每句之间用「，」隔开，一句对应一行。改错别字不会打乱时间（字幕仍跟着你说话的节奏）；清空后保存 = 恢复识别出的原话。'
+              : subMv
+                ? '画面上实际显示的文字。清空后保存 = 按上面的文案重新生成。'
+                : '默认按旁白自动断句。改这里只改变屏幕上显示的字幕文字（保存后按新文字重新排版）；清空后保存 = 按旁白重新生成；重新配音时字幕会按旁白重新断句。',
+          },
+          ui.textarea({ key: `sc-sub-${sc.id}`, value: sc.subtitleText || '', rows: 2, minRows: 2, maxRows: 8, counter: true, placeholder: hostVoice ? '留空 = 恢复识别出的原话' : subMv ? '留空 = 按画面文案自动生成字幕' : '留空 = 跟随旁白自动生成字幕', onInput: (v) => env.edit('subtitleText', v), expand: { title: `屏幕字幕 · ${sc.id}「${title}」` } }),
         ),
         subMv
           ? ui.btn('用文案重新生成字幕', () => {
@@ -7512,7 +7987,14 @@ a.pk-btn{text-decoration:none}
       ),
       subMv
         ? null
-        : ui.section(
+        : hostVoice
+          ? ui.section(
+              { title: '声音', en: 'VOICE', icon: 'voice' },
+              ui.note('本幕是你本人的原声（来自你录制的视频，剪辑时已做人声增强和响度统一），会原样保留，不能用 AI 重新配音。要剪掉或恢复某句话，请回到「AI 剪辑」面板。', { level: 'ok' }),
+              h('div.pk-sc-rowbtns', null, audioRel ? ui.playBtn(fileUrl(audioRel, hash(server.updatedAt || '')), { label: '试听本幕原声' }) : null),
+              ui.hint(audioRel ? `原声 ${voiceLen ? `${voiceLen.toFixed(1)} 秒` : ''}` : '这一幕还没有原声片段，请在「AI 剪辑」面板重新生成剪辑工程。'),
+            )
+          : ui.section(
             { title: '声音', en: 'VOICE', icon: 'voice' },
             ui.field(
               { label: '本幕音色', en: 'VOICE', hint: voiceId === 'auto' ? '跟随全片主配音（或 AI 自动匹配）' : '只对这一幕生效；改完点「重配此幕配音」' },
@@ -7877,7 +8359,14 @@ a.pk-btn{text-decoration:none}
       'div.pk-dl-check',
       { class: `is-${tone}` },
       h('span.pk-dl-check-i', null, PK.icon(tone === 'ok' ? 'check' : tone === 'err' ? 'x' : tone === 'warn' ? 'warn' : 'info', 14)),
-      h('div.pk-dl-check-b', null, h('b', null, ck.name || '检查项'), ck.value ? h('span', null, String(ck.value)) : null),
+      h(
+        'div.pk-dl-check-b',
+        null,
+        h('b', null, ck.name || '检查项'),
+        ck.value ? h('span', null, String(ck.value)) : null,
+        // a failed / warned check lists where it happens (e.g. held pictures: time range + scene ids), one line each
+        ...(tone === 'err' || tone === 'warn' ? (Array.isArray(ck.details) ? ck.details : []).slice(0, 8).map((d) => h('span', null, `· ${String(d)}`)) : []),
+      ),
     )
   }
   function playerFor(L, url, poster) {
@@ -7968,7 +8457,7 @@ a.pk-btn{text-decoration:none}
               { icon: 'expand', title: '铺满整个窗口播放成片，再按 F 进入真正的全屏' },
             )
           : null,
-        hasMp4 ? linkBtn('下载成片', mp4, { icon: 'download', download: `${title.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'final'}.mp4` }) : null,
+        hasMp4 ? saveLink('下载成片', mp4, { icon: 'download', what: '成片', download: `${title.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'final'}.mp4`, title: '选择保存位置和文件名，把成片 MP4 存到你想放的地方' }) : null,
         hasMp4 ? ui.btn('一键生成发布资料包', () => PK.open('export'), { icon: 'box' }) : null,
         hasMp4 ? ui.btn('投稿到影核广场', () => PK.open('plaza', { view: 'submit' }), { icon: 'hub', kind: 'ghost', title: '把这条作品打成投稿包发给作者，审核收录后大家都能在影核广场套用' }) : null,
       ),
@@ -8055,7 +8544,7 @@ a.pk-btn{text-decoration:none}
             'div.pk-stack',
             null,
             h('div.pk-dl-player', { style: { width: `min(100%, calc(min(40vh, 360px) * ${W} / ${H}))`, aspectRatio: `${W} / ${H}` } }, h('video', { src: lutRes.url, controls: 'controls', preload: 'metadata', playsinline: '' })),
-            ui.row([linkBtn('下载调色版', lutRes.url, { icon: 'download', size: 'sm' }), ui.hint(U.baseName(lutRes.outputPath || ''))]),
+            ui.row([saveLink('下载调色版', lutRes.url, { icon: 'download', size: 'sm', what: '调色版', title: '选择保存位置和文件名，保存这份调色版视频' }), ui.hint(U.baseName(lutRes.outputPath || ''))]),
           )
         : null,
     )
@@ -8256,6 +8745,2435 @@ a.pk-btn{text-decoration:none}
   console.error('[PK] module 61-studio-scenes.js failed to load', err)
 }
 
+/* ---- 62-talk-edit.js ---- */
+try {
+/* ============================================================================================================
+ * PK · AI 剪辑 · 口播粗剪 (talkEdit panel) — the user's own talking-head recording, cut by the computer:
+ *   1. 本地语音识别 engine: status, one-click install (folder + download source), licences
+ *   2. pick the recording, the cut rules (停顿 / 口头禅 / 结巴 / 重录 / 声音增强 / 语言)
+ *   3. 识别并规划: the transcript with every cut shown in place (struck through, reason on hover) — click a cut to bring
+ *      it back, click a kept word to cut it; the list of cuts with 恢复 / 剪掉; stats
+ *   4. 生成口播剪辑 (project: picture + own voice + real captions) → preview the cut, 一键出片 / 去分步精修
+ * Routes (routes-talk.js): GET asr/status · POST asr/install · GET talk/state · POST talk/roughcut · POST talk/build.
+ * Long jobs are tracked in a module-level registry (progress survives closing / reopening the panel).
+ * ============================================================================================================ */
+;(function () {
+  'use strict'
+  const PK = window.PK
+  if (!PK || typeof PK.panel !== 'function') return
+  const U = PK.util
+  const h = PK.h
+  const ui = PK.ui
+
+  const S = (v) => (v === undefined || v === null ? '' : String(v))
+  const st = () => PK.state || {}
+  const fmtSec = (s) => {
+    const v = Math.max(0, Math.round(Number(s) || 0))
+    return v >= 60 ? `${Math.floor(v / 60)} 分 ${String(v % 60).padStart(2, '0')} 秒` : `${v} 秒`
+  }
+  const fmtClock = (s) => {
+    const v = Math.max(0, Number(s) || 0)
+    const m = Math.floor(v / 60)
+    return `${String(m).padStart(2, '0')}:${(v - m * 60).toFixed(1).padStart(4, '0')}`
+  }
+  const LANGS = [
+    { value: 'auto', label: '自动识别' },
+    { value: 'zh', label: '普通话' },
+    { value: 'yue', label: '粤语' },
+    { value: 'en', label: '英语' },
+    { value: 'ja', label: '日语' },
+    { value: 'ko', label: '韩语' },
+  ]
+  const KIND_TONE = { pause: 'mute', noise: 'mute', head: 'mute', tail: 'mute', filler: 'warn', stutter: 'warn', fragment: 'warn', retake: 'acc', 'false-start': 'acc', manual: 'err' }
+
+  /* -------------------------------------------------------------------------------------------- job registry */
+  const JOBS = new Map() // key → { key, label, state, pct, msg, startedAt, result, error, dir }
+  const jobHosts = new Set()
+  const jobRunning = (key) => {
+    const j = JOBS.get(key)
+    return Boolean(j && j.state === 'running')
+  }
+  function paintJob(el) {
+    const j = JOBS.get(el.getAttribute('data-pk-tejob'))
+    PK.clear(el)
+    if (!j) {
+      el.hidden = true
+      return
+    }
+    el.hidden = false
+    const elapsed = U.fmtDur((Date.now() - j.startedAt) / 1000)
+    const tone = j.state === 'error' ? 'err' : j.state === 'done' ? 'ok' : ''
+    const label = j.state === 'running' ? `${j.label} · 进行中 · 已用 ${elapsed}` : j.state === 'done' ? `${j.label} · 已完成` : `${j.label} · 未完成`
+    PK.append(
+      el,
+      ui.meter(j.state === 'error' ? 100 : j.pct, { label, valueText: j.state === 'error' ? '失败' : `${Math.round(j.pct)}%`, tone, indeterminate: j.state === 'running' && j.pct <= 3 }),
+      j.msg ? ui.text(j.msg, { tone: j.state === 'error' ? null : 'muted', class: j.state === 'error' ? 'pk-text--err' : '' }) : null,
+    )
+  }
+  function jobsChanged() {
+    for (const el of [...jobHosts]) {
+      if (!el.isConnected) jobHosts.delete(el)
+      else paintJob(el)
+    }
+  }
+  function jobView(key) {
+    const el = h('div.pk-stack.pk-te-job', { 'data-pk-tejob': key, role: 'status' })
+    paintJob(el)
+    jobHosts.add(el)
+    return el
+  }
+  async function startJob(key, o) {
+    if (jobRunning(key)) throw new PK.Error(`「${JOBS.get(key).label}」正在进行中，请等它完成`)
+    const j = { key, label: o.label, state: 'running', pct: 2, msg: o.startText || '正在提交…', startedAt: Date.now(), result: null, error: '', dir: PK.dir() }
+    JOBS.set(key, j)
+    jobsChanged()
+    try {
+      const init = await o.start()
+      const jobId = init && (init.jobId || (init.job && init.job.id))
+      if (!jobId) throw new PK.Error(S(init && (init.error || init.message)) || '后台任务没有启动，请重试')
+      const result = await PK.job(jobId, {
+        interval: 1000,
+        maxMs: o.maxMs || 6 * 3600 * 1000,
+        onProgress: (job) => {
+          const msg = S(job && job.message).trim()
+          if (msg) j.msg = msg
+          const p = U.num(job && job.progress, j.pct)
+          if (p > 0) j.pct = U.clamp(p, 0, 100)
+          jobsChanged()
+        },
+      })
+      if (result && result.ok === false) throw new PK.Error(S(result.error || result.message) || '任务没有完成')
+      j.state = 'done'
+      j.pct = 100
+      j.result = result
+      j.msg = typeof o.doneText === 'function' ? o.doneText(result) : o.doneText || '已完成'
+      jobsChanged()
+      return result
+    } catch (err) {
+      j.state = 'error'
+      j.error = S(err && err.message) || '任务失败'
+      j.msg = j.error
+      jobsChanged()
+      throw err
+    }
+  }
+
+  /* -------------------------------------------------------------------------------------------- data */
+  async function loadState(ctx, { quiet = false } = {}) {
+    const L = ctx.local
+    if (!PK.hasProject()) return
+    try {
+      const res = await PK.get('talk/state', { projectDir: PK.dir(), ...(L.source ? { source: L.source } : {}) }, { timeout: 60000 })
+      L.data = res
+      L.err = null
+      if (!L.source && res && res.source) L.source = res.source.path
+      // the saved options / overrides of this recording become the editable drafts (once per loaded rough cut)
+      const rc = res && res.roughcut
+      const sig = rc ? `${rc.transcriptHash}|${rc.updatedAt}` : `none|${L.source}`
+      if (L.rcSig !== sig) {
+        L.rcSig = sig
+        L.opts = { ...(res.defaults || {}), ...(rc ? rc.options : {}) }
+        L.restore = new Set(rc && rc.overrides ? rc.overrides.restore || [] : [])
+        L.cutWords = rc && rc.overrides ? (rc.overrides.cutWords || []).map((r) => [r[0], r[1]]) : []
+        L.dirty = false
+      }
+      // the project's saved 口播包装 settings become the editable draft (unless the user is editing it)
+      if (!L.packDirty && res && res.pack) L.pack = { ...(res.pack.settings || {}) }
+    } catch (err) {
+      L.err = err
+      if (!quiet) PK.toast(`读取口播剪辑状态失败：${S(err && err.message)}`, 'error')
+    }
+    ctx.update()
+  }
+  async function loadEngine(ctx, deep) {
+    const res = await PK.get('asr/status', deep ? { deep: 1 } : undefined, { timeout: deep ? 120000 : 30000 })
+    ctx.local.asr = (res && res.asr) || null
+    ctx.local.installer = (res && res.installer) || null
+    if (ctx.local.installer && !ctx.local.installDir) ctx.local.installDir = S(ctx.local.installer.recommendedHome)
+    return res
+  }
+
+  const overridesOf = (L) => ({ restore: [...(L.restore || [])], cutWords: (L.cutWords || []).map((r) => [r[0], r[1]]) })
+  const optionsOf = (L) => {
+    const o = L.opts || {}
+    return {
+      cutPauses: o.cutPauses !== false,
+      maxPauseSec: U.clamp(U.num(o.maxPauseSec, 0.5), 0.25, 3),
+      cutFillers: o.cutFillers !== false,
+      cutStutters: o.cutStutters !== false,
+      cutRetakes: o.cutRetakes !== false,
+      enhanceVoice: o.enhanceVoice !== false,
+      language: S(o.language) || 'auto',
+    }
+  }
+
+  /* -------------------------------------------------------------------------------------------- actions */
+  async function installEngine(ctx) {
+    const L = ctx.local
+    const pkg = (L.installer && L.installer.package) || {}
+    const dir = S(L.installDir).trim()
+    if (!dir) throw new PK.Error('请先填写安装位置，例如 D:/dsh-ai/asr')
+    if (/[^\x20-\x7e]/.test(dir)) throw new PK.Error('安装位置里不能有中文或特殊字符，请换一个纯英文路径，例如 D:/dsh-ai/asr')
+    const mirror = L.mirror === 'global' ? 'global' : 'cn'
+    const ok = await PK.confirm({
+      title: '一键安装本地语音识别？',
+      text: `将下载并安装「${S(pkg.name) || '本地语音识别'}」：\n· 用途：${(pkg.uses || []).join('、')}\n· 语言：${S(pkg.languages)}\n· 磁盘占用：${S(pkg.diskRequired)}\n· 安装位置：${dir}\n· 下载源：${mirror === 'global' ? '官方全球源（npm 官方仓库 + Hugging Face）' : '国内高速镜像优先（npmmirror + HF-Mirror）'}\n· 每个文件都会校验指纹，装好后完全离线、不花钱。\n\n授权说明：\n${(pkg.license || []).join('\n')}`,
+      ok: '开始安装',
+    })
+    if (!ok) return
+    startJob('install', {
+      label: '安装本地语音识别',
+      startText: '正在启动安装…',
+      start: () => PK.post('asr/install', { installDir: dir, mirror }),
+      doneText: (r) => (r && r.ok ? '安装完成并通过自检' : `已安装，但自检没通过：${S(r && r.status && r.status.reason)}`),
+      maxMs: 3 * 3600 * 1000,
+    })
+      .then(async () => {
+        PK.toast('本地语音识别安装完成，可以开始口播粗剪了', 'success')
+        await loadEngine(ctx).catch(() => {})
+        await loadState(ctx, { quiet: true })
+      })
+      .catch((err) => PK.toast(`本地语音识别安装未完成：${S(err && err.message)}`, 'error', { title: '安装失败', timeout: 0 }))
+    ctx.update()
+  }
+
+  async function runPlan(ctx, { force = false } = {}) {
+    PK.needProject()
+    const L = ctx.local
+    if (!L.source) throw new PK.Error('请先选择要剪辑的视频')
+    const key = `plan:${PK.dir()}`
+    await startJob(key, {
+      label: L.data && L.data.roughcut ? '重新规划粗剪' : '识别并规划粗剪',
+      startText: '正在提交…',
+      start: () => PK.postP('talk/roughcut', { sourcePath: L.source, options: optionsOf(L), overrides: overridesOf(L), render: false, force }),
+      doneText: (r) => S(r && r.summary) || '粗剪规划完成',
+    })
+    L.rcSig = '' // reload the drafts from the saved result
+    await loadState(ctx, { quiet: true })
+    PK.toast('粗剪规划完成：删掉的地方用删除线标出，点一下就能恢复', 'success')
+  }
+
+  /**
+   * A cloud anime presenter costs money: ask first, with the estimate for this cut's length. → undefined (nothing to
+   * pay: no cloud presenter, or the clip of this unchanged cut is re-used for free), the confirmed amount (sent with
+   * this request only, never stored) or false (the user said no).
+   */
+  async function presenterCostGate(ctx) {
+    const L = ctx.local
+    const d = L.data || {}
+    const P = d.pack || {}
+    const p = L.pack || P.settings || {}
+    const m = p.mascot
+    if (!m || !m.characterId) return undefined
+    const eng = (P.presenterEngines || []).find((e) => e.id === m.engine)
+    if (!eng || !eng.paid) return undefined
+    const last = P.mascotLast
+    const char = (P.characters || []).find((c) => c.id === m.characterId)
+    if (last && last.type === 'anime-clip' && !last.fellBack && last.engine === m.engine && last.characterId === m.characterId && char && Number(last.characterVersion) === Number(char.version) && !L.dirty) return undefined
+    const sec = U.num(d.roughcut && d.roughcut.plan && d.roughcut.plan.outputDurationSec, 0)
+    const r = await PK.get('anime/estimate', { engine: m.engine, durationSec: Math.ceil(sec), mode: m.mode || '', characterId: m.characterId })
+    const est = (r && r.estimate) || {}
+    const cap = Math.ceil(U.num(est.rmb, 0) * 1.05 * 100) / 100
+    const ok = await PK.confirm({
+      title: `用「${S(eng.short || eng.label)}」生成会说话的动漫形象？`,
+      text: `剪好的视频约 ${fmtSec(sec)}，${S(est.basis) || '按秒计费'}：大约 ${U.num(est.rmb, 0).toFixed(2)} 元，最多 ${cap.toFixed(2)} 元（多留 5% 给时长误差）。以服务商账单为准；这段声音以后重复使用不会再收费。不同意的话，这次会用免费档代替。`,
+      ok: '确认，按这个价格生成',
+    })
+    return ok ? cap : false
+  }
+
+  /** The pack draft (or the saved settings) with this request's presenter cost confirmation. */
+  function packWithConfirm(ctx, confirmed) {
+    const L = ctx.local
+    const P = (L.data && L.data.pack) || {}
+    const base = L.pack || P.settings || null
+    if (typeof confirmed !== 'number' || !base || !base.mascot) return base
+    return { ...base, mascot: { ...base.mascot, confirmedRmb: confirmed } }
+  }
+
+  async function runBuild(ctx) {
+    PK.needProject()
+    const L = ctx.local
+    if (!L.source) throw new PK.Error('请先选择要剪辑的视频')
+    const confirmed = await presenterCostGate(ctx)
+    const hasProject = Boolean(L.data && L.data.project && L.data.project.scenes > 0 && L.data.project.productionType !== 'talk-edit')
+    if (hasProject) {
+      const ok = await PK.confirm({
+        title: '把这个工程改成口播剪辑？',
+        text: '当前工程里已经有 AI 生成的分镜。生成口播剪辑会用你的视频重新生成分镜、原声和字幕（旧版本会保存在「版本历史」里，随时可以恢复）。',
+        ok: '生成口播剪辑',
+      })
+      if (!ok) return
+    }
+    const key = `build:${PK.dir()}`
+    await startJob(key, {
+      label: '生成口播剪辑',
+      startText: '正在提交…',
+      start: () => {
+        const pack = typeof confirmed === 'number' ? packWithConfirm(ctx, confirmed) : L.pack
+        return PK.postP('talk/build', { sourcePath: L.source, options: optionsOf(L), overrides: overridesOf(L), ...(pack ? { pack } : {}) })
+      },
+      doneText: (r) => `${S(r && r.summary)} · ${U.num(r && r.scenes, 0)} 段 · ${U.num(r && r.captionsCount, 0)} 条字幕`,
+      maxMs: 4 * 3600 * 1000,
+    })
+    try {
+      await PK.action('setDirector', { patch: { productionType: 'talk-edit' } })
+    } catch {}
+    await PK.action('refresh', {}).catch(() => {})
+    L.rcSig = ''
+    await loadState(ctx, { quiet: true })
+    L.packDirty = false
+    PK.toast('口播剪辑工程已生成：可以先预览剪好的视频，再一键出片', 'success')
+  }
+
+  /** save the 口播包装 draft on the project (a built 口播剪辑 gets its packaging re-planned right away) */
+  async function savePack(ctx, { quiet = false, presenterCost = true } = {}) {
+    PK.needProject()
+    const L = ctx.local
+    if (!L.pack) return
+    // a built 口播剪辑 gets its packaging re-planned right away: a cloud presenter would be generated now
+    const built = Boolean(L.data && L.data.project && L.data.project.productionType === 'talk-edit' && L.data.project.scenes > 0)
+    const confirmed = built && presenterCost ? await presenterCostGate(ctx) : undefined
+    L.packSaving = true
+    ctx.update()
+    try {
+      // a background job: re-planning a built cut may render a talking anime presenter (minutes)
+      const started = await PK.postP('talk/pack', { async: true, pack: typeof confirmed === 'number' ? packWithConfirm(ctx, confirmed) : L.pack })
+      const res = started && started.jobId ? await PK.job(started.jobId, { maxMs: 4 * 3600 * 1000 }) : started
+      L.packDirty = false
+      if (res && res.pack && L.data) L.data.pack = res.pack
+      if (!quiet) PK.toast(res && res.applied ? '包装已更新到剪辑工程（出片时生效）' : '包装设置已保存，生成剪辑工程 / 一键出片时会用上', 'success')
+      if (res && res.applied) await PK.action('refresh', {}).catch(() => {})
+    } finally {
+      L.packSaving = false
+      ctx.update()
+    }
+  }
+  async function indexLibrary(ctx) {
+    PK.needProject()
+    const key = `footage:${PK.dir()}`
+    await startJob(key, {
+      label: '分析空镜素材的镜头',
+      startText: '正在提交…',
+      start: () => PK.postP('footage/index', { transcribe: 'off' }),
+      doneText: (r) => `已分析 ${U.num(r && r.indexed && r.indexed.length, 0)} 段素材`,
+      maxMs: 3 * 3600 * 1000,
+    })
+    await loadState(ctx, { quiet: true })
+  }
+
+  async function produce(ctx) {
+    PK.needProject()
+    const L = ctx.local
+    if (L.dirty) {
+      const ok = await PK.confirm({ title: '还有没应用的修改', text: '你恢复 / 删掉的地方还没有重新规划。出片会按修改后的样子来剪。', ok: '按修改后的出片' })
+      if (!ok) return
+    }
+    // ask about a cloud presenter's cost once, for the run (the save below never pays)
+    const confirmed = await presenterCostGate(ctx)
+    if (L.packDirty) await savePack(ctx, { quiet: true, presenterCost: false })
+    if (L.dirty) await runPlan(ctx)
+    await PK.action('setDirector', { patch: { productionType: 'talk-edit' } })
+    const ok = await PK.action('run', typeof confirmed === 'number' ? { presenterConfirmedRmb: confirmed } : {}).then(
+      () => true,
+      (err) => {
+        PK.toast(`出片任务没有启动：${S(err && err.message)}`, 'error')
+        return false
+      },
+    )
+    if (ok) {
+      PK.toast('口播剪辑出片已启动，可以在任务中心看进度', 'success')
+      ctx.close()
+    }
+  }
+
+  /* -------------------------------------------------------------------------------------------- views */
+  function engineSection(ctx) {
+    const L = ctx.local
+    const a = L.asr
+    const inst = L.installer || {}
+    const pkg = inst.package || {}
+    const installing = jobRunning('install')
+    if (!a) return ui.section({ title: '本地语音识别', en: 'SPEECH ENGINE', icon: 'mic' }, L.asrErr ? ui.errorBox(L.asrErr, () => loadEngine(ctx).then(() => ctx.update(), () => {})) : ui.loading('正在检测…'))
+    if (a.ready) {
+      return ui.section(
+        { title: '本地语音识别', en: 'SPEECH ENGINE', icon: 'mic', actions: [ui.btn('检测引擎', () => loadEngine(ctx, true).then(() => PK.toast(L.asr && L.asr.ready ? `引擎正常（加载 ${U.num(L.asr.loadMs, 0)} 毫秒）` : `引擎有问题：${S(L.asr && L.asr.reason)}`, L.asr && L.asr.ready ? 'success' : 'error'), ctx.update), { size: 'sm', kind: 'ghost', icon: 'refresh', busyText: '检测中…' })] },
+        ui.row([ui.pill('已就绪 · 免费离线', 'ok', { dot: true }), ui.text(`普通话 / 粤语 / 英语 / 日语 / 韩语 · 安装在 ${S(a.home)}`, { tone: 'muted' })], { wrap: true }),
+      )
+    }
+    if (a.supportedPlatform === false) {
+      return ui.section({ title: '本地语音识别', en: 'SPEECH ENGINE', icon: 'mic' }, ui.note(`当前系统（${S(a.platform)}）没有可用的识别引擎：支持 Windows / macOS / Linux 的 x64 与 arm64。`, { level: 'warn' }))
+    }
+    const free = inst.freeBytes
+    return ui.section(
+      { title: '先安装本地语音识别', en: 'SPEECH ENGINE · ONE-TIME SETUP', icon: 'mic', desc: '口播粗剪要先“听懂”你说了什么。识别在你自己的电脑上完成：不上传、不花钱，装一次以后一直能用。' },
+      ui.kv([
+        ['能做什么', (pkg.uses || []).join('、') || '口播粗剪、真实字幕'],
+        ['支持语言', S(pkg.languages) || '普通话 · 粤语 · 英语 · 日语 · 韩语'],
+        ['占用空间', S(pkg.diskRequired) || '约 260 MB'],
+        ['预计耗时', S(pkg.etaLabel) || '几分钟'],
+      ]),
+      ui.field(
+        { label: '安装位置', en: 'FOLDER', hint: `建议放在系统盘以外、纯英文路径的文件夹${free ? `（这个盘还剩 ${(free / 1024 ** 3).toFixed(1)} GB）` : ''}` },
+        ui.input({ key: 'te-dir', value: S(L.installDir), mono: true, placeholder: 'D:/dsh-ai/asr', onInput: (v) => (L.installDir = v), disabled: installing }),
+      ),
+      ui.field(
+        { label: '下载源', en: 'SOURCE' },
+        ui.seg({ value: L.mirror === 'global' ? 'global' : 'cn', options: [{ value: 'cn', label: '国内镜像（推荐）' }, { value: 'global', label: '官方全球源' }], onChange: (v) => (L.mirror = v), disabled: installing }),
+      ),
+      ui.row([ui.btn(installing ? '正在安装…' : '一键安装（约 260 MB）', () => installEngine(ctx), { kind: 'primary', icon: 'download', disabled: installing })]),
+      jobView('install'),
+      licenseToggle(ctx, pkg.license || a.attribution || []),
+    )
+  }
+  /** 开源授权与出处: collapsed by default (a toggle, so hidden text is never laid out over the rest) */
+  function licenseToggle(ctx, lines) {
+    const L = ctx.local
+    return ui.stack(
+      [
+        ui.btn(L.showLicense ? '收起开源授权与出处' : '开源授权与出处', () => {
+          L.showLicense = !L.showLicense
+          ctx.update()
+        }, { size: 'sm', kind: 'link', icon: L.showLicense ? 'collapse' : 'info' }),
+        L.showLicense ? ui.stack(lines.map((t) => ui.hint(t)), { gap: 2 }) : null,
+      ],
+      { gap: 4 },
+    )
+  }
+
+  function sourceSection(ctx) {
+    const L = ctx.local
+    const d = L.data || {}
+    const sources = (d.sources || []).filter((s) => s.hasAudio !== false)
+    const busy = jobRunning(`plan:${PK.dir()}`) || jobRunning(`build:${PK.dir()}`)
+    if (!sources.length) {
+      return ui.section(
+        { title: '要剪辑的视频', en: 'RECORDING', icon: 'film' },
+        ui.empty({
+          icon: 'cam',
+          title: '素材库里还没有带声音的视频',
+          text: '把你对着镜头说话的视频上传到素材库（手机拍的也可以），或者用提词器直接录一段。',
+          actions: [ui.btn('去素材库上传', () => PK.open('studio', { step: 'assets' }), { kind: 'primary', icon: 'upload' }), ui.btn('用提词器录一段', () => PK.open('teleprompter'), { icon: 'cam' })],
+        }),
+      )
+    }
+    const o = L.opts || {}
+    const setOpt = (k, v) => {
+      L.opts = { ...(L.opts || {}), [k]: v }
+      L.dirty = true
+      ctx.update()
+    }
+    return ui.section(
+      { title: '要剪辑的视频与剪辑规则', en: 'RECORDING · RULES', icon: 'film' },
+      ui.field(
+        { label: '视频', en: 'RECORDING' },
+        ui.select({
+          key: 'te-src',
+          value: S(L.source),
+          options: sources.map((s) => ({ value: s.path, label: `${s.role === 'host_video' ? '🎥 ' : ''}${S(s.name) || S(s.path)}`, hint: `${s.type === 'audio' ? '音频' : '视频'} · ${fmtSec(s.durationSec)}${s.role === 'host_video' ? ' · 真人出镜' : ''}` })),
+          showHint: true,
+          disabled: busy,
+          aria: '要剪辑的视频',
+          onChange: (v) => {
+            L.source = v
+            L.rcSig = ''
+            loadState(ctx, { quiet: true })
+          },
+        }),
+      ),
+      ui.grid(
+        [
+          ui.toggle({ value: o.cutPauses !== false, label: '缩短长停顿', hint: `超过 ${U.num(o.maxPauseSec, 0.5).toFixed(1)} 秒的停顿缩到约 0.2 秒`, onChange: (v) => setOpt('cutPauses', v) }),
+          ui.toggle({ value: o.cutFillers !== false, label: '去掉口头禅', hint: '嗯、呃、额、um、uh…（“好啊”这类正常说法不动）', onChange: (v) => setOpt('cutFillers', v) }),
+          ui.toggle({ value: o.cutStutters !== false, label: '去掉结巴重复', hint: '“我我我觉得”只留一个“我”', onChange: (v) => setOpt('cutStutters', v) }),
+          ui.toggle({ value: o.cutRetakes !== false, label: '重录只留最后一遍', hint: '同一句说了几遍、说了半句重来，只保留最后完整的那遍', onChange: (v) => setOpt('cutRetakes', v) }),
+          ui.toggle({ value: o.enhanceVoice !== false, label: '人声增强', hint: '去掉低频嗡嗡声，音量统一到平台标准', onChange: (v) => setOpt('enhanceVoice', v) }),
+        ],
+        { min: 230, fit: true },
+      ),
+      ui.grid(
+        [
+          ui.field({ label: '多长算长停顿', en: 'PAUSE' }, ui.slider({ value: U.num(o.maxPauseSec, 0.5), min: 0.3, max: 2, step: 0.1, format: (v) => `${Number(v).toFixed(1)} 秒`, aria: '多长算长停顿', onChange: (v) => setOpt('maxPauseSec', v) })),
+          ui.field({ label: '说话语言', en: 'LANGUAGE' }, ui.select({ key: 'te-lang', value: S(o.language) || 'auto', options: LANGS, searchable: false, aria: '说话语言', onChange: (v) => setOpt('language', v) })),
+        ],
+        { min: 220, fit: true },
+      ),
+    )
+  }
+
+  /** the transcript with every cut in place: click a cut word to restore its cut, a kept word to cut it */
+  function transcriptView(ctx, rc) {
+    const L = ctx.local
+    const words = (rc.plan && rc.plan.words) || []
+    const byId = new Map((rc.plan.removals || []).map((r) => [r.id, r]))
+    const restore = L.restore || new Set()
+    const manual = new Set()
+    for (const [a, b] of L.cutWords || []) for (let k = a; k <= b; k++) manual.add(k)
+    const savedManual = new Set()
+    for (const r of rc.plan.removals || []) if (r.kind === 'manual' && r.applied && Array.isArray(r.words)) for (let k = r.words[0]; k <= r.words[1]; k++) savedManual.add(k)
+    const nodes = []
+    let prevSeg = null
+    for (const w of words) {
+      if (w.punct) {
+        nodes.push(h('span.pk-te-p', null, w.text))
+        continue
+      }
+      const rid = w.removedBy || ''
+      const rem = rid ? byId.get(rid) : null
+      const restored = rem && restore.has(rid)
+      const autoCut = rem && rem.kind !== 'manual' && !restored
+      const manualCut = manual.has(w.i)
+      const cut = autoCut || manualCut
+      const pending = (manualCut && !savedManual.has(w.i)) || (rem && rem.kind === 'manual' && !manualCut) || (restored && rem.applied) || (rem && !restored && !rem.applied)
+      if (prevSeg !== null && w.onset - prevSeg > 1.2) nodes.push(h('span.pk-te-gap', { title: `停顿 ${(w.onset - prevSeg).toFixed(1)} 秒` }, '⏸'))
+      prevSeg = w.end
+      const el = h(
+        'span.pk-te-w',
+        {
+          class: { 'is-cut': cut, 'is-pending': pending, [`is-${(rem && rem.kind) || (manualCut ? 'manual' : '')}`]: Boolean(rem || manualCut) },
+          title: cut ? `${rem && !manualCut ? rem.label : '手动删除'}（点一下恢复）· ${fmtClock(w.onset)}` : `${fmtClock(w.onset)} · 点一下删掉这个词`,
+          role: 'button',
+          tabindex: '0',
+        },
+        `${w.space && /^[A-Za-z0-9]/.test(w.text) ? ' ' : ''}${w.text}`,
+      )
+      const toggle = () => {
+        if (rem && rem.kind !== 'manual') {
+          if (restore.has(rid)) restore.delete(rid)
+          else restore.add(rid)
+          L.restore = restore
+        } else if (manualCut) {
+          L.cutWords = (L.cutWords || [])
+            .flatMap(([a, b]) => (w.i < a || w.i > b ? [[a, b]] : [[a, w.i - 1], [w.i + 1, b]]))
+            .filter(([a, b]) => b >= a)
+        } else {
+          L.cutWords = [...(L.cutWords || []), [w.i, w.i]]
+        }
+        L.dirty = true
+        ctx.update()
+      }
+      el.addEventListener('click', toggle)
+      el.addEventListener('keydown', (ev) => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), toggle()))
+      nodes.push(el)
+    }
+    return h('div.pk-te-text', { 'data-pk-scroll': 'te-text', lang: 'zh' }, nodes)
+  }
+
+  function removalTable(ctx, rc) {
+    const L = ctx.local
+    const restore = L.restore || new Set()
+    const rows = (rc.plan.removals || []).filter((r) => r.kind !== 'manual')
+    return ui.table({
+      class: 'pk-te-table',
+      columns: [
+        { key: 'start', label: '位置', width: '78px', render: (r) => ui.mono(fmtClock(r.start)) },
+        { key: 'label', label: '原因', width: '150px', render: (r) => ui.pill(r.label, KIND_TONE[r.kind] || 'mute') },
+        { key: 'text', label: '内容', render: (r) => (r.text ? (r.keptText ? `${r.text}（保留：${U.trimText(r.keptText, 24)}）` : r.text) : `${(r.end - r.start).toFixed(1)} 秒没有说话`) },
+        {
+          key: 'act',
+          label: '',
+          width: '86px',
+          align: 'right',
+          render: (r) => {
+            const on = restore.has(r.id) ? false : true
+            return ui.btn(on ? '恢复' : '剪掉', () => {
+              if (restore.has(r.id)) restore.delete(r.id)
+              else restore.add(r.id)
+              L.restore = restore
+              L.dirty = true
+              ctx.update()
+            }, { size: 'sm', kind: on ? 'ghost' : 'secondary', icon: on ? 'retry' : 'scissors' })
+          },
+        },
+      ],
+      rows,
+      empty: '没有需要剪掉的地方',
+    })
+  }
+
+  function resultSection(ctx) {
+    const L = ctx.local
+    const d = L.data || {}
+    const rc = d.roughcut
+    const key = `plan:${PK.dir()}`
+    const busy = jobRunning(key) || jobRunning(`build:${PK.dir()}`)
+    const engineReady = Boolean(L.asr && L.asr.ready)
+    const head = ui.row(
+      [
+        ui.btn(rc ? (L.dirty ? '应用修改并重新规划' : '重新识别并规划') : '识别并规划粗剪', () => runPlan(ctx), { kind: rc && !L.dirty ? 'secondary' : 'primary', icon: 'wave', disabled: busy || !engineReady || !L.source, busyText: '处理中…' }),
+        rc && !L.dirty ? ui.btn('从头重新识别', () => runPlan(ctx, { force: true }), { kind: 'ghost', size: 'sm', icon: 'refresh', disabled: busy || !engineReady, title: '识别结果有误时：忽略缓存，重新听写一遍' }) : null,
+        ui.spacer(),
+        L.dirty ? ui.pill('有未应用的修改', 'warn', { dot: true }) : null,
+      ],
+      { wrap: true },
+    )
+    if (!rc) {
+      return ui.section(
+        { title: '粗剪结果', en: 'ROUGH CUT', icon: 'scissors', desc: '先“听写”整段视频，再按上面的规则标出要剪掉的地方。第一次识别 1 分钟的视频大约需要几秒钟。' },
+        engineReady ? null : ui.note('请先在上面安装本地语音识别。', { level: 'info' }),
+        head,
+        jobView(key),
+      )
+    }
+    const stats = (rc.plan && rc.plan.stats) || {}
+    const by = stats.byKind || {}
+    const count = (k) => (by[k] ? by[k].count : 0)
+    return ui.section(
+      { title: '粗剪结果', en: 'ROUGH CUT', icon: 'scissors', desc: '删掉的地方用删除线标出：点一下文字就能恢复，点没被删的词可以把它删掉；改完点「应用修改」。' },
+      ui.row(
+        [
+          ui.stat(fmtSec(stats.sourceDurationSec), '原视频'),
+          ui.stat(fmtSec(stats.outputDurationSec), '剪辑后'),
+          ui.stat(fmtSec(stats.savedSec), '省掉'),
+          ui.stat(String(count('pause') + count('noise')), '长停顿'),
+          ui.stat(String(count('filler') + count('fragment')), '口头禅 / 口误'),
+          ui.stat(String(count('stutter')), '结巴'),
+          ui.stat(String(count('retake') + count('false-start')), '重录'),
+        ],
+        { wrap: true },
+      ),
+      head,
+      jobView(key),
+      ui.tabs({
+        value: L.view || 'text',
+        items: [
+          { value: 'text', label: '逐字稿', icon: 'list' },
+          { value: 'list', label: '剪掉的地方', icon: 'scissors', badge: String((rc.plan.removals || []).filter((r) => r.applied).length) },
+          { value: 'subs', label: '字幕预览', icon: 'prompt', badge: String((rc.captions || []).length) },
+        ],
+        onChange: (v) => {
+          L.view = v
+          ctx.update()
+        },
+      }),
+      (L.view || 'text') === 'text'
+        ? transcriptView(ctx, rc)
+        : L.view === 'list'
+          ? removalTable(ctx, rc)
+          : ui.list(
+              (rc.captions || []).slice(0, 400).map((c) => ui.item({ lead: ui.mono(fmtClock(c.startSec)), title: c.text, key: `cap-${c.index}` })),
+              { dense: true },
+            ),
+      L.dirty ? ui.hint('修改还没应用：点上面的「应用修改并重新规划」，字幕和时长会一起更新（不用重新识别，几秒钟）。') : null,
+    )
+  }
+
+  /** 口播包装: style, which decorations, the lower-third name strip, and what the rules would place on this cut */
+  /** 录屏讲解 + 卡通讲解员: captions on / off, no zoom at the cuts for screen recordings, a cartoon host in a corner. */
+  /** 「我的动漫形象」 as the presenter: which character, which way it moves (free / local model / cloud), corner, size. */
+  function animePresenterFields(ctx, P, p, set, busy) {
+    const chars = Array.isArray(P.characters) ? P.characters : []
+    const engines = Array.isArray(P.presenterEngines) && P.presenterEngines.length ? P.presenterEngines : [{ id: 'sprite', label: '免费 · 会张嘴眨眼的立绘', available: true, paid: false }]
+    const m = p.mascot && p.mascot.characterId ? p.mascot : null
+    const setM = (patch) => set('mascot', { corner: 'bl', size: 'm', engine: 'sprite', ...(m || {}), ...patch })
+    const eng = engines.find((e) => e.id === ((m && m.engine) || 'sprite')) || engines[0]
+    const missing = m && !chars.some((c) => c.id === m.characterId)
+    return ui.stack(
+      [
+        chars.length
+          ? ui.grid(
+              [
+                ui.field(
+                  { label: '用哪个形象', en: 'CHARACTER' },
+                  ui.select({ value: m && !missing ? m.characterId : '', options: [{ value: '', label: '请选择' }, ...chars.map((c) => ({ value: c.id, label: S(c.name) || '我的动漫形象' }))], disabled: busy, onChange: (v) => (v ? setM({ characterId: v }) : set('mascot', null)) }),
+                ),
+                ui.field(
+                  { label: '怎么动', en: 'MOTION', hint: S(eng && eng.reason) },
+                  ui.select({
+                    value: (m && m.engine) || 'sprite',
+                    options: engines.map((e) => ({ value: e.id, label: `${S(e.label)}${e.available ? '' : '（还不能用）'}` })),
+                    disabled: busy || !m,
+                    onChange: (v) => {
+                      const e = engines.find((x) => x.id === v)
+                      if (e && !e.available) {
+                        PK.toast(`「${S(e.label)}」还不能用：${S(e.reason)}`, 'warn', { action: { label: e.paid ? '去填写云端密钥' : '去形象库设置', onClick: () => PK.open(e.paid ? 'animeCloud' : 'animeChars') } })
+                        return
+                      }
+                      setM({ engine: v, mode: '' })
+                    },
+                  }),
+                ),
+                m && eng && Array.isArray(eng.modes) && eng.modes.length
+                  ? ui.field(
+                      { label: eng.id === 'vidu' ? '清晰度' : '模式', en: 'MODE', hint: eng.id === 'volc' ? '动漫形象建议「灵动」；「大画幅灵动」脸和上半身都动，但最慢' : eng.id === 'vidu' ? '两种清晰度价格一样' : '' },
+                      ui.select({ value: m.mode || eng.defaultMode || eng.modes[0].value, options: eng.modes.map((x) => ({ value: x.value, label: S(x.label) })), disabled: busy, onChange: (v) => setM({ mode: v }) }),
+                    )
+                  : null,
+              ].filter(Boolean),
+              { min: 220, fit: true },
+            )
+          : ui.note('还没有动漫形象：先在「我的动漫形象」里用你的照片（或现成的卡通图）做一个，做一次以后每条视频都能用。', { level: 'info', actions: [ui.btn('去做一个', () => PK.open('animeChars'), { size: 'sm', icon: 'wand' })] }),
+        missing ? ui.hint('之前选的形象已经不在形象库里了，请重新选一个。') : null,
+        m && eng && eng.paid ? ui.hint('云端按秒收费：生成剪辑工程或一键出片前，会先告诉你这段视频大约多少钱，你确认后才生成；同一段声音不会重复收费。') : null,
+        m && eng && eng.id === 'tha3' ? ui.hint('显卡档在你的电脑上生成，不花钱；有 NVIDIA 显卡几分钟，没有显卡会慢很多。') : null,
+        m
+          ? ui.grid(
+              [
+                ui.field({ label: '位置', en: 'CORNER' }, ui.seg({ value: m.corner || 'bl', options: [{ value: 'bl', label: '左下角' }, { value: 'br', label: '右下角' }], disabled: busy, aria: '讲解员位置', onChange: (v) => setM({ corner: v }) })),
+                ui.field({ label: '大小', en: 'SIZE' }, ui.seg({ value: m.size || 'm', options: [{ value: 's', label: '小' }, { value: 'm', label: '中' }, { value: 'l', label: '大' }], disabled: busy, aria: '讲解员大小', onChange: (v) => setM({ size: v }) })),
+              ],
+              { min: 220, fit: true },
+            )
+          : null,
+        ui.row([ui.btn('打开「我的动漫形象」', () => PK.open('animeChars'), { size: 'sm', kind: 'ghost', icon: 'user' }), ui.hint('新建形象、调整嘴和眼睛的位置、安装本地模型或填写云端密钥')], { wrap: true }),
+      ],
+      { gap: 8 },
+    )
+  }
+
+  function mascotBlock(ctx, P, p, set, busy) {
+    const cands = Array.isArray(P.mascotCandidates) ? P.mascotCandidates : []
+    const L = ctx.local
+    const kind = p.mascot && p.mascot.characterId ? 'anime' : p.mascot && p.mascot.assetId ? 'asset' : L.mascotKind || ''
+    const m = p.mascot && p.mascot.assetId ? p.mascot : null
+    const setM = (patch) => set('mascot', patch === null ? null : { corner: 'bl', size: 'm', ...(m || {}), ...patch })
+    const label = (it) => `${it.type === 'video' ? '🎬' : '🖼'} ${S(it.name)}${it.type === 'video' && it.durationSec ? `（${fmtSec(it.durationSec)}）` : ''}`
+    const options = [{ value: '', label: '请选择' }, ...cands.map((it) => ({ value: it.id, label: label(it) }))]
+    const picked = m && !cands.some((it) => it.id === m.assetId) ? null : m
+    const kindSeg = ui.field(
+      { label: '卡通讲解员', en: 'CARTOON HOST', hint: '站在画面角落、跟着你的声音一起动。「我的动漫形象」会张嘴、眨眼、点头，比整张图片跳动自然得多。' },
+      ui.seg({
+        value: kind,
+        options: [
+          { value: '', label: '不加' },
+          { value: 'anime', label: '我的动漫形象（推荐）' },
+          { value: 'asset', label: '素材库里的图片' },
+        ],
+        disabled: busy,
+        aria: '卡通讲解员',
+        onChange: (v) => {
+          L.mascotKind = v
+          if (!v) set('mascot', null)
+          else if (v === 'anime') {
+            const first = (P.characters || [])[0]
+            set('mascot', first ? { characterId: first.id, engine: 'sprite', corner: (p.mascot && p.mascot.corner) || 'bl', size: (p.mascot && p.mascot.size) || 'm' } : null)
+          } else set('mascot', null)
+        },
+      }),
+    )
+    const fallback = P.mascotFallback ? ui.note(`上次生成时${S(P.mascotNote)}`, { level: 'warn' }) : null
+    if (kind === 'anime' || kind === '') {
+      return ui.stack(
+        [
+          ui.grid(
+            [
+              ui.toggle({ value: p.captions !== false, label: '显示字幕', hint: '按真实说的话逐字出字幕。像软件教程那样只要声音和画面时，可以关掉', onChange: (v) => set('captions', v) }),
+              ui.toggle({ value: Boolean(p.screen), label: '这是录屏讲解', hint: '剪掉停顿时不做画面放大（放大会裁掉界面边缘），适合软件操作、网页演示这类录屏', onChange: (v) => set('screen', v) }),
+            ],
+            { min: 230, fit: true },
+          ),
+          kindSeg,
+          kind === 'anime' ? animePresenterFields(ctx, P, p, set, busy) : null,
+          kind === 'anime' && p.mascot && S(P.mascotNote) && !P.mascotFallback ? ui.hint(`上次生成：${S(P.mascotNote)}`) : null,
+          kind === 'anime' ? fallback : null,
+        ],
+        { gap: 8 },
+      )
+    }
+    return ui.stack(
+      [
+        ui.grid(
+          [
+            ui.toggle({ value: p.captions !== false, label: '显示字幕', hint: '按真实说的话逐字出字幕。像软件教程那样只要声音和画面时，可以关掉', onChange: (v) => set('captions', v) }),
+            ui.toggle({ value: Boolean(p.screen), label: '这是录屏讲解', hint: '剪掉停顿时不做画面放大（放大会裁掉界面边缘），适合软件操作、网页演示这类录屏', onChange: (v) => set('screen', v) }),
+          ],
+          { min: 230, fit: true },
+        ),
+        kindSeg,
+        ui.field(
+          {
+            label: '用哪张图片',
+            en: 'PICTURE',
+            hint: '说话时点头蹦跳、停顿时呼吸摆动。透明背景的 PNG 最好，纯白 / 纯绿等纯色背景会自动抠掉；也可以用一段纯色背景的卡通说话小视频（20 秒以内，嘴会跟着动）。',
+          },
+          ui.select({ value: picked ? picked.assetId : '', options, disabled: busy || !cands.length, onChange: (v) => setM(v ? { assetId: v } : null) }),
+        ),
+        !cands.length ? ui.hint('素材库里还没有图片或短视频：先在「素材」里上传一张卡通形象（可以用豆包、即梦等工具生成，或在「设置 → 云端生成」里生成一张）。') : null,
+        picked
+          ? ui.grid(
+              [
+                ui.field({ label: '位置', en: 'CORNER' }, ui.seg({ value: picked.corner || 'bl', options: [{ value: 'bl', label: '左下角' }, { value: 'br', label: '右下角' }], disabled: busy, aria: '卡通讲解员位置', onChange: (v) => setM({ corner: v }) })),
+                ui.field({ label: '大小', en: 'SIZE' }, ui.seg({ value: picked.size || 'm', options: [{ value: 's', label: '小' }, { value: 'm', label: '中' }, { value: 'l', label: '大' }], disabled: busy, aria: '卡通讲解员大小', onChange: (v) => setM({ size: v }) })),
+              ],
+              { min: 220, fit: true },
+            )
+          : null,
+        picked && S(P.mascotNote) ? ui.hint(`上次生成：${S(P.mascotNote)}`) : null,
+      ],
+      { gap: 8 },
+    )
+  }
+
+  function packSection(ctx) {
+    const L = ctx.local
+    const d = L.data || {}
+    const P = d.pack
+    if (!d.roughcut || !P) return null
+    const p = L.pack || P.settings || {}
+    const busy = jobRunning(`plan:${PK.dir()}`) || jobRunning(`build:${PK.dir()}`) || jobRunning(`footage:${PK.dir()}`) || L.packSaving
+    const set = (k, v) => {
+      L.pack = { ...p, [k]: v }
+      L.packDirty = true
+      ctx.update()
+    }
+    const lt = p.lowerThird || { name: '', title: '' }
+    const setLt = (k, v) => {
+      const next = { ...lt, [k]: v }
+      L.pack = { ...p, lowerThird: String(next.name || '').trim() ? next : null }
+      L.packDirty = true
+    }
+    const pv = P.preview || null
+    const kwChips = pv && pv.keywords && pv.keywords.length ? pv.keywords.map((k) => ui.tag(`${S(k.text)} · ${fmtSec(k.startSec)}`)) : null
+    const chChips = pv && pv.chapters && pv.chapters.length ? pv.chapters.map((c) => ui.tag(`${String(c.index).padStart(2, '0')} ${S(c.title)} · ${fmtSec(c.startSec)}`)) : null
+    const brItems = pv && pv.broll && pv.broll.length
+      ? pv.broll.map((b) => ui.tag(`${fmtSec(b.startSec)}–${fmtSec(b.endSec)} · ${S(b.path).split('/').pop()}（匹配：${(b.match || []).join('、')}）`))
+      : null
+    return ui.section(
+      { title: '口播包装', en: 'PACKAGING', icon: 'sparkle', desc: '关键词大字、章节卡、进度条和名字条，并按你讲的内容自动插入空镜（素材库里文件名或内容对得上的视频 / 图片）。全部按规则在本机完成，不调用大模型、不花钱。' },
+      ui.field(
+        { label: '包装风格', en: 'STYLE' },
+        ui.seg({ value: S(p.preset) || 'knowledge', options: (P.presets || []).map((x) => ({ value: x.value, label: x.label })), disabled: busy, aria: '包装风格', onChange: (v) => set('preset', v) }),
+      ),
+      ui.grid(
+        [
+          ui.toggle({ value: p.keywords !== false, label: '关键词大字', hint: '说到数字、第几步、“关键是…”和反复强调的词时，在画面上弹出大字', onChange: (v) => set('keywords', v) }),
+          ui.toggle({ value: p.chapters !== false, label: '章节卡', hint: '说到“第一步 / 首先 / 接下来 / 最后”时弹出章节标题', onChange: (v) => set('chapters', v) }),
+          ui.toggle({ value: p.progressBar !== false, label: '顶部进度条', hint: '细进度条，章节处有刻度', onChange: (v) => set('progressBar', v) }),
+          ui.toggle({ value: p.broll !== false, label: '按讲话内容插空镜', hint: '讲到的内容和素材对得上时，插入 2~4 秒空镜，声音不断', onChange: (v) => set('broll', v) }),
+          ui.toggle({ value: p.sfx !== false, label: '包装音效', hint: '弹出关键词和切空镜时加轻微的“啵 / 嗖”声，压在人声下面', onChange: (v) => set('sfx', v) }),
+        ],
+        { min: 230, fit: true },
+      ),
+      ui.grid(
+        [
+          ui.field({ label: '名字条 · 名字', en: 'LOWER THIRD', hint: '开头 1 秒出现，约 3.5 秒；留空就不显示' }, ui.input({ key: 'te-lt-name', value: S(lt.name), maxLength: 20, placeholder: '例如：王老师', onInput: (v) => setLt('name', v), onChange: () => ctx.update() })),
+          ui.field({ label: '身份 / 一句介绍', en: 'TITLE' }, ui.input({ key: 'te-lt-title', value: S(lt.title), maxLength: 30, placeholder: '例如：视频剪辑讲师', onInput: (v) => setLt('title', v), onChange: () => ctx.update() })),
+        ],
+        { min: 220, fit: true },
+      ),
+      mascotBlock(ctx, P, p, set, busy),
+      pv
+        ? ui.stack(
+            [
+              ui.hint('按当前设置，这条视频会放这些（重新生成剪辑工程时按最新的说话内容再算一遍）：'),
+              kwChips ? ui.row([ui.strong('关键词'), ...kwChips], { wrap: true }) : ui.hint('关键词：这段话里没有找到适合弹出的词（数字、第几步、强调的词）。'),
+              chChips ? ui.row([ui.strong('章节'), ...chChips], { wrap: true }) : ui.hint('章节：没有找到“第一步 / 首先 / 最后”这类分段说法，不显示章节卡。'),
+              brItems ? ui.row([ui.strong('空镜'), ...brItems], { wrap: true }) : ui.hint(U.num(P.libraryCount, 0) ? '空镜：素材库里的视频 / 图片和讲话内容对不上。给素材起个能看懂的文件名（如“素材整理演示.mp4”）就能自动匹配。' : '空镜：素材库里还没有可以当空镜的视频或图片。'),
+            ],
+            { gap: 6 },
+          )
+        : null,
+      U.num(P.unindexed, 0) > 0
+        ? ui.row([ui.hint(`有 ${U.num(P.unindexed, 0)} 段空镜视频还没分析镜头（分析后会挑最清楚、最稳的一段来用）。`), ui.btn('分析空镜素材（本地免费）', () => indexLibrary(ctx).catch((err) => PK.toast(`分析没有完成：${S(err && err.message)}`, 'error')), { size: 'sm', icon: 'film', disabled: busy })], { wrap: true })
+        : null,
+      jobView(`footage:${PK.dir()}`),
+      ui.row([ui.btn(L.packDirty ? '保存包装设置' : '包装设置已保存', () => savePack(ctx).catch((err) => PK.toast(`保存失败：${S(err && err.message)}`, 'error')), { size: 'sm', kind: L.packDirty ? 'primary' : 'ghost', icon: 'check', disabled: busy || !L.packDirty, busyText: '保存中…' }), ui.hint('一键出片、重新生成剪辑工程都会按这里的设置包装。')], { wrap: true }),
+    )
+  }
+
+  function buildSection(ctx) {
+    const L = ctx.local
+    const d = L.data || {}
+    const rc = d.roughcut
+    if (!rc) return null
+    const busy = jobRunning(`plan:${PK.dir()}`) || jobRunning(`build:${PK.dir()}`)
+    const built = d.project && d.project.productionType === 'talk-edit' && d.project.builtFrom === S(d.source && d.source.path)
+    const video = rc.render && rc.render.video ? PK.assetUrl(rc.render.video) : ''
+    const portrait = rc.source && rc.source.height > rc.source.width
+    return ui.section(
+      { title: '生成成片', en: 'BUILD · PRODUCE', icon: 'bolt', desc: '剪好的视频做画面，你自己的声音做配音，字幕按真实说的话逐字出现，再配一首压在人声下面的轻音乐。' },
+      built && video && !L.dirty ? ui.video(video, { aspect: portrait ? '9 / 16' : '16 / 9', class: 'pk-te-video' }) : null,
+      built && rc.render && rc.render.srt ? ui.row([ui.link('下载字幕文件 SRT', PK.assetUrl(rc.render.srt)), ui.hint('（剪辑后时间轴）')]) : null,
+      ui.grid(
+        [
+          ui.stack([ui.btn('一键出片', () => produce(ctx), { kind: 'primary', size: 'lg', block: true, icon: 'bolt', disabled: busy, busyText: '启动中…' }), ui.hint('剪辑 → 原声分段 → 字幕 → 配乐 → 渲染 MP4，可以在任务中心看进度。')], { gap: 4 }),
+          ui.stack([ui.btn(built ? '重新生成剪辑工程' : '只生成剪辑工程（先看看）', () => runBuild(ctx), { block: true, icon: 'scissors', disabled: busy, busyText: '生成中…' }), ui.hint('生成剪好的视频、原声分段和字幕，然后可以去「分步精修」逐段看、改字幕。')], { gap: 4 }),
+        ],
+        { min: 240, fit: true },
+      ),
+      jobView(`build:${PK.dir()}`),
+      built ? ui.row([ui.btn('去分步精修看字幕', () => PK.open('studio', { step: 'scenes' }), { size: 'sm', icon: 'film' }), ui.btn('调整配乐', () => PK.open('studio', { step: 'director' }), { size: 'sm', icon: 'music', kind: 'ghost' })], { wrap: true }) : null,
+    )
+  }
+
+  PK.panel('talkEdit', {
+    title: 'AI 剪辑 · 口播粗剪',
+    en: 'AI EDIT · TALKING HEAD',
+    idx: 'AE',
+    icon: 'scissors',
+    kind: 'modal',
+    size: 'xl',
+    group: 'tools',
+    order: 12,
+    desc: '真人出镜视频：自动去停顿、口头禅和重录，配真实字幕',
+    needsProject: true,
+    aliases: { aiEdit: {}, roughCut: {}, talk: {} },
+    watch: (s) => s && s.project && s.project.dir,
+    onWatch: (ctx) => {
+      if (!PK.hasProject()) {
+        ctx.close()
+        return
+      }
+      ctx.local.source = ''
+      ctx.local.rcSig = ''
+      ctx.local.data = null
+      loadState(ctx, { quiet: true })
+    },
+    mount(ctx) {
+      const L = ctx.local
+      L.mirror = 'cn'
+      L.view = 'text'
+      loadEngine(ctx).then(
+        () => ctx.update(),
+        (err) => {
+          L.asrErr = err
+          ctx.update()
+        },
+      )
+      loadState(ctx, { quiet: true })
+    },
+    render(ctx) {
+      const L = ctx.local
+      ctx.foot([
+        ui.hint('全部在本机完成：本地语音识别 + 剪辑，不上传、不调用大模型、不花钱。'),
+        ui.spacer(),
+        ui.btn('任务中心', () => PK.open('tasks'), { kind: 'ghost', icon: 'tasks' }),
+      ])
+      if (!L.data && !L.err) return [engineSection(ctx), ui.loading('正在读取工程素材…')]
+      if (L.err && !L.data) return [engineSection(ctx), ui.errorBox(L.err, () => loadState(ctx))]
+      return [engineSection(ctx), sourceSection(ctx), resultSection(ctx), packSection(ctx), buildSection(ctx)]
+    },
+  })
+})()
+
+} catch (err) {
+  console.error('[PK] module 62-talk-edit.js failed to load', err)
+}
+
+/* ---- 63-highlight.js ---- */
+try {
+/* ============================================================================================================
+ * PK · AI 剪辑 · Vlog 高光 (highlightReel panel) — the user's own clips cut to the beat of a song, all on this computer:
+ *   1. what is in the library (clips, total length, how many are analysed) and which music to cut to
+ *   2. settings: length (auto / 15 / 30 / 60 s), order (按拍摄顺序 / 精彩优先), frame (auto / 16:9 / 9:16 / 1:1),
+ *      an optional title
+ *   3. 生成高光工程 (then 分步精修 to look at every cut) or 一键出片 (build + render the MP4)
+ * Routes (routes-talk.js): GET highlight/state · POST highlight/build. No model call, no cost.
+ * ============================================================================================================ */
+;(function () {
+  'use strict'
+  const PK = window.PK
+  if (!PK || typeof PK.panel !== 'function') return
+  const U = PK.util
+  const ui = PK.ui
+
+  const S = (v) => (v === undefined || v === null ? '' : String(v))
+  const fmtSec = (s) => {
+    const v = Math.max(0, Math.round(Number(s) || 0))
+    return v >= 60 ? `${Math.floor(v / 60)} 分 ${String(v % 60).padStart(2, '0')} 秒` : `${v} 秒`
+  }
+
+  // one build per project at a time; progress survives closing / reopening the panel
+  const RUN = { dir: '', state: '', pct: 0, msg: '', startedAt: 0, result: null }
+
+  async function loadState(ctx, { quiet = false } = {}) {
+    const L = ctx.local
+    if (!PK.hasProject()) return
+    try {
+      L.data = await PK.get('highlight/state', { projectDir: PK.dir() }, { timeout: 60000 })
+      L.err = null
+      const d = L.data || {}
+      if (L.form.musicAssetId === undefined) L.form.musicAssetId = d.built && d.built.musicAssetId ? d.built.musicAssetId : d.music && d.music[0] ? d.music[0].id : ''
+      if (d.built && !L.touched) {
+        L.form.order = d.built.order || L.form.order
+        L.form.aspect = d.built.aspect || L.form.aspect
+        L.form.title = S(d.built.title)
+      }
+    } catch (err) {
+      L.err = err
+      if (!quiet) PK.reportError(err)
+    }
+    ctx.update()
+  }
+
+  async function build(ctx, render) {
+    const L = ctx.local
+    const f = L.form
+    if (RUN.state === 'running') return
+    RUN.dir = PK.dir()
+    RUN.state = 'running'
+    RUN.pct = 2
+    RUN.msg = '正在提交…'
+    RUN.startedAt = Date.now()
+    RUN.result = null
+    ctx.update()
+    const tick = setInterval(() => ctx.update(), 1000)
+    try {
+      const init = await PK.postP('highlight/build', { musicAssetId: f.musicAssetId || '', targetSec: Number(f.targetSec) || 0, order: f.order, aspect: f.aspect, title: S(f.title).trim(), render })
+      const jobId = init && (init.jobId || (init.job && init.job.id))
+      if (!jobId) throw new PK.Error(S(init && (init.error || init.message)) || '后台任务没有启动，请重试')
+      const res = await PK.job(jobId, {
+        interval: 1000,
+        maxMs: 3 * 3600 * 1000,
+        onProgress: (job) => {
+          if (S(job && job.message).trim()) RUN.msg = S(job.message).trim()
+          const p = U.num(job && job.progress, RUN.pct)
+          if (p > 0) RUN.pct = U.clamp(p, 0, 100)
+        },
+      })
+      RUN.state = 'done'
+      RUN.pct = 100
+      RUN.result = res
+      RUN.msg = `已生成：${U.num(res && res.scenes, 0)} 个镜头 · ${fmtSec(res && res.durationSec)} · 用了 ${U.num(res && res.clipsUsed, 0)} 段素材${res && res.bpm ? ` · ${res.bpm} BPM` : ''}${render ? (res && res.outputPath ? ' · 成片已渲染' : '') : ''}`
+      if (res && res.state) L.data = { ...(L.data || {}), ...res.state }
+      PK.toast(render ? 'Vlog 高光成片已生成，可以在「交付」里预览和下载' : 'Vlog 高光工程已生成：去「分步精修」看看每个镜头', 'success')
+      try {
+        await PK.action('refresh', {}, { timeout: 60000 })
+      } catch {}
+    } catch (err) {
+      RUN.state = 'error'
+      RUN.msg = S(err && err.message) || '没有完成'
+      PK.reportError(err, '剪 Vlog 高光没有完成')
+    } finally {
+      clearInterval(tick)
+      ctx.update()
+    }
+  }
+
+  function librarySection(ctx) {
+    const d = ctx.local.data || {}
+    const clips = Array.isArray(d.clips) ? d.clips : []
+    const analysed = clips.filter((c) => c.analyzed).length
+    return ui.section(
+      { title: '素材', en: 'CLIPS', icon: 'film', desc: '素材库里的所有视频片段都会参与挑选：每段先切成镜头，按清晰度、曝光、稳定程度和动感打分，糊的、黑的、晃得厉害的不用。' },
+      clips.length
+        ? ui.row([ui.pill(`${clips.length} 段视频`, 'acc'), ui.pill(`共 ${fmtSec(d.totalSec)}`, 'mute'), ui.pill(analysed === clips.length ? '都已分析' : `已分析 ${analysed} 段（其余生成时自动分析）`, analysed === clips.length ? 'ok' : 'mute')], { wrap: true })
+        : ui.note('素材库里还没有视频片段：先在「素材」里上传几段旅行、聚会、日常拍的视频（手机拍的就行）。', { level: 'warn', actions: [ui.btn('去上传素材', () => PK.open('studio', { step: 'assets' }), { size: 'sm', kind: 'primary', icon: 'upload' })] }),
+    )
+  }
+
+  function settingsSection(ctx) {
+    const L = ctx.local
+    const f = L.form
+    const d = L.data || {}
+    const music = Array.isArray(d.music) ? d.music : []
+    const busy = RUN.state === 'running'
+    const set = (k, v) => {
+      f[k] = v
+      L.touched = true
+      ctx.update()
+    }
+    return ui.section(
+      { title: '怎么剪', en: 'SETTINGS', icon: 'settings', desc: '按音乐节拍切镜头：安静的段落镜头长一些，鼓点和高潮处快切；每个镜头 0.6~4 秒，片尾落在重拍上。' },
+      ui.field(
+        { label: '配乐', en: 'MUSIC', hint: music.length ? '按这首歌的真实节拍和高潮来剪' : '素材库里还没有音乐：会自动生成一段轻快的配乐（也可以先在「素材」里上传你喜欢的歌）' },
+        music.length ? ui.select({ value: S(f.musicAssetId), options: music.map((m) => ({ value: m.id, label: `${S(m.name)}${m.durationSec ? `（${fmtSec(m.durationSec)}）` : ''}` })), disabled: busy, onChange: (v) => set('musicAssetId', v) }) : ui.hint('自动生成配乐'),
+      ),
+      ui.grid(
+        [
+          ui.field({ label: '成片长度', en: 'LENGTH' }, ui.seg({ value: String(f.targetSec || 0), options: [{ value: '0', label: '自动' }, { value: '15', label: '15 秒' }, { value: '30', label: '30 秒' }, { value: '60', label: '60 秒' }], disabled: busy, aria: '成片长度', onChange: (v) => set('targetSec', Number(v) || 0) })),
+          ui.field({ label: '镜头顺序', en: 'ORDER' }, ui.seg({ value: f.order, options: [{ value: 'story', label: '按拍摄顺序' }, { value: 'best', label: '精彩优先' }], disabled: busy, aria: '镜头顺序', onChange: (v) => set('order', v) })),
+          ui.field({ label: '画面比例', en: 'FRAME' }, ui.seg({ value: f.aspect, options: [{ value: 'auto', label: '跟随素材' }, { value: '16:9', label: '横屏' }, { value: '9:16', label: '竖屏' }, { value: '1:1', label: '方形' }], disabled: busy, aria: '画面比例', onChange: (v) => set('aspect', v) })),
+        ],
+        { min: 220, fit: true },
+      ),
+      ui.field({ label: '片头标题（可不填）', en: 'TITLE', hint: '开头 1 秒出现，约 3.5 秒' }, ui.input({ key: 'hl-title', value: S(f.title), maxLength: 20, placeholder: '例如：周末去海边', onInput: (v) => ((f.title = v), (L.touched = true)), onChange: () => ctx.update() })),
+      ui.hint('「自动」长度：素材够多时最长 60 秒，不超过配乐长度。「按拍摄顺序」适合旅行记录；「精彩优先」把最有动感的镜头放在音乐最燃的地方。'),
+    )
+  }
+
+  function runSection(ctx) {
+    const d = ctx.local.data || {}
+    const clips = Array.isArray(d.clips) ? d.clips : []
+    const busy = RUN.state === 'running'
+    const mine = RUN.dir === PK.dir()
+    const elapsed = RUN.startedAt ? U.fmtDur((Date.now() - RUN.startedAt) / 1000) : ''
+    return ui.section(
+      { title: '生成', en: 'BUILD · PRODUCE', icon: 'bolt', desc: '只用你的素材和音乐，本机完成，不调用大模型、不花钱。原视频的声音会关掉，只保留配乐。' },
+      d.built ? ui.hint(`这个工程上次生成：${U.num(d.built.scenes, 0)} 个镜头 · ${fmtSec(d.built.targetSec)}${d.built.order === 'best' ? ' · 精彩优先' : ' · 按拍摄顺序'}`) : null,
+      ui.grid(
+        [
+          ui.stack([ui.btn('一键出片', () => build(ctx, true), { kind: 'primary', size: 'lg', block: true, icon: 'bolt', disabled: busy || !clips.length, busyText: '剪辑中…' }), ui.hint('挑片段 → 按节拍剪 → 配乐 → 渲染 MP4')], { gap: 4 }),
+          ui.stack([ui.btn('只生成剪辑工程（先看看）', () => build(ctx, false), { block: true, icon: 'scissors', disabled: busy || !clips.length, busyText: '生成中…' }), ui.hint('生成后可以去「分步精修」逐个镜头看，再出片。')], { gap: 4 }),
+        ],
+        { min: 240, fit: true },
+      ),
+      mine && RUN.state
+        ? ui.stack(
+            [
+              ui.meter(RUN.state === 'error' ? 100 : RUN.pct, {
+                label: RUN.state === 'running' ? `Vlog 高光 · 进行中 · 已用 ${elapsed}` : RUN.state === 'done' ? 'Vlog 高光 · 已完成' : 'Vlog 高光 · 未完成',
+                valueText: RUN.state === 'error' ? '失败' : `${Math.round(RUN.pct)}%`,
+                tone: RUN.state === 'error' ? 'err' : RUN.state === 'done' ? 'ok' : '',
+                indeterminate: RUN.state === 'running' && RUN.pct <= 3,
+              }),
+              RUN.msg ? ui.text(RUN.msg, { tone: RUN.state === 'error' ? null : 'muted', class: RUN.state === 'error' ? 'pk-text--err' : '' }) : null,
+            ],
+            { gap: 6 },
+          )
+        : null,
+      mine && RUN.state === 'done'
+        ? ui.row([ui.btn('去分步精修', () => PK.open('studio', { step: 'scenes' }), { size: 'sm', icon: 'film' }), RUN.result && RUN.result.outputPath ? ui.btn('去交付预览 / 下载', () => PK.open('delivery'), { size: 'sm', icon: 'download', kind: 'primary' }) : null], { wrap: true })
+        : null,
+    )
+  }
+
+  PK.panel('highlightReel', {
+    title: 'AI 剪辑 · Vlog 高光',
+    en: 'AI EDIT · HIGHLIGHTS',
+    idx: 'HL',
+    icon: 'film',
+    kind: 'modal',
+    size: 'lg',
+    group: 'tools',
+    order: 13,
+    desc: '把一堆随手拍的视频，按音乐节拍自动剪成精彩短片',
+    needsProject: true,
+    aliases: { highlight: {}, vlog: {} },
+    watch: (s) => s && s.project && s.project.dir,
+    onWatch: (ctx) => {
+      if (!PK.hasProject()) {
+        ctx.close()
+        return
+      }
+      ctx.local.data = null
+      loadState(ctx, { quiet: true })
+    },
+    mount(ctx) {
+      const L = ctx.local
+      L.form = L.form || { targetSec: 0, order: 'story', aspect: 'auto', title: '', musicAssetId: undefined }
+      loadState(ctx, { quiet: true })
+    },
+    render(ctx) {
+      const L = ctx.local
+      ctx.foot([ui.hint('全部在本机完成：镜头分析 + 节拍分析 + 剪辑，不上传、不调用大模型、不花钱。'), ui.spacer(), ui.btn('任务中心', () => PK.open('tasks'), { kind: 'ghost', icon: 'tasks' })])
+      if (!L.data && !L.err) return [ui.loading('正在读取素材库…')]
+      if (L.err && !L.data) return [ui.errorBox(L.err, () => loadState(ctx))]
+      return [librarySection(ctx), settingsSection(ctx), runSection(ctx)]
+    },
+  })
+})()
+
+} catch (err) {
+  console.error('[PK] module 63-highlight.js failed to load', err)
+}
+
+/* ---- 64-template-fill.js ---- */
+try {
+/* ============================================================================================================
+ * PK · 模板填空 (templateFill panel) — 可填空模板: use a plaza template like a video-template app. Its shots, timing,
+ * layouts, transitions and sound design stay; the user swaps in their own words, pictures / clips and music.
+ *   1. choose a template (when opened without one) — opened from 影核广场 with { templateId }
+ *   2. the whole film: title, music (a library song or a track generated at the template's tempo), banner character,
+ *      and an optional topic for 「AI 按主题写文字」 (the configured model fills the empty text blanks, user reviews)
+ *   3. shot by shot (pages of 8): title, the spoken / subtitle line, key words, the history stage's big words, a
+ *      window title, the picture places (auto-pick from the library / a chosen item / the template's animation)
+ *   4. 生成工程 (then 分步精修) or 一键出片 (fill → 一键配音 when the template speaks → render)
+ * An empty blank keeps the template's text (shown as the placeholder); a shot with new words gets all of its on-screen
+ * words from them. Routes (routes-talk.js): GET plaza/slots · POST plaza/fill · POST plaza/fill-suggest.
+ * ============================================================================================================ */
+;(function () {
+  'use strict'
+  const PK = window.PK
+  if (!PK || typeof PK.panel !== 'function') return
+  const U = PK.util
+  const ui = PK.ui
+  const h = PK.h
+
+  const S = (v) => (v === undefined || v === null ? '' : String(v))
+  const PAGE = 8
+  const fmtSec = (s) => {
+    const v = Math.max(0, Math.round(Number(s) || 0))
+    return v >= 60 ? `${Math.floor(v / 60)} 分 ${String(v % 60).padStart(2, '0')} 秒` : `${v} 秒`
+  }
+  const sec1 = (s) => `${(Math.round((Number(s) || 0) * 10) / 10).toFixed(1)} 秒`
+
+  // one fill / suggestion / production per project at a time; progress survives closing / reopening the panel
+  const RUN = { dir: '', state: '', kind: '', pct: 0, msg: '', startedAt: 0, result: null }
+
+  const allSlots = (d) => (d ? [...(d.filmSlots || []), ...(d.scenes || []).flatMap((sc) => sc.slots || [])] : [])
+  const isPicture = (slot) => slot.kind !== 'text' && slot.kind !== 'music'
+
+  function defaultMusic(d) {
+    const songs = (d && d.library && d.library.music) || []
+    return songs.length ? songs[0].id : 'generate'
+  }
+
+  async function loadTemplates(ctx) {
+    const L = ctx.local
+    try {
+      const d = await PK.get('plaza/templates', { category: 'all', q: '' }, { timeout: 60000 })
+      L.templates = ((d && d.templates) || []).filter((t) => U.num(t.shotCount, 0) > 0)
+      L.listErr = null
+    } catch (err) {
+      L.listErr = err
+    }
+    ctx.update()
+  }
+
+  async function load(ctx, { quiet = false } = {}) {
+    const L = ctx.local
+    const id = S(L.templateId)
+    if (!id) return
+    try {
+      const d = await PK.get('plaza/slots', { id, projectDir: PK.hasProject() ? PK.dir() : '' }, { timeout: 60000 })
+      L.data = d
+      L.err = null
+      if (L.formFor !== id) {
+        // the last fills of this template in this project come back for another round
+        const last = d && d.last
+        L.form = { ...((last && last.fills) || {}) }
+        L.topic = S(last && last.topic)
+        L.autoFill = last ? last.autoFillMedia !== false : true
+        L.formFor = id
+        L.page = 0
+        L.dirty = false
+      }
+      if (L.form['film.music'] === undefined || (L.form['film.music'] !== 'generate' && !(((d.library && d.library.music) || []).some((m) => m.id === L.form['film.music'])))) L.form['film.music'] = defaultMusic(d)
+    } catch (err) {
+      L.err = err
+      if (!quiet) PK.reportError(err)
+    }
+    ctx.update()
+  }
+
+  function setField(ctx, id, value) {
+    const L = ctx.local
+    L.form[id] = value
+    L.dirty = true
+  }
+
+  function counts(L) {
+    const slots = allSlots(L.data)
+    const texts = slots.filter((s) => s.kind === 'text')
+    const pics = slots.filter((s) => isPicture(s) && s.required)
+    const extra = slots.filter((s) => isPicture(s) && !s.required)
+    const has = (s) => S(L.form[s.id]).trim() !== ''
+    return {
+      texts: texts.length,
+      textsFilled: texts.filter(has).length,
+      pics: pics.length,
+      picsChosen: pics.filter(has).length,
+      extraChosen: extra.filter(has).length,
+      shotsTouched: ((L.data && L.data.scenes) || []).filter((sc) => (sc.slots || []).some((s) => s.kind === 'text' && has(s))).length,
+    }
+  }
+
+  async function runJob(ctx, kind, label, start) {
+    RUN.dir = PK.dir()
+    RUN.state = 'running'
+    RUN.kind = kind
+    RUN.pct = 2
+    RUN.msg = '正在提交…'
+    RUN.startedAt = Date.now()
+    ctx.update()
+    const tick = setInterval(() => ctx.update(), 1000)
+    try {
+      const init = await start()
+      const jobId = init && (init.jobId || (init.job && init.job.id))
+      if (!jobId) throw new PK.Error(S(init && (init.error || init.message)) || `${label}没有启动，请重试`)
+      const res = await PK.job(jobId, {
+        interval: 1000,
+        maxMs: 3 * 3600 * 1000,
+        onProgress: (job) => {
+          if (S(job && job.message).trim()) RUN.msg = S(job.message).trim()
+          const p = U.num(job && job.progress, RUN.pct)
+          if (p > 0) RUN.pct = U.clamp(p, 0, 100)
+        },
+      })
+      return res
+    } finally {
+      clearInterval(tick)
+    }
+  }
+
+  async function suggest(ctx) {
+    const L = ctx.local
+    const topic = S(L.topic).trim()
+    if (!topic) {
+      PK.toast('先在上面写一句话：这条视频讲什么', 'info')
+      return
+    }
+    const c = counts(L)
+    const ok = await PK.confirm({
+      title: '请 AI 按模板写文字？',
+      text: `会调用你在「模型设置」里配置的大模型（按模型价格计费，长模板会分几次写），按模板每一镜的作用和长短，为「${topic.slice(0, 40)}」写好全部文字（共 ${c.texts} 处）。写好后只填进还空着的格子里，你填过的不会被改；看过、改好之后再点「生成工程」。`,
+      ok: '让 AI 写',
+    })
+    if (!ok) return
+    try {
+      const res = await runJob(ctx, 'suggest', 'AI 写文字', () => PK.postP('plaza/fill-suggest', { templateId: L.templateId, topic }, { timeout: 60000 }))
+      const fills = (res && res.fills) || {}
+      let n = 0
+      for (const [k, v] of Object.entries(fills)) {
+        if (S(L.form[k]).trim()) continue
+        L.form[k] = S(v)
+        n++
+      }
+      L.dirty = true
+      RUN.state = 'done'
+      RUN.pct = 100
+      RUN.msg = `AI 写好了 ${n} 处文字，已经填进空格里${n < U.num(res && res.filled, n) ? '（你填过的没动）' : ''}。请检查一遍，再点「生成工程」。`
+      PK.toast(RUN.msg, 'success', { timeout: 8000 })
+    } catch (err) {
+      RUN.state = 'error'
+      RUN.msg = S(err && err.message) || 'AI 没有写完'
+      PK.reportError(err, 'AI 写文字没有完成')
+    } finally {
+      ctx.update()
+    }
+  }
+
+  function cleanedFills(L) {
+    const out = {}
+    for (const s of allSlots(L.data)) {
+      const v = S(L.form[s.id]).trim()
+      if (v) out[s.id] = v
+    }
+    return out
+  }
+
+  async function generate(ctx, produce) {
+    const L = ctx.local
+    const d = L.data
+    if (!d || RUN.state === 'running') return
+    const t = d.template || {}
+    const cur = PK.state && PK.state.project && PK.state.project.sceneCount
+    const ok = await PK.confirm({
+      title: produce ? '套用模板并一键出片？' : '套用模板生成工程？',
+      text: `会用模板「${S(t.name)}」的 ${U.num(t.shotCount, 0)} 个镜头（${t.aspectRatio || ''}）替换当前工程的分镜${cur ? `（现在有 ${cur} 个）` : ''}，风格、配色和节奏跟模板一样；生成前会自动存一个版本，随时可以在「版本历史」里找回。${produce ? (t.narrationMode === 'subtitle-mv' ? '然后直接渲染成片。' : '然后用你的配音引擎给每一镜配音，再渲染成片。') : ''}`,
+      ok: produce ? '套用并出片' : '套用模板',
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      const res = await runJob(ctx, 'fill', '套用模板', () => PK.postP('plaza/fill', { templateId: L.templateId, fills: cleanedFills(L), autoFillMedia: L.autoFill !== false, topic: S(L.topic).trim() }, { timeout: 60000 }))
+      RUN.result = res
+      L.dirty = false
+      if (produce) {
+        if (res && res.needsVoice) {
+          RUN.msg = '正在给每一镜配音…'
+          await runJob(ctx, 'voice', '配音', () => PK.postP('action', { action: 'tts-all', async: true }, { timeout: 60000 }))
+        }
+        RUN.msg = '正在渲染成片…'
+        RUN.result = { ...res, rendered: await runJob(ctx, 'render', '渲染', () => PK.postP('action', { action: 'render', async: true, engine: res && res.engine }, { timeout: 60000 })) }
+      }
+      RUN.state = 'done'
+      RUN.pct = 100
+      RUN.msg = summaryLine(res, produce)
+      PK.toast(produce ? '模板成片已生成，可以在「交付」里预览和下载' : '模板已套用：去「分步精修」看看每个镜头', 'success')
+      try {
+        await PK.action('refresh', {}, { timeout: 60000 })
+      } catch {}
+      PK.store.invalidate()
+      await load(ctx, { quiet: true })
+    } catch (err) {
+      RUN.state = 'error'
+      RUN.msg = S(err && err.message) || '没有完成'
+      const msg = S(err && err.message) || '没有完成'
+      if (RUN.kind === 'voice') PK.toast(`配音没有完成：${msg}`, 'error', { action: { label: '去配音引擎设置', onClick: () => PK.open('keys', { tab: 'tts' }) }, timeout: 12000 })
+      else PK.reportError(err, produce ? '模板出片没有完成' : '套用模板没有完成')
+    } finally {
+      ctx.update()
+    }
+  }
+
+  function summaryLine(res, produce) {
+    if (!res) return '已完成'
+    const bits = [`${U.num(res.scenes, 0)} 个镜头 · ${fmtSec(res.durationSec)}`]
+    if (U.num(res.changedShots, 0)) bits.push(`${res.changedShots} 镜换成了你的文字`)
+    const pics = U.num(res.filledMedia, 0) + U.num(res.autoFilledMedia, 0)
+    if (pics) bits.push(`放进 ${pics} 处画面${U.num(res.autoFilledMedia, 0) ? `（自动挑了 ${res.autoFilledMedia} 处）` : ''}`)
+    if (U.num(res.emptyMedia, 0)) bits.push(`${res.emptyMedia} 处画面位没有素材，改成了文字动画`)
+    bits.push(res.music && res.music.generated ? `配乐按模板节奏自动生成（${res.music.bpm} BPM）` : `配乐：${S(res.music && res.music.name)}`)
+    if (!produce && res.needsVoice) bits.push('下一步：一键配音，再渲染')
+    return `已套用：${bits.join(' · ')}`
+  }
+
+  /* ---------------- views ---------------- */
+
+  function chooserView(ctx) {
+    const L = ctx.local
+    if (L.listErr) return [ui.errorBox(L.listErr, () => loadTemplates(ctx))]
+    if (!L.templates) return [ui.loading('正在读取影核广场的模板…')]
+    if (!L.templates.length) return [ui.empty({ icon: 'layers', title: '影核广场里还没有带分镜的模板', text: '刷新在线模板，或者把自己的作品发布成模板后再来填空。', actions: [ui.btn('去影核广场', () => PK.open('plaza'), { size: 'sm', icon: 'hub' })] })]
+    return [
+      ui.section(
+        { title: '选一个模板', en: 'CHOOSE A TEMPLATE', icon: 'layers', desc: '选好后可以把模板里的文字、图片、视频和配乐换成你自己的，镜头节奏、版式、转场和音效都保持模板原样。' },
+        ui.grid(
+          L.templates.map((t) =>
+            ui.card({
+              key: `tf-pick-${t.id}`,
+              media: t.coverUrl || t.coverFile ? h('img', { src: PK.routeUrl('plaza/cover', { id: t.id }), alt: '', loading: 'lazy', draggable: 'false' }) : null,
+              aspect: '16 / 9',
+              title: t.name || t.id,
+              sub: `${U.num(t.shotCount, 0)} 镜 · ${t.aspectRatio || ''}${t.durationSec ? ` · 约 ${fmtSec(t.durationSec)}` : ''}`,
+              actions: [
+                ui.btn('用这个模板', () => {
+                  L.templateId = t.id
+                  L.data = null
+                  L.err = null
+                  load(ctx)
+                  ctx.update()
+                }, { kind: 'primary', size: 'sm', icon: 'wand' }),
+              ],
+            }),
+          ),
+          { min: 240 },
+        ),
+      ),
+    ]
+  }
+
+  function headSection(ctx) {
+    const L = ctx.local
+    const d = L.data
+    const t = d.template || {}
+    const c = counts(L)
+    const speaks = t.narrationMode !== 'subtitle-mv'
+    return ui.section(
+      {
+        title: S(t.name),
+        en: 'TEMPLATE',
+        icon: 'layers',
+        actions: [ui.btn('换模板', () => ((L.templateId = ''), (L.data = null), (L.formFor = ''), loadTemplates(ctx)), { size: 'sm', kind: 'ghost', icon: 'grid', disabled: RUN.state === 'running' })],
+      },
+      ui.row(
+        [
+          ui.pill(`${U.num(t.shotCount, 0)} 个镜头`, 'acc'),
+          ui.pill(`约 ${fmtSec(t.durationSec)}`, 'mute'),
+          ui.pill(t.aspectRatio === '9:16' ? '竖屏 9:16' : t.aspectRatio === '1:1' ? '方形 1:1' : `横屏 ${t.aspectRatio || '16:9'}`, 'mute'),
+          ui.pill(speaks ? '有配音旁白' : '纯音乐卡点（文字显示在画面上）', 'mute'),
+          t.bpm ? ui.pill(`${t.bpm} BPM`, 'mute') : null,
+        ],
+        { wrap: true },
+      ),
+      ui.hint(
+        `空着的格子保留模板原来的文字（灰色提示就是原文）。只要改了某一镜的文字，这一镜画面上的标题、重点词、大字也会跟着换成你的，不会和模板原文混在一起。${U.num(d.counts && d.counts.media, 0) ? '画面位可以选你素材库里的图片或视频，不选就自动挑。' : '这个模板以动画为主，每一镜也可以换成你自己的画面。'}`,
+      ),
+      ui.row(
+        [
+          ui.pill(`文字 ${c.textsFilled}/${c.texts}`, c.textsFilled ? 'ok' : 'mute'),
+          c.pics ? ui.pill(`画面 ${c.picsChosen}/${c.pics}${L.autoFill !== false && c.picsChosen < c.pics ? '（其余自动挑）' : ''}`, c.picsChosen ? 'ok' : 'mute') : null,
+          c.extraChosen ? ui.pill(`另有 ${c.extraChosen} 镜换成你的画面`, 'ok') : null,
+          c.shotsTouched ? ui.pill(`${c.shotsTouched} 镜换了文字`, 'ok') : null,
+        ],
+        { wrap: true },
+      ),
+    )
+  }
+
+  function filmSection(ctx) {
+    const L = ctx.local
+    const d = L.data
+    const busy = RUN.state === 'running'
+    const songs = (d.library && d.library.music) || []
+    const film = d.filmSlots || []
+    const slot = (id) => film.find((s) => s.id === id)
+    const titleSlot = slot('film.title')
+    const bannerSlot = slot('film.bannerChar')
+    const musicOptions = [...songs.map((m) => ({ value: m.id, label: `🎵 ${S(m.name)}${m.durationSec ? `（${fmtSec(m.durationSec)}）` : ''}` })), { value: 'generate', label: `按模板节奏自动生成${d.template && d.template.bpm ? `（${d.template.bpm} BPM）` : ''}` }]
+    return ui.section(
+      { title: '整条片子', en: 'THE FILM', icon: 'film' },
+      ui.grid(
+        [
+          titleSlot ? ui.field({ label: '片名', en: 'TITLE', hint: '不填就用模板的片名' }, ui.input({ key: 'tf-film-title', value: S(L.form['film.title']), maxLength: titleSlot.maxLength, placeholder: S(titleSlot.example), disabled: busy, onInput: (v) => setField(ctx, 'film.title', v), onChange: () => ctx.update() })) : null,
+          ui.field(
+            { label: '配乐', en: 'MUSIC', hint: songs.length ? '镜头会按这首歌的节拍重新卡点' : '素材库里没有音乐：按模板的节奏自动生成一段（也可以先在「素材」里上传你的歌）' },
+            ui.select({ value: S(L.form['film.music']), options: musicOptions, disabled: busy, onChange: (v) => (setField(ctx, 'film.music', v), ctx.update()) }),
+          ),
+          bannerSlot
+            ? ui.field({ label: '旗帜上的字', en: 'BANNER', hint: '一个字，如 汉、宋、唐；不填会按你写的人物自动判断' }, ui.input({ key: 'tf-film-banner', value: S(L.form['film.bannerChar']), maxLength: 2, placeholder: S(bannerSlot.example), disabled: busy, onInput: (v) => setField(ctx, 'film.bannerChar', v), onChange: () => ctx.update() }))
+            : null,
+        ],
+        { min: 220, fit: true },
+      ),
+      ui.field(
+        { label: '这条视频讲什么', en: 'TOPIC', hint: '一句话就行，例如「岳飞的一生」「我们新出的记账 App」。点右边的按钮，AI 会按模板每一镜的作用帮你写好全部文字（要调用你配置的大模型，会产生费用）；也可以不用 AI，自己在下面逐镜填。' },
+        ui.row(
+          [
+            ui.input({ key: 'tf-topic', value: S(L.topic), maxLength: 200, placeholder: '这条视频讲什么（可不填）', disabled: busy, onInput: (v) => ((L.topic = v), (L.dirty = true)), onChange: () => ctx.update() }),
+            ui.btn('AI 按主题写文字', () => suggest(ctx), { icon: 'sparkle', disabled: busy || !S(L.topic).trim(), busyText: 'AI 写作中…', title: '用你配置的大模型，按模板每一镜写新文字（只填空着的格子）' }),
+          ],
+          { wrap: false },
+        ),
+      ),
+    )
+  }
+
+  function textField(ctx, slot) {
+    const L = ctx.local
+    const busy = RUN.state === 'running'
+    const short = S(slot.label).replace(/（.*?）/g, '')
+    const common = {
+      key: `tf-${slot.id}`,
+      value: S(L.form[slot.id]),
+      maxLength: slot.maxLength,
+      placeholder: S(slot.example) || '（模板这里是空的）',
+      disabled: busy,
+      onInput: (v) => setField(ctx, slot.id, v),
+      onChange: () => ctx.update(),
+    }
+    return ui.field(
+      { label: short, aside: slot.suggestChars ? `模板 ${slot.suggestChars} 字` : slot.list ? '用、分隔' : null, wide: Boolean(slot.multiline) },
+      slot.multiline ? ui.textarea({ ...common, rows: 2, minRows: 1, maxRows: 6, counter: true }) : ui.input(common),
+    )
+  }
+
+  function pictureField(ctx, slot) {
+    const L = ctx.local
+    const d = L.data
+    const busy = RUN.state === 'running'
+    const lib = (d.library && d.library.visuals) || []
+    const items = lib.filter((v) => slot.kind === 'visual' || v.type === slot.kind)
+    const empty = slot.required ? (L.autoFill !== false ? (items.length ? '自动挑选（素材库里的）' : '素材库里没有，改成文字动画') : '空着（改成文字动画）') : '用模板动画（不放我的画面）'
+    const options = [{ value: '', label: empty }, ...items.map((v) => ({ value: v.id, label: `${v.type === 'video' ? '🎬' : '🖼'} ${S(v.name)}${v.type === 'video' && v.durationSec ? `（${fmtSec(v.durationSec)}）` : ''}` }))]
+    const cur = S(L.form[slot.id])
+    const asset = items.find((v) => v.id === cur)
+    const thumbRel = asset ? (asset.type === 'image' ? asset.thumb || asset.path : asset.thumb) : ''
+    return ui.field(
+      { label: S(slot.label), aside: slot.durationSec ? `这一镜 ${sec1(slot.durationSec)}` : null, wide: true },
+      ui.row(
+        [
+          thumbRel ? h('img.pk-tf-thumb', { src: PK.assetUrl(thumbRel), alt: '', loading: 'lazy', draggable: 'false' }) : null,
+          ui.select({ value: cur, options, disabled: busy || !items.length, onChange: (v) => (setField(ctx, slot.id, v), ctx.update()) }),
+        ],
+        { wrap: false },
+      ),
+    )
+  }
+
+  function shotCard(ctx, sc) {
+    const L = ctx.local
+    const texts = (sc.slots || []).filter((s) => s.kind === 'text')
+    const pics = (sc.slots || []).filter(isPicture)
+    const changed = (sc.slots || []).some((s) => S(L.form[s.id]).trim())
+    return h(
+      'div.pk-tf-shot',
+      { key: `tf-shot-${sc.index}`, class: { 'is-changed': changed } },
+      h('div.pk-tf-shot-h', null, h('b', null, `第 ${sc.index} 镜`), h('span', null, sec1(sc.durationSec)), sc.stage ? ui.pill('历史动画', 'mute') : null, changed ? ui.pill('已改', 'ok') : null),
+      ui.grid(texts.map((s) => textField(ctx, s)), { min: 220, fit: true }),
+      ...pics.map((s) => pictureField(ctx, s)),
+    )
+  }
+
+  function shotsSection(ctx) {
+    const L = ctx.local
+    const scenes = (L.data && L.data.scenes) || []
+    const pages = Math.max(1, Math.ceil(scenes.length / PAGE))
+    const page = U.clamp(U.num(L.page, 0), 0, pages - 1)
+    const from = page * PAGE
+    const list = scenes.slice(from, from + PAGE)
+    const go = (p) => {
+      L.page = U.clamp(p, 0, pages - 1)
+      ctx.update()
+      try {
+        ctx.frame.body.scrollTop = 0
+      } catch {}
+    }
+    const pager =
+      pages > 1
+        ? ui.row(
+            [
+              ui.btn('上一页', () => go(page - 1), { size: 'sm', icon: 'chevL', disabled: page === 0 }),
+              ui.hint(`第 ${from + 1}–${Math.min(scenes.length, from + PAGE)} 镜 / 共 ${scenes.length} 镜`),
+              ui.btn('下一页', () => go(page + 1), { size: 'sm', icon: 'chevR', disabled: page >= pages - 1 }),
+            ],
+            { wrap: true, center: true },
+          )
+        : null
+    return ui.section(
+      { title: '逐镜填空', en: 'SHOT BY SHOT', icon: 'film', count: scenes.length, desc: '灰色提示是模板原文；不填就保留原文。旁白 / 字幕尽量和模板原文差不多长，镜头时长才合适。' },
+      pager,
+      ui.stack(list.map((sc) => shotCard(ctx, sc)), { gap: 10 }),
+      pager,
+    )
+  }
+
+  function runSection(ctx) {
+    const L = ctx.local
+    const d = L.data
+    const busy = RUN.state === 'running'
+    const mine = RUN.dir === PK.dir()
+    const t = d.template || {}
+    const c = counts(L)
+    const elapsed = RUN.startedAt ? U.fmtDur((Date.now() - RUN.startedAt) / 1000) : ''
+    const noPictures = c.pics > 0 && !((d.library && d.library.visuals) || []).length
+    return ui.section(
+      { title: '生成', en: 'BUILD · PRODUCE', icon: 'bolt', desc: '套用和换素材都在本机完成，不调用大模型、不花钱。' },
+      c.pics
+        ? ui.toggle({
+            value: L.autoFill !== false,
+            label: '空着的画面位自动用素材库的素材',
+            hint: '优先用没用过的图片 / 视频；素材比画面位少时会轮流用，同一段视频每次用不同的片段。关掉后，空着的画面位改成文字动画。',
+            disabled: busy,
+            onChange: (v) => ((L.autoFill = v), ctx.update()),
+          })
+        : null,
+      noPictures ? ui.note(`这个模板有 ${c.pics} 个画面位，你的素材库里还没有图片或视频：不放素材也能生成（这些镜头改成文字动画），想要模板原样的效果，先去「素材」上传图片或视频。`, { level: 'warn', actions: [ui.btn('去上传素材', () => PK.open('studio', { step: 'assets' }), { size: 'sm', icon: 'upload' })] }) : null,
+      ui.grid(
+        [
+          ui.stack(
+            [
+              ui.btn('一键出片', () => generate(ctx, true), { kind: 'primary', size: 'lg', block: true, icon: 'bolt', disabled: busy, busyText: '出片中…' }),
+              ui.hint(t.narrationMode === 'subtitle-mv' ? '套用模板 → 按音乐卡点 → 渲染 MP4' : '套用模板 → 一键配音 → 渲染 MP4（配音用你在「配音引擎」里选的引擎）'),
+            ],
+            { gap: 4 },
+          ),
+          ui.stack([ui.btn('只生成工程（先看看）', () => generate(ctx, false), { block: true, icon: 'layers', disabled: busy, busyText: '生成中…' }), ui.hint('生成后可以去「分步精修」逐镜查看、修改，再配音出片。')], { gap: 4 }),
+        ],
+        { min: 240, fit: true },
+      ),
+      mine && RUN.state
+        ? ui.stack(
+            [
+              ui.meter(RUN.state === 'error' ? 100 : RUN.pct, {
+                label: RUN.state === 'running' ? `${RUN.kind === 'suggest' ? 'AI 写文字' : RUN.kind === 'voice' ? '配音' : RUN.kind === 'render' ? '渲染' : '套用模板'} · 进行中 · 已用 ${elapsed}` : RUN.state === 'done' ? '已完成' : '没有完成',
+                valueText: RUN.state === 'error' ? '失败' : `${Math.round(RUN.pct)}%`,
+                tone: RUN.state === 'error' ? 'err' : RUN.state === 'done' ? 'ok' : '',
+                indeterminate: RUN.state === 'running' && RUN.pct <= 3,
+              }),
+              RUN.msg ? ui.text(RUN.msg, { tone: RUN.state === 'error' ? null : 'muted', class: RUN.state === 'error' ? 'pk-text--err' : '' }) : null,
+            ],
+            { gap: 6 },
+          )
+        : null,
+      mine && RUN.state === 'done' && RUN.kind !== 'suggest'
+        ? ui.row(
+            [
+              ui.btn('去分步精修', () => PK.open('studio', { step: 'scenes' }), { size: 'sm', icon: 'film' }),
+              RUN.result && RUN.result.rendered ? ui.btn('去交付预览 / 下载', () => PK.open('delivery'), { size: 'sm', icon: 'download', kind: 'primary' }) : null,
+            ],
+            { wrap: true },
+          )
+        : null,
+    )
+  }
+
+  PK.panel('templateFill', {
+    title: '模板填空',
+    en: 'TEMPLATE · FILL IN',
+    idx: 'TF',
+    icon: 'layers',
+    kind: 'modal',
+    size: 'lg',
+    group: 'tools',
+    order: 14,
+    desc: '套用影核广场的模板，把文字、图片、视频和配乐换成你自己的',
+    needsProject: true,
+    aliases: { 'template-fill': {}, fillTemplate: {} },
+    watch: (s) => s && s.project && s.project.dir,
+    onWatch: (ctx) => {
+      if (!PK.hasProject()) {
+        ctx.close()
+        return
+      }
+      ctx.local.formFor = ''
+      ctx.local.data = null
+      load(ctx, { quiet: true })
+    },
+    onArgs: (ctx, a) => {
+      const L = ctx.local
+      const next = S(a && a.templateId)
+      if (!next || next === L.templateId) {
+        ctx.render()
+        return
+      }
+      const switchTo = () => {
+        L.templateId = next
+        L.data = null
+        L.err = null
+        L.formFor = ''
+        L.dirty = false
+        load(ctx)
+        ctx.render()
+      }
+      if (!L.dirty) return switchTo()
+      PK.confirm({ title: '换一个模板？', text: '这里还有没生成的填写内容，换模板后会清空。', ok: '换模板', cancel: '继续填这个', danger: true }).then((ok) => ok && switchTo())
+    },
+    beforeClose: (ctx) => {
+      const L = ctx.local
+      if (L.asking) return false
+      if (!L.dirty || RUN.state === 'running') return true
+      L.asking = true
+      PK.confirm({ title: '关闭模板填空？', text: '填写的内容还没有生成工程，关闭后不会保存。', ok: '关闭', cancel: '继续填写', danger: true }).then((ok) => {
+        L.asking = false
+        if (!ok) return
+        L.dirty = false
+        ctx.frame.close('force')
+      })
+      return false
+    },
+    mount(ctx) {
+      const L = ctx.local
+      L.templateId = S(ctx.args && ctx.args.templateId)
+      L.form = L.form || {}
+      if (L.templateId) load(ctx, { quiet: true })
+      else loadTemplates(ctx)
+    },
+    render(ctx) {
+      const L = ctx.local
+      ctx.foot([ui.hint('文字和素材都只在本机处理；只有点「AI 按主题写文字」时才会调用你配置的大模型。'), ui.spacer(), ui.btn('影核广场', () => PK.open('plaza'), { kind: 'ghost', icon: 'hub' })])
+      if (!L.templateId) return chooserView(ctx)
+      if (!L.data && !L.err) return [ui.loading('正在读取模板的分镜…')]
+      if (L.err && !L.data) return [ui.errorBox(L.err, () => load(ctx))]
+      return [headSection(ctx), filmSection(ctx), shotsSection(ctx), runSection(ctx)]
+    },
+  })
+})()
+
+} catch (err) {
+  console.error('[PK] module 64-template-fill.js failed to load', err)
+}
+
+/* ---- 65-anime.js ---- */
+try {
+/**
+ * 「我的动漫形象」 (panel `animeChars`): the reusable anime presenter library.
+ *  - make a character once: from the user's photo (drawn as an anime likeness by the user's own cloud image service or
+ *    by the optional local model) or from a cartoon picture the user already has
+ *  - check where its mouth and eyes are (click to move them) and watch the mouth shapes / blink it will use
+ *  - see the three ways it can move (free / local model / cloud) and install / configure them
+ * Routes: anime/* (lib/routes-anime.js). Paid steps always ask first (PK.confirm with the estimate).
+ */
+;(function () {
+  'use strict'
+  const PK = window.PK
+  const U = PK.util
+  const h = PK.h
+  const ui = PK.ui
+  const S = (v) => (v === undefined || v === null ? '' : String(v))
+  const MARKS = [
+    { key: 'mouth', label: '嘴巴' },
+    { key: 'eye0', label: '左眼' },
+    { key: 'eye1', label: '右眼' },
+  ]
+  const PREVIEW_SHAPES = ['closed', 'half', 'a', 'o', 'i', 'a', 'half', 'o', 'closed', 'i', 'half', 'closed']
+  const fileUrl = (c, name) => (c && name ? PK.routeUrl('anime/file', { id: c.id, name, v: c.version || 1 }) : '')
+  const yuan = (v) => `${(Math.round(Number(v || 0) * 100) / 100).toFixed(2)} 元`
+  const clamp01 = (v) => Math.max(0, Math.min(1, Number(v) || 0))
+
+  /* -------------------------------------------------------------------------------------------- data */
+  async function loadLib(ctx, { quiet = false } = {}) {
+    const L = ctx.local
+    try {
+      L.lib = await PK.get('anime/characters')
+      L.libErr = null
+    } catch (err) {
+      L.libErr = err
+      if (!quiet) PK.toast(`读取形象库失败：${S(err && err.message)}`, 'error')
+    }
+    ctx.update()
+  }
+
+  function faceDraft(c) {
+    const f = (c && c.face) || {}
+    const eyes = Array.isArray(f.eyes) && f.eyes.length >= 2 ? f.eyes : [{ x: 0.42, y: 0.27, w: 0.08 }, { x: 0.58, y: 0.27, w: 0.08 }]
+    const m = f.mouth || { x: 0.5, y: 0.36, w: 0.1 }
+    const pick = (o) => ({ x: Number(o.x) || 0.5, y: Number(o.y) || 0.5, w: Number(o.w) || 0.08, ...(Number(o.h) > 0 ? { h: Number(o.h) } : {}) })
+    return { mouth: pick(m), eye0: pick(eyes[0]), eye1: pick(eyes[1]), mouthOriginal: f.mouthOriginal === 'open' ? 'open' : 'closed' }
+  }
+
+  async function openEditor(ctx, id) {
+    const L = ctx.local
+    L.editId = id
+    L.edit = null
+    L.preview = false
+    ctx.update()
+    try {
+      const r = await PK.get('anime/character', { id })
+      L.edit = { character: r.character, face: faceDraft(r.character), sel: 'mouth', dirty: false }
+    } catch (err) {
+      L.editId = ''
+      PK.toast(`打开形象失败：${S(err && err.message)}`, 'error')
+    }
+    ctx.update()
+  }
+
+  async function saveFace(ctx) {
+    const L = ctx.local
+    const e = L.edit
+    if (!e) return
+    const f = e.face
+    const r = await PK.post('anime/update', { id: e.character.id, face: { mouth: f.mouth, eyes: [f.eye0, f.eye1], mouthOriginal: f.mouthOriginal } })
+    L.edit = { ...e, character: r.character, face: faceDraft(r.character), dirty: false }
+    PK.toast('位置已保存，嘴型和闭眼图已按新位置重画', 'success')
+    await loadLib(ctx, { quiet: true })
+  }
+
+  async function renameCharacter(ctx, c) {
+    const name = await PK.prompt({ title: '给形象改个名字', label: '名字（24 个字以内）', value: S(c.name) })
+    if (name === null || name === undefined) return
+    const v = String(name).trim()
+    if (!v) return
+    await PK.post('anime/update', { id: c.id, name: v.slice(0, 24) })
+    await loadLib(ctx, { quiet: true })
+    if (ctx.local.edit && ctx.local.edit.character.id === c.id) await openEditor(ctx, c.id)
+  }
+
+  async function removeCharacter(ctx, c) {
+    const ok = await PK.confirm({ title: `删除「${S(c.name)}」？`, text: '形象会移到形象库的回收文件夹里（.trash），已经做好的视频不受影响。', ok: '删除', danger: true })
+    if (!ok) return
+    await PK.post('anime/delete', { id: c.id })
+    if (ctx.local.editId === c.id) {
+      ctx.local.editId = ''
+      ctx.local.edit = null
+    }
+    PK.toast('已删除', 'success')
+    await loadLib(ctx, { quiet: true })
+  }
+
+  /** The cloud likeness costs money: always ask first, with the estimate of the configured service. */
+  async function confirmCloudStylize(lib) {
+    const st = (lib && lib.stylize) || {}
+    if (!st.supported) {
+      PK.toast(S(st.reason) || '云端生图服务还不能用', 'error', { action: { label: '去设置云端生图', onClick: () => PK.open('cloud') } })
+      return false
+    }
+    return PK.confirm({
+      title: '用云端生成动漫形象？',
+      text: `会用你配置的云端生图服务生成 1 张图：大约 ${yuan(st.rmbLow)}～${yuan(st.rmbHigh)}（${S(st.note)}）。以服务商账单为准；同一张照片、同样的要求重试不会重复收费。`,
+      ok: '确认生成',
+    })
+  }
+
+  async function createFromForm(ctx) {
+    const L = ctx.local
+    const f = L.form
+    const kind = f.kind
+    const stylize = kind === 'cartoon' ? 'none' : f.stylize
+    if (!f.file && !f.assetPath) throw new PK.Error('请先选一张图片')
+    let confirmedCost = false
+    if (stylize === 'cloud') {
+      if (!(await confirmCloudStylize(L.lib))) return
+      confirmedCost = true
+    }
+    if (stylize === 'local' && !localStylizeReady(L.lib)) throw new PK.Error('本地动漫化模型还没有安装：请先在下面「让形象动起来」里安装本地模型，或改用云端生成')
+    const meta = { name: S(f.name).trim().slice(0, 24), kind, stylize, style: f.style || 'anime', extraPrompt: S(f.extra).slice(0, 200), confirmedCost: confirmedCost ? '1' : '' }
+    let res
+    if (f.file) res = await PK.upload('anime/upload', f.file, { query: { ...meta, fileName: f.file.name || 'photo.png' } })
+    else res = await PK.post('anime/create', { ...meta, projectDir: PK.dir(), assetPath: f.assetPath, confirmedCost })
+    L.creating = { jobId: res.jobId, message: '正在提交…', pct: 5 }
+    ctx.update()
+    try {
+      const out = await PK.job(res.jobId, {
+        onProgress: (job) => {
+          L.creating = { jobId: res.jobId, message: S(job.message) || '生成中…', pct: U.num(job.progress, 5) }
+          ctx.update()
+        },
+      })
+      L.form = { ...L.form, file: null, assetPath: '', name: '', extra: '' }
+      PK.toast('动漫形象做好了：请看一下嘴巴和眼睛的位置对不对', 'success')
+      await loadLib(ctx, { quiet: true })
+      if (out && out.character && out.character.id) await openEditor(ctx, out.character.id)
+    } finally {
+      L.creating = null
+      ctx.update()
+    }
+  }
+
+  async function rebuild(ctx, c, { restyle = false } = {}) {
+    // list summaries carry the method as a string, full records as { method }
+    const method = typeof c.stylize === 'string' ? c.stylize : c.stylize && c.stylize.method
+    let confirmedCost = false
+    if (method === 'cloud' && restyle) {
+      if (!(await confirmCloudStylize(ctx.local.lib))) return
+      confirmedCost = true
+    }
+    const res = await PK.post('anime/rebuild', { id: c.id, restyle, confirmedCost })
+    ctx.local.creating = { jobId: res.jobId, message: '正在重新生成…', pct: 5 }
+    ctx.update()
+    try {
+      await PK.job(res.jobId, {
+        onProgress: (job) => {
+          ctx.local.creating = { jobId: res.jobId, message: S(job.message) || '生成中…', pct: U.num(job.progress, 5) }
+          ctx.update()
+        },
+      })
+      PK.toast('已重新生成', 'success')
+      await loadLib(ctx, { quiet: true })
+      await openEditor(ctx, c.id)
+    } finally {
+      ctx.local.creating = null
+      ctx.update()
+    }
+  }
+
+  const engineOf = (lib, id) => ((lib && lib.engines) || []).find((e) => e.id === id) || null
+  const localStylizeReady = (lib) => {
+    const st = lib && lib.local
+    if (!st) return false
+    return Boolean((st.installed && st.installed.stylize) || (st.stylize && st.stylize.installed) || st.stylizeReady)
+  }
+
+  async function installLocal(ctx) {
+    const L = ctx.local
+    const ok = await PK.confirm({
+      title: '安装本地动漫模型？',
+      text: '会下载并安装「Talking Head Anime 3」（让动漫形象的脸和身体跟着声音动）和本地照片动漫化模型，需要几 GB 空间，下载可能要十几分钟。有 NVIDIA 显卡会快很多；没有也能用，但会很慢。安装完全免费。',
+      ok: '开始安装',
+    })
+    if (!ok) return
+    const res = await PK.post('anime/local/install', { installDir: S(L.localDir).trim(), mirror: L.localMirror === 'global' ? 'global' : 'cn' })
+    L.installing = { message: '正在提交…', pct: 2 }
+    ctx.update()
+    try {
+      await PK.job(res.jobId, {
+        maxMs: 6 * 3600 * 1000,
+        onProgress: (job) => {
+          L.installing = { message: S(job.message) || '安装中…', pct: U.num(job.progress, 2) }
+          ctx.update()
+        },
+      })
+      PK.toast('本地动漫模型已安装', 'success')
+    } finally {
+      L.installing = null
+      await loadLib(ctx, { quiet: true })
+    }
+  }
+
+  /* -------------------------------------------------------------------------------------------- views */
+  function libraryView(ctx) {
+    const L = ctx.local
+    const list = (L.lib && L.lib.characters) || []
+    if (!list.length) {
+      return ui.empty({ icon: 'user', title: '还没有动漫形象', text: '在下面用你的照片（或现成的卡通图）做一个，以后每条口播视频都能用它当讲解员。' })
+    }
+    return ui.grid(
+      list.map((c) => {
+        const ready = c.status === 'ready' && c.hasPortrait
+        const eng = c.engines || {}
+        const tags = [ready ? null : c.status === 'creating' ? '生成中' : '没有生成好']
+          .concat(eng.sprite ? ['免费档可用'] : [])
+          .concat(eng.tha3 ? ['显卡档可用'] : [])
+          .concat(['vidu', 'volc', 'runway'].filter((k) => eng[k]).map((k) => `云端已建形象：${k === 'volc' ? '火山引擎' : k === 'runway' ? 'Runway' : 'Vidu'}`))
+          .filter(Boolean)
+        return ui.card({
+          key: `an-${c.id}`,
+          media: ready ? h('img.pk-an-thumb', { src: fileUrl(c, 'portrait.png'), alt: '', loading: 'lazy', draggable: 'false' }) : h('div.pk-an-thumb.pk-an-thumb--empty', null, PK.icon('user', 28)),
+          aspect: '3 / 4',
+          title: S(c.name) || '我的动漫形象',
+          sub: c.error ? S(c.error) : `${c.source === 'photo' ? (c.stylize === 'cloud' ? '照片 · 云端动漫化' : '照片 · 本地动漫化') : '卡通图'}${c.faceChecked ? '' : ' · 嘴和眼睛的位置还没确认'}`,
+          tags,
+          active: L.editId === c.id,
+          onClick: ready ? () => openEditor(ctx, c.id) : null,
+          actions: [
+            ready ? ui.btn('嘴和眼睛', () => openEditor(ctx, c.id), { size: 'sm', icon: 'target' }) : null,
+            ui.iconBtn('edit', () => renameCharacter(ctx, c).catch((err) => PK.toast(S(err && err.message), 'error')), { title: '改名' }),
+            !ready ? ui.btn('重试', () => rebuild(ctx, c).catch((err) => PK.toast(`没有完成：${S(err && err.message)}`, 'error')), { size: 'sm', icon: 'retry', title: '用已经画好的图（或原图）再试一次，不会再收费' }) : null,
+            !ready && c.source === 'photo' && c.stylize !== 'none'
+              ? ui.btn('重新画一张', () => rebuild(ctx, c, { restyle: true }).catch((err) => PK.toast(`没有完成：${S(err && err.message)}`, 'error')), { size: 'sm', kind: 'ghost', icon: 'wand', title: c.stylize === 'cloud' ? '会再收一张图的钱（生成前会先确认）' : '本地模型重新画，不花钱' })
+              : null,
+            ui.iconBtn('trash', () => removeCharacter(ctx, c).catch((err) => PK.toast(S(err && err.message), 'error')), { title: '删除' }),
+          ].filter(Boolean),
+        })
+      }),
+      { min: 180 },
+    )
+  }
+
+  /** Click on the portrait to move the selected mark; markers show where the mouth / eyes are. */
+  function faceEditor(ctx) {
+    const L = ctx.local
+    const e = L.edit
+    if (!L.editId) return null
+    if (!e) return ui.section({ title: '嘴巴和眼睛的位置', en: 'FACE MARKS', icon: 'target' }, ui.loading('正在打开…'))
+    const c = e.character
+    const f = e.face
+    const W = U.num(c.width, 600)
+    const H = U.num(c.height, 800)
+    const markOf = (k) => f[k]
+    const setMark = (k, patch) => {
+      e.face = { ...f, [k]: { ...f[k], ...patch } }
+      e.dirty = true
+      ctx.update()
+    }
+    const boxes = (c.sprites && c.sprites.boxes) || {}
+    const mouths = (c.sprites && c.sprites.mouths) || {}
+    const pct = (v) => `${(clamp01(v) * 100).toFixed(2)}%`
+    const pv = (L._pv = { mouth: null, blink: null })
+    const preview = L.preview && !e.dirty
+    const stage = h(
+      'div.pk-an-face',
+      {
+        style: { aspectRatio: `${W} / ${H}` },
+        title: preview ? '' : `点一下图片，把「${(MARKS.find((m) => m.key === e.sel) || MARKS[0]).label}」移到这里`,
+        onClick: (ev) => {
+          if (preview) return
+          const r = ev.currentTarget.getBoundingClientRect()
+          if (!r.width || !r.height) return
+          setMark(e.sel, { x: Math.round(((ev.clientX - r.left) / r.width) * 1000) / 1000, y: Math.round(((ev.clientY - r.top) / r.height) * 1000) / 1000 })
+        },
+      },
+      h('img.pk-an-face-img', { src: fileUrl(c, c.portrait || 'portrait.png'), alt: '', draggable: 'false' }),
+      preview && boxes.mouth
+        ? (pv.mouth = h('img.pk-an-pv', { src: mouths.half ? fileUrl(c, mouths.half) : '', alt: '', draggable: 'false', style: { left: pct(boxes.mouth.x), top: pct(boxes.mouth.y), width: pct(boxes.mouth.w), height: pct(boxes.mouth.h), visibility: 'hidden' } }))
+        : null,
+      preview && boxes.blink && c.sprites && c.sprites.blink
+        ? (pv.blink = h('img.pk-an-pv', { src: fileUrl(c, c.sprites.blink), alt: '', draggable: 'false', style: { left: pct(boxes.blink.x), top: pct(boxes.blink.y), width: pct(boxes.blink.w), height: pct(boxes.blink.h), visibility: 'hidden' } }))
+        : null,
+      preview
+        ? null
+        : MARKS.map((m) => {
+            const v = markOf(m.key)
+            const wPx = clamp01(v.w)
+            const hShare = Number(v.h) > 0 ? v.h : m.key === 'mouth' ? v.w * 0.55 * (W / H) : v.w * 1.1 * (W / H)
+            return h(
+              'span.pk-an-mark',
+              {
+                class: { 'is-sel': e.sel === m.key, 'is-mouth': m.key === 'mouth' },
+                style: { left: pct(v.x), top: pct(v.y), width: pct(wPx), height: pct(hShare) },
+                onClick: (ev) => {
+                  ev.stopPropagation()
+                  e.sel = m.key
+                  ctx.update()
+                },
+              },
+              h('b.pk-an-mark-l', null, m.label),
+            )
+          }),
+    )
+    const sel = markOf(e.sel)
+    const controls = ui.stack(
+      [
+        ui.field(
+          { label: '要调整哪个位置', en: 'MARK', hint: '选好后在左边图片上点一下，标记就会移过去。框要刚好盖住嘴 / 眼睛（含睫毛）。' },
+          ui.seg({ value: e.sel, options: MARKS.map((m) => ({ value: m.key, label: m.label })), disabled: preview, onChange: (v) => ((e.sel = v), ctx.update()) }),
+        ),
+        ui.field(
+          { label: '框的大小', en: 'SIZE' },
+          ui.slider({ value: Math.round(clamp01(sel.w) * 1000) / 10, min: 2, max: 30, step: 0.5, format: (v) => `${v}%`, disabled: preview, onChange: (v) => setMark(e.sel, { w: Math.round(v * 10) / 1000, ...(e.sel !== 'mouth' && Number(sel.h) > 0 ? { h: Math.round(((sel.h * v) / (sel.w * 100)) * 1000) / 1000 } : {}) }) }),
+        ),
+        ui.toggle({
+          value: f.mouthOriginal === 'open',
+          label: '原图里嘴巴是张开的',
+          hint: '打开后会多画一张「闭嘴」图，停顿时嘴会合上',
+          onChange: (v) => {
+            e.face = { ...f, mouthOriginal: v ? 'open' : 'closed' }
+            e.dirty = true
+            ctx.update()
+          },
+        }),
+        ui.row(
+          [
+            ui.btn(e.dirty ? '保存位置并重画嘴型' : '位置已保存', () => saveFace(ctx), { kind: e.dirty ? 'primary' : 'ghost', icon: 'check', disabled: !e.dirty, busyText: '保存中…' }),
+            ui.btn(preview ? '停止试看' : '试看嘴型和眨眼', () => {
+              L.preview = !preview
+              L.pvTick = 0
+              ctx.update()
+            }, { icon: preview ? 'stop' : 'play', disabled: e.dirty, title: e.dirty ? '先保存位置' : '' }),
+          ],
+          { wrap: true },
+        ),
+        e.dirty ? ui.hint('改了位置还没保存：保存后才会按新位置重画嘴型和闭眼图。') : null,
+        c.source && c.source.kind === 'photo' && c.stylize && c.stylize.method !== 'none'
+          ? ui.row([ui.btn('不满意，重新画一张', () => rebuild(ctx, c, { restyle: true }).catch((err) => PK.toast(`没有完成：${S(err && err.message)}`, 'error')), { size: 'sm', icon: 'retry', kind: 'ghost' }), ui.hint(c.stylize.method === 'cloud' ? '会再收一张图的钱（生成前会先确认）' : '本地模型重新画，不花钱')], { wrap: true })
+          : null,
+        ui.hint('试看用的是保存后的图：嘴型按 闭 → 半张 → 啊 → 哦 → 衣 轮流变化，每隔两三秒眨一次眼。真正出片时嘴型跟着你说的每个字变。'),
+      ],
+      { gap: 10 },
+    )
+    return ui.section(
+      { title: `「${S(c.name)}」的嘴巴和眼睛`, en: 'FACE MARKS', icon: 'target', actions: [ui.btn('收起', () => ((L.editId = ''), (L.edit = null), (L.preview = false), ctx.update()), { size: 'sm', kind: 'ghost', icon: 'collapse' })] },
+      c.face && c.face.detected === false && !c.face.checked ? ui.note('没能自动找到嘴巴和眼睛，现在是估计的位置：请在图上点一下，把三个框移到对的地方。', { level: 'warn' }) : null,
+      ui.split(h('div.pk-an-face-wrap', null, stage), controls, { ratio: 0.48 }),
+    )
+  }
+
+  function createSection(ctx) {
+    const L = ctx.local
+    const f = (L.form = L.form || { kind: 'photo', stylize: 'cloud', style: 'anime', name: '', extra: '', file: null, assetPath: '' })
+    const lib = L.lib || {}
+    const st = lib.stylize || {}
+    const localOk = localStylizeReady(lib)
+    const set = (patch) => {
+      L.form = { ...L.form, ...patch }
+      ctx.update()
+    }
+    const busy = Boolean(L.creating)
+    const images = ((L.projectImages || []).length ? L.projectImages : []).map((it) => ({ value: it.path, label: `🖼 ${S(it.name)}` }))
+    return ui.section(
+      { title: '新建动漫形象', en: 'NEW CHARACTER', icon: 'wand', desc: '做一次，以后每条口播视频都能用它当讲解员。真人照片要先画成动漫形象；已经有卡通图的话可以直接用。' },
+      ui.field(
+        { label: '用什么做', en: 'SOURCE' },
+        ui.seg({ value: f.kind, options: [{ value: 'photo', label: '我的照片 → 动漫形象' }, { value: 'cartoon', label: '现成的卡通图' }], disabled: busy, onChange: (v) => set({ kind: v }) }),
+      ),
+      f.kind === 'photo'
+        ? ui.field(
+            { label: '怎么画成动漫形象', en: 'STYLIZE', hint: f.stylize === 'cloud' ? (st.supported ? `用你在「云端生图」里配置的服务，约 ${yuan(st.rmbLow)}～${yuan(st.rmbHigh)} 一张（${S(st.note)}），生成前会再确认` : S(st.reason)) : localOk ? '在你的电脑上画，不花钱' : '本地模型还没有安装（下面「让形象动起来」里可以安装）' },
+            ui.seg({
+              value: f.stylize,
+              options: [
+                { value: 'cloud', label: '云端生图（最像本人）' },
+                { value: 'local', label: '本地模型（免费）' },
+              ],
+              disabled: busy,
+              onChange: (v) => set({ stylize: v }),
+            }),
+          )
+        : null,
+      f.kind === 'photo' ? ui.field({ label: '画风', en: 'STYLE' }, ui.chips({ value: f.style, options: (lib.styles || []).map((s) => ({ value: s.value, label: s.label })), disabled: busy, onChange: (v) => set({ style: v }) })) : null,
+      f.kind === 'photo' && f.stylize === 'cloud'
+        ? ui.field({ label: '额外要求（可不填）', en: 'EXTRA', hint: '例如：穿蓝色西装、短发、戴眼镜' }, ui.input({ key: 'an-extra', value: S(f.extra), maxLength: 200, placeholder: '可不填', onInput: (v) => (L.form.extra = v) }))
+        : null,
+      ui.grid(
+        [
+          ui.field(
+            { label: f.kind === 'photo' ? '照片' : '卡通图', en: 'PICTURE', hint: f.kind === 'photo' ? '正面、五官清楚、光线均匀的半身照最好' : '透明背景的 PNG 最好；纯白 / 纯绿等纯色背景会自动抠掉' },
+            ui.drop({
+              label: f.file ? `已选：${S(f.file.name)}` : '拖入图片，或点击选择',
+              hint: 'PNG / JPG / WebP，30 MB 以内',
+              accept: 'image/*',
+              icon: 'image',
+              onFiles: (files) => set({ file: files[0] || null, assetPath: '' }),
+            }),
+          ),
+          images.length
+            ? ui.field({ label: '或者用素材库里的图片', en: 'FROM LIBRARY' }, ui.select({ value: f.assetPath || '', options: [{ value: '', label: '不用' }, ...images], disabled: busy, onChange: (v) => set({ assetPath: v, file: v ? null : f.file }) }))
+            : null,
+        ].filter(Boolean),
+        { min: 240, fit: true },
+      ),
+      ui.field({ label: '名字（可不填）', en: 'NAME' }, ui.input({ key: 'an-name', value: S(f.name), maxLength: 24, placeholder: '我的动漫形象', onInput: (v) => (L.form.name = v) })),
+      L.creating ? ui.meter(U.num(L.creating.pct, 5), { label: S(L.creating.message) || '生成中…' }) : null,
+      ui.row(
+        [
+          ui.btn(f.kind === 'photo' && f.stylize === 'cloud' ? '生成动漫形象（先确认费用）' : '生成动漫形象', () => createFromForm(ctx), {
+            kind: 'primary',
+            icon: 'wand',
+            busyText: '生成中…',
+            disabled: busy || (!f.file && !f.assetPath) || (f.kind === 'photo' && f.stylize === 'cloud' && !st.supported) || (f.kind === 'photo' && f.stylize === 'local' && !localOk),
+          }),
+          f.kind === 'photo' && f.stylize === 'cloud' && !st.supported ? ui.btn('去设置云端生图', () => PK.open('cloud'), { size: 'sm', kind: 'ghost', icon: 'cloud' }) : null,
+        ].filter(Boolean),
+        { wrap: true },
+      ),
+    )
+  }
+
+  function enginesSection(ctx) {
+    const L = ctx.local
+    const lib = L.lib || {}
+    const local = lib.local || null
+    const tha = engineOf(lib, 'tha3')
+    const clouds = ['vidu', 'volc', 'runway'].map((id) => engineOf(lib, id)).filter(Boolean)
+    return ui.section(
+      { title: '让形象动起来', en: 'PRESENTER ENGINES', icon: 'bolt', desc: '在「AI 剪辑 · 口播粗剪 → 口播包装 → 卡通讲解员」里选择用哪一种。' },
+      ui.list(
+        [
+          ui.item({ icon: 'check', title: '免费档 · 会张嘴眨眼的立绘', sub: '嘴型跟着每个字开合，会眨眼、点头和呼吸。所有电脑都能用，不花钱。', right: ui.pill('可用', 'ok', { dot: true }), key: 'en-sprite' }),
+          ui.item({
+            icon: 'cpu',
+            title: '显卡档 · 本地模型（脸和身体都会动）',
+            sub: tha && tha.available ? S(tha.reason) || '已安装' : `嘴型、眼睛、眉毛、转头和身体摇摆都跟着声音动，在你的电脑上生成，不花钱。有 NVIDIA 显卡会快很多，没有也能用但很慢。${tha && tha.reason ? `（${S(tha.reason)}）` : ''}`,
+            right: ui.pill(tha && tha.available ? '已安装' : '未安装', tha && tha.available ? 'ok' : 'mute', { dot: true }),
+            key: 'en-tha3',
+          }),
+          ...clouds.map((e) =>
+            ui.item({
+              icon: 'cloud',
+              title: S(e.label),
+              sub: e.available ? S(e.reason) || '已填写密钥' : `${S(e.reason)}。按秒收费，每次生成前都会先告诉你价格。`,
+              right: ui.pill(e.available ? '可用' : '未设置', e.available ? 'ok' : 'mute', { dot: true }),
+              key: `en-${e.id}`,
+            }),
+          ),
+        ],
+        { dense: true },
+      ),
+      tha && !tha.available
+        ? ui.stack(
+            [
+              ui.grid(
+                [
+                  ui.field({ label: '安装位置（可选）', en: 'INSTALL DIR', hint: '留空 = 插件数据目录；建议放在空间充足的非系统盘、纯英文路径' }, ui.input({ key: 'an-local-dir', value: S(L.localDir), placeholder: '例如 D:/dsh-ai/anime', onInput: (v) => (L.localDir = v) })),
+                  ui.field({ label: '下载源', en: 'MIRROR' }, ui.seg({ value: L.localMirror || 'cn', options: [{ value: 'cn', label: '国内镜像' }, { value: 'global', label: '官方源' }], onChange: (v) => ((L.localMirror = v), ctx.update()) })),
+                ],
+                { min: 220, fit: true },
+              ),
+              L.installing ? ui.meter(U.num(L.installing.pct, 2), { label: S(L.installing.message) || '安装中…' }) : null,
+              ui.row([ui.btn('安装本地动漫模型（免费）', () => installLocal(ctx), { icon: 'download', busyText: '安装中…', disabled: Boolean(L.installing) }), local && local.summary ? ui.hint(S(local.summary)) : null].filter(Boolean), { wrap: true }),
+            ],
+            { gap: 8 },
+          )
+        : null,
+      ui.row(
+        [
+          ui.hint('云端档用你自己的账号密钥：Vidu 最便宜（约 1.9 元/分钟），火山引擎官方支持动漫形象（约 18 元/分钟），Runway 需要国际信用卡（约 1.5 元/分钟）。'),
+          ui.btn(clouds.some((e) => !e.available) ? '填写云端密钥' : '云端密钥设置', () => PK.open('animeCloud'), { size: 'sm', icon: 'key', kind: 'ghost' }),
+        ],
+        { wrap: true },
+      ),
+      ui.hint(
+        S(local && local.notice)
+          ? `本地模型的来源与许可：${S(local.notice)}`
+          : '显卡档使用 Talking Head Anime 3（作者 Pramook Khungurn，模型以 CC BY 4.0 许可发布）；照片动漫化使用 DCT-Net（阿里巴巴达摩院，Apache-2.0）。',
+      ),
+    )
+  }
+
+  /* ---------------------------------------------------------------- cloud keys (panel animeCloud, tier 3) */
+  const CLOUD_INFO = [
+    {
+      id: 'vidu',
+      name: 'Vidu 数字人',
+      tag: '国内 · 最便宜',
+      desc: '一张形象图 + 你的声音，生成会说话的视频；官方写明任何画风都可以。约 1.9 元/分钟（每秒 1 积分，1 积分 0.03125 元），生成失败自动退还积分。',
+    },
+    {
+      id: 'volc',
+      name: '火山引擎 · 单图音频驱动',
+      tag: '国内 · 官方支持动漫',
+      desc: '官方写明支持动漫形象。约 18 元/分钟（0.3 元/秒），每张形象图第一次使用时建形象 0.1 元，失败不收费。火山引擎只认网络链接：图片和声音会临时放进你自己的对象存储（TOS）桶，生成完就删除。需要先在火山引擎控制台开通「智能视觉 · 视频生成」。',
+    },
+    {
+      id: 'runway',
+      name: 'Runway Characters',
+      tag: '海外 · 需要国际信用卡',
+      desc: '约 1.5 元/分钟（每 3 秒 1 积分，1 积分 0.01 美元）。海外服务，国内网络可能需要代理。',
+    },
+  ]
+  const VOLC_REGIONS = [
+    { value: 'cn-beijing', label: '华北2（北京）cn-beijing' },
+    { value: 'cn-shanghai', label: '华东2（上海）cn-shanghai' },
+    { value: 'cn-guangzhou', label: '华南1（广州）cn-guangzhou' },
+    { value: 'cn-hongkong', label: '中国香港 cn-hongkong' },
+    { value: 'ap-southeast-1', label: '亚太东南（柔佛）ap-southeast-1' },
+  ]
+
+  async function loadCloud(ctx) {
+    const L = ctx.local
+    try {
+      const r = await PK.get('anime/cloud')
+      L.cloud = r.config || {}
+      L.cloudAvailable = r.available !== false
+      L.cloudReason = S(r.reason)
+      L.cloudErr = null
+      const c = L.cloud
+      const d = (L.draft = L.draft || {})
+      if (!d.inited) {
+        Object.assign(d, {
+          inited: true,
+          viduRegion: (c.vidu && c.vidu.region) || 'cn',
+          viduRes: (c.vidu && c.vidu.resolution) || '540p',
+          volcBucket: (c.volc && c.volc.tosBucket) || '',
+          volcRegion: (c.volc && c.volc.tosRegion) || 'cn-beijing',
+          volcMode: (c.volc && c.volc.mode) || 'loopy',
+        })
+      }
+    } catch (err) {
+      L.cloudErr = err
+    }
+    ctx.update()
+  }
+
+  /** Secret field: a saved key is never shown, only its masked form; empty = keep the saved one. */
+  function secretInput(ctx, key, saved, masked, placeholder) {
+    const d = ctx.local.draft
+    return ui.input({
+      key: `ac-${key}`,
+      type: 'password',
+      value: S(d[key]),
+      placeholder: saved ? `已保存${masked ? `（${masked}）` : ''} · 不修改请留空` : placeholder,
+      autocomplete: 'new-password',
+      onInput: (v) => (d[key] = v),
+      title: false,
+    })
+  }
+
+  async function saveCloud(ctx, id, extra = null) {
+    const L = ctx.local
+    const d = L.draft
+    const patch =
+      id === 'vidu'
+        ? { vidu: { apiKey: S(d.viduKey).trim(), region: d.viduRegion, resolution: d.viduRes, ...(extra || {}) } }
+        : id === 'volc'
+          ? { volc: { accessKeyId: S(d.volcAk).trim(), secretAccessKey: S(d.volcSk).trim(), tosBucket: S(d.volcBucket).trim().toLowerCase(), tosRegion: d.volcRegion, mode: d.volcMode, ...(extra || {}) } }
+          : { runway: { apiKey: S(d.runwayKey).trim(), ...(extra || {}) } }
+    const r = await PK.post('anime/cloud', { config: patch })
+    L.cloud = r.config || L.cloud
+    for (const k of ['viduKey', 'volcAk', 'volcSk', 'runwayKey']) d[k] = ''
+    L.tests = { ...(L.tests || {}), [id]: null }
+    PK.toast(extra ? '已清除保存的密钥' : '已保存：密钥只存在你的电脑上', 'success')
+    ctx.update()
+  }
+
+  async function clearCloud(ctx, id, name) {
+    const ok = await PK.confirm({ title: `清除「${name}」保存的密钥？`, text: '清除后这个云端服务就不能用了，可以随时重新填写。已经做好的视频不受影响。', ok: '清除', danger: true })
+    if (!ok) return
+    await saveCloud(ctx, id, id === 'volc' ? { clear: true } : { clearApiKey: true })
+  }
+
+  async function testCloud(ctx, id) {
+    const r = await PK.post('anime/cloud/test', { engine: id })
+    const res = (r && r.result) || {}
+    ctx.local.tests = { ...(ctx.local.tests || {}), [id]: res }
+    ctx.update()
+    PK.toast(res.ok ? S(res.message) : `测试没有通过：${S(res.message)}`, res.ok ? 'success' : 'error')
+  }
+
+  function cloudEngineSection(ctx, info) {
+    const L = ctx.local
+    const c = (L.cloud && L.cloud[info.id]) || {}
+    const d = L.draft
+    const test = (L.tests || {})[info.id]
+    const links = c.links || {}
+    const modes = Array.isArray(c.modes) ? c.modes : []
+    let fields
+    let saved = false
+    if (info.id === 'vidu') {
+      saved = Boolean(c.hasApiKey)
+      fields = ui.grid(
+        [
+          ui.field({ label: 'API Key', en: 'KEY', hint: '在 Vidu 开放平台的「API Keys」页面创建' }, secretInput(ctx, 'viduKey', c.hasApiKey, c.apiKeyMasked, '粘贴 Vidu API Key（vda_ 开头）')),
+          ui.field({ label: '站点', en: 'REGION', hint: '国内账号选国内站' }, ui.seg({ value: d.viduRegion || 'cn', options: [{ value: 'cn', label: '国内 vidu.cn' }, { value: 'global', label: '海外 vidu.com' }], onChange: (v) => ((d.viduRegion = v), ctx.update()) })),
+          ui.field({ label: '清晰度', en: 'RESOLUTION', hint: '两种清晰度价格一样' }, ui.seg({ value: d.viduRes || '540p', options: modes.length ? modes.map((m) => ({ value: m.value, label: m.value })) : [{ value: '540p', label: '540p' }, { value: '720p', label: '720p' }], onChange: (v) => ((d.viduRes = v), ctx.update()) })),
+        ],
+        { min: 220, fit: true },
+      )
+    } else if (info.id === 'volc') {
+      saved = Boolean(c.hasAccessKeyId || c.hasSecretAccessKey)
+      fields = ui.stack(
+        [
+          ui.grid(
+            [
+              ui.field({ label: 'AccessKey ID', en: 'AK', hint: '控制台 → 访问控制 → 密钥管理' }, secretInput(ctx, 'volcAk', c.hasAccessKeyId, c.accessKeyIdMasked, '粘贴 AccessKey ID（AKLT 开头）')),
+              ui.field({ label: 'Secret Access Key', en: 'SK' }, secretInput(ctx, 'volcSk', c.hasSecretAccessKey, '', '粘贴 Secret Access Key')),
+            ],
+            { min: 240, fit: true },
+          ),
+          ui.grid(
+            [
+              ui.field({ label: '对象存储（TOS）桶名称', en: 'BUCKET', hint: '在火山引擎「对象存储」里新建一个私有桶即可；只临时放图片和声音，用完就删' }, ui.input({ key: 'ac-volc-bucket', value: S(d.volcBucket), placeholder: '例如 my-anime-presenter', maxLength: 63, onInput: (v) => (d.volcBucket = v) })),
+              ui.field({ label: '桶所在地域', en: 'REGION' }, ui.select({ value: d.volcRegion || 'cn-beijing', options: VOLC_REGIONS, onChange: (v) => ((d.volcRegion = v), ctx.update()) })),
+            ],
+            { min: 240, fit: true },
+          ),
+          ui.field(
+            { label: '默认模式', en: 'MODE', hint: '动漫形象建议用「灵动」：漫画式的嘴和鼻子用「普通」可能带不动。每种模式第一次用一张形象图时各建一次形象（0.1 元）' },
+            ui.seg({ value: d.volcMode || 'loopy', options: (modes.length ? modes : [{ value: 'loopy', label: '灵动' }, { value: 'normal', label: '普通' }, { value: 'loopyb', label: '大画幅灵动' }]).map((m) => ({ value: m.value, label: S(m.label).split('（')[0] })), onChange: (v) => ((d.volcMode = v), ctx.update()) }),
+          ),
+        ],
+        { gap: 8 },
+      )
+    } else {
+      saved = Boolean(c.hasApiKey)
+      fields = ui.field({ label: 'API Key', en: 'KEY', hint: '在 Runway 开发者后台（dev.runwayml.com）创建，并充值积分' }, secretInput(ctx, 'runwayKey', c.hasApiKey, c.apiKeyMasked, '粘贴 Runway API Key'))
+    }
+    return ui.section(
+      {
+        title: info.name,
+        en: info.id.toUpperCase(),
+        icon: 'cloud',
+        key: `ac-sec-${info.id}`,
+        actions: [ui.pill(c.configured ? '已设置' : '未设置', c.configured ? 'ok' : 'mute', { dot: true })],
+        desc: `${info.tag}。${info.desc}`,
+      },
+      fields,
+      !c.configured && c.reason ? ui.hint(S(c.reason)) : null,
+      test ? ui.note(S(test.message), { level: test.ok ? 'ok' : 'error' }) : null,
+      ui.row(
+        [
+          ui.btn('保存', () => saveCloud(ctx, info.id), { kind: 'primary', icon: 'check', busyText: '保存中…' }),
+          c.configured ? ui.btn('测试连接（不收费）', () => testCloud(ctx, info.id), { icon: 'bolt', busyText: '测试中…', title: '只验证密钥能不能用，不生成视频' }) : null,
+          saved ? ui.btn('清除密钥', () => clearCloud(ctx, info.id, info.name), { kind: 'ghost', size: 'sm', icon: 'trash' }) : null,
+          links.console ? ui.link('去申请密钥', links.console) : null,
+          info.id === 'vidu' && links.consoleGlobal ? ui.link('海外站', links.consoleGlobal) : null,
+          info.id === 'volc' && links.tos ? ui.link('新建存储桶', links.tos) : null,
+          links.docs ? ui.link('官方说明', links.docs) : null,
+        ].filter(Boolean),
+        { wrap: true },
+      ),
+    )
+  }
+
+  PK.panel('animeCloud', {
+    title: '云端动漫数字人 · 密钥',
+    en: 'CLOUD PRESENTER KEYS',
+    idx: 'AC',
+    icon: 'key',
+    kind: 'modal',
+    size: 'lg',
+    group: 'hidden',
+    order: 15,
+    desc: '填写你自己的 Vidu / 火山引擎 / Runway 密钥，让动漫形象整张脸跟着声音动',
+    needsProject: false,
+    aliases: { animeCloudKeys: {} },
+    async mount(ctx) {
+      ctx.local.draft = {}
+      ctx.local.tests = {}
+      await loadCloud(ctx)
+    },
+    render(ctx) {
+      const L = ctx.local
+      if (!L.cloud) return L.cloudErr ? ui.errorBox(L.cloudErr, () => loadCloud(ctx)) : ui.loading('正在读取云端设置…')
+      ctx.foot([ui.hint('密钥只保存在你的电脑上（工作目录里的 .dsh-video-anime-cloud.json），只发给对应的服务本身。'), ui.spacer(), ui.btn('回到我的动漫形象', () => PK.open('animeChars'), { size: 'sm', kind: 'ghost', icon: 'user' })])
+      if (L.cloudAvailable === false) return ui.note(L.cloudReason || '云端动漫数字人还没有就绪', { level: 'warn' })
+      return [
+        ui.note('云端按秒收费：每次生成前都会先告诉你这段视频大约多少钱，你确认后才会提交；同一段声音、同一个形象不会重复收费。测试连接只验证密钥，不生成视频、不收费。', { level: 'info' }),
+        ...CLOUD_INFO.map((info) => cloudEngineSection(ctx, info)),
+      ]
+    },
+  })
+
+  PK.panel('animeChars', {
+    title: '我的动漫形象',
+    en: 'MY ANIME PRESENTER',
+    idx: 'AN',
+    icon: 'user',
+    kind: 'modal',
+    size: 'lg',
+    group: 'tools',
+    order: 14,
+    desc: '用你的照片做一个会说话的动漫讲解员，做一次，每条视频都能用',
+    needsProject: false,
+    aliases: { anime: {}, animeCharacters: {}, presenter: {} },
+    async mount(ctx) {
+      ctx.local.form = null
+      if (ctx.args && ctx.args.editId) ctx.local.editId = ctx.args.editId
+      await loadLib(ctx, { quiet: true })
+      if (ctx.local.editId) openEditor(ctx, ctx.local.editId)
+      // the project's pictures (for 「用素材库里的图片」)
+      if (PK.hasProject && PK.hasProject()) {
+        try {
+          const d = await PK.store.load()
+          const items = (d && d.activeProject && d.activeProject.assets && d.activeProject.assets.items) || []
+          ctx.local.projectImages = items.filter((it) => it && it.type === 'image').map((it) => ({ path: it.path, name: it.originalName || it.name || it.path }))
+          ctx.update()
+        } catch {}
+      }
+      // mouth-shape preview: swap the patch pictures without re-rendering the panel
+      ctx.every(150, () => {
+        const L = ctx.local
+        if (!L.preview || !L.edit || !L._pv) return
+        const c = L.edit.character
+        const mouths = (c.sprites && c.sprites.mouths) || {}
+        L.pvTick = (U.num(L.pvTick, 0) + 1) % 1000
+        const shape = PREVIEW_SHAPES[Math.floor(L.pvTick / 2) % PREVIEW_SHAPES.length]
+        if (L._pv.mouth) {
+          const file = shape === 'closed' ? mouths.closed : mouths[shape]
+          if (file) {
+            const src = fileUrl(c, file)
+            if (L._pv.mouth.getAttribute('src') !== src) L._pv.mouth.setAttribute('src', src)
+            L._pv.mouth.style.visibility = 'visible'
+          } else L._pv.mouth.style.visibility = 'hidden'
+        }
+        if (L._pv.blink) L._pv.blink.style.visibility = L.pvTick % 18 === 0 || L.pvTick % 18 === 1 ? 'visible' : 'hidden'
+      })
+    },
+    render(ctx) {
+      const L = ctx.local
+      if (!L.lib) return L.libErr ? ui.errorBox(L.libErr, () => loadLib(ctx)) : ui.loading('正在读取形象库…')
+      ctx.foot([ui.hint('照片只保存在你的电脑上；只有选「云端生图」时才会把照片发给你自己配置的生图服务。'), ui.spacer(), ui.btn('刷新', () => loadLib(ctx), { size: 'sm', kind: 'ghost', icon: 'refresh' })])
+      return [ui.section({ title: '形象库', en: 'LIBRARY', icon: 'user', count: ((L.lib && L.lib.characters) || []).length }, libraryView(ctx)), faceEditor(ctx), createSection(ctx), enginesSection(ctx)].filter(Boolean)
+    },
+  })
+})()
+
+} catch (err) {
+  console.error('[PK] module 65-anime.js failed to load', err)
+}
+
 /* ---- 70-settings.js ---- */
 try {
 /* ============================================================================================================
@@ -8279,6 +11197,7 @@ try {
   const h = PK.h
   const ui = PK.ui
   const KEEP = 'KEEP_EXISTING'
+  const HOST_AGENT = 'host-agent' // 由当前智能体代写: the agent in the conversation answers the writing tasks
 
   /* ================================================================================================ helpers */
   const S = (v) => (v === undefined || v === null ? '' : String(v))
@@ -8380,16 +11299,24 @@ try {
     return ui.row([flex1(ctl), eye], { wrap: false, top: true })
   }
 
-  /** Button whose busy state survives panel re-renders (prevents double submits while a request is in flight). */
+  /**
+   * Button whose busy state survives panel re-renders (prevents double submits while a request is in flight). A long
+   * wait (a model call may take minutes) shows how long it has been running, so it never looks frozen.
+   */
   function actBtn(ctx, key, label, fn, o = {}) {
     const B = (ctx.local.busy = ctx.local.busy || {})
     const busy = Boolean(B[key])
+    const since = typeof B[key] === 'number' ? B[key] : Date.now()
+    const busyLabel = () => {
+      const s = Math.round((Date.now() - since) / 1000)
+      return `${o.busyText || '处理中…'}${s >= 5 ? ` ${U.fmtDur(s)}` : ''}`
+    }
     const b = ui.btn(
-      busy ? o.busyText || '处理中…' : label,
+      busy ? busyLabel() : label,
       busy
         ? null
         : async () => {
-            B[key] = true
+            B[key] = Date.now()
             ctx.update()
             try {
               return await fn()
@@ -8400,8 +11327,135 @@ try {
           },
       { ...o, disabled: Boolean(o.disabled) || busy, key: o.key || `act-${key}` },
     )
-    if (busy) b.setAttribute('aria-busy', 'true')
+    if (busy) {
+      b.setAttribute('aria-busy', 'true')
+      const lbl = b.querySelector('.pk-btn-l')
+      if (lbl) {
+        const tick = setInterval(() => {
+          if (!b.isConnected || !B[key]) clearInterval(tick)
+          else lbl.textContent = busyLabel()
+        }, 1000)
+      }
+    }
     return b
+  }
+
+  /* -------------------------------------------------------------------- 「测试连接」 (POST connection-test) */
+  /**
+   * Test a cloud connection with the values typed in a form — nothing is saved, nothing generated, nothing charged
+   * (dsh-tool-media/cloud-connection-test.js). One slot per form (`key`) in ctx.local.connTests; 「取消」 or a newer
+   * run makes an in-flight answer stale (the server request ends by itself within ~40 s). An empty / masked key field
+   * means "the saved key" — the server reads it, the page never sees it.
+   */
+  const CT_WHO = { yours: '你的密钥', fake: '故意写错的测试密钥', none: '不带密钥' }
+  const connTests = (ctx) => (ctx.local.connTests = ctx.local.connTests || {})
+  /** short hash of a test payload: tells whether the form changed after the test (the typed key is not kept twice) */
+  const ctSig = (payload) => {
+    const s = JSON.stringify(payload || {})
+    let x = 5381
+    for (let i = 0; i < s.length; i++) x = ((x << 5) + x + s.charCodeAt(i)) | 0
+    return String(x)
+  }
+  async function runConnTest(ctx, key, payload, o = {}) {
+    const T = connTests(ctx)
+    const token = {}
+    T[key] = { running: true, token, sig: ctSig(payload) }
+    ctx.update()
+    let res
+    try {
+      const out = await PK.api('POST', 'connection-test', { body: payload, raw: true, timeout: 75000 })
+      res = out && out.body && typeof out.body === 'object' ? out.body : null
+      if (!res || !res.title) res = { level: 'error', title: '❌ 测试没有完成', message: S(res && (res.error || res.message)) || `本地工作台服务没有返回测试结果（HTTP ${U.num(out && out.status)}）` }
+    } catch (err) {
+      res = { level: 'error', title: '❌ 测试没有完成', message: friendlyErr(err, '本地工作台服务', '测试失败') }
+    }
+    if (!connTests(ctx)[key] || connTests(ctx)[key].token !== token || (ctx.frame && ctx.frame.closed)) return
+    T[key] = { result: res, sig: ctSig(payload), at: Date.now() }
+    if (res.verdict !== 'aborted') {
+      const lvl = res.level === 'ok' ? 'success' : res.level === 'error' ? 'error' : res.level === 'warn' ? 'warn' : 'info'
+      PK.toast(S(res.title), lvl, { title: o.label ? `测试连接 · ${o.label}` : '测试连接', timeout: 7000 })
+    }
+    ctx.update()
+    // bring the result into view (the button may sit in the panel footer, far from the form)
+    setTimeout(() => {
+      const el = ctx.body && ctx.body.querySelector(`[data-ct-note="${key}"]`)
+      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }, 120)
+  }
+  /** the 「测试连接」 button; while a test runs: a busy button + 「取消」 */
+  function connTestBtn(ctx, key, payloadFn, o = {}) {
+    const t = connTests(ctx)[key]
+    if (t && t.running) {
+      const busy = ui.btn(o.busyText || '正在测试…', null, { icon: 'bolt', kind: o.kind || 'secondary', size: o.size, disabled: true, key: `ct-busy-${key}` })
+      busy.setAttribute('aria-busy', 'true')
+      return ui.row(
+        [
+          busy,
+          ui.btn('取消', () => {
+            delete connTests(ctx)[key]
+            ctx.update()
+          }, { kind: 'link', size: 'sm', key: `ct-cancel-${key}`, title: '不再等待这次测试的结果' }),
+        ],
+        { wrap: false, gap: 4 },
+      )
+    }
+    return ui.btn(
+      o.label || '测试连接',
+      () => {
+        const payload = payloadFn() // may throw PK.Error (shown as a toast by ui.btn)
+        if (payload) runConnTest(ctx, key, payload, { label: o.toastLabel })
+      },
+      { icon: 'bolt', kind: o.kind || 'secondary', size: o.size, key: `ct-${key}`, title: o.title || '用表单里现在填的地址和密钥测试一次：不用先保存，不会生成内容，也不扣费' },
+    )
+  }
+  /** inline result under the form (or the running state); `payloadNow` marks a result older than the current form */
+  function connTestNote(ctx, key, payloadNow) {
+    const t = connTests(ctx)[key]
+    if (!t) return null
+    if (t.running) {
+      return h('div', { 'data-ct-note': key }, ui.note('正在用你填的地址和密钥连接服务商（最多约 40 秒）。测试只调用免费的查询接口：不会生成内容，也不扣费。', { level: 'info', title: '正在测试连接…' }))
+    }
+    const r = t.result || {}
+    const stale = payloadNow !== undefined && t.sig && ctSig(payloadNow) !== t.sig
+    const notes = Array.isArray(r.notes) ? r.notes.map(S).filter(Boolean) : []
+    const checks = Array.isArray(r.checks) ? r.checks : []
+    const open = Boolean(ctx.local.ctOpen && ctx.local.ctOpen[key])
+    const body = h(
+      'div.pk-stack',
+      { style: { gap: '4px' } },
+      S(r.message) ? ui.text(S(r.message)) : null,
+      ...notes.map((n) => ui.text(n)),
+      stale ? ui.hint('你在测试之后又改了设置：这个结果可能已经过时，请重新测试。') : null,
+      open && checks.length
+        ? h(
+            'div.pk-stack',
+            { style: { gap: '2px' } },
+            checks.map((c, i) => ui.hint(`${i + 1}. ${S(c.request)} · ${CT_WHO[c.who] || ''} → ${c.status ? `HTTP ${c.status}` : '没有响应'}（${S(c.outcome)}）`)),
+          )
+        : null,
+    )
+    const level = r.level === 'ok' ? 'ok' : r.level === 'error' ? 'error' : r.level === 'info' ? 'info' : 'warn'
+    return h(
+      'div',
+      { 'data-ct-note': key },
+      ui.note(body, {
+        level,
+        title: S(r.title) || '测试结果',
+        actions: [
+          checks.length
+            ? ui.btn(open ? '收起测试过程' : '查看测试过程', () => {
+                const O = (ctx.local.ctOpen = ctx.local.ctOpen || {})
+                O[key] = !open
+                ctx.render()
+              }, { kind: 'link', size: 'sm', key: `ct-steps-${key}` })
+            : null,
+          ui.btn('关闭结果', () => {
+            delete connTests(ctx)[key]
+            ctx.render()
+          }, { kind: 'link', size: 'sm', key: `ct-close-${key}` }),
+        ].filter(Boolean),
+      }),
+    )
   }
 
   const confirmedOnce = new Set()
@@ -8598,8 +11652,9 @@ try {
   function llmDraftFrom(cfg = {}) {
     const dsh = cfg.dshClient || {}
     const templates = Array.isArray(cfg.templates) ? cfg.templates : []
-    // auto = follow the agent hosting the plugin (DSH channel inside DSH, the agent's environment API key elsewhere)
-    const mode = cfg.mode === 'custom' ? 'custom' : cfg.mode === 'follow-dsh' ? 'follow-dsh' : 'auto'
+    // auto = follow the agent hosting the plugin (DSH channel inside DSH, the agent's environment API key elsewhere);
+    // host-agent = 由当前智能体代写 (the agent in the conversation writes the answers with its own model, no key)
+    const mode = cfg.mode === 'custom' ? 'custom' : cfg.mode === 'follow-dsh' ? 'follow-dsh' : cfg.mode === HOST_AGENT ? HOST_AGENT : 'auto'
     const follow = mode === 'follow-dsh'
     const dshId = cfg.dshProviderId || 'active'
     // following DSH's *current default* with its default model → keep the model empty so it keeps following
@@ -8613,23 +11668,58 @@ try {
       mode,
       dshProviderId: dshId,
       provider: templates.some((t) => t.id === cfg.provider) ? cfg.provider : 'custom',
-      format: mode === 'auto' || followsChannelProto ? 'auto' : cfg.format || 'auto',
-      baseUrl: S(cfg.baseUrl),
+      format: mode === 'auto' || mode === HOST_AGENT || followsChannelProto ? 'auto' : cfg.format || 'auto',
+      baseUrl: mode === HOST_AGENT ? '' : S(cfg.baseUrl),
       apiKey: '',
-      model: mode === 'auto' || followsDefaultModel ? '' : S(cfg.model),
+      model: mode === 'auto' || mode === HOST_AGENT || followsDefaultModel ? '' : S(cfg.model),
       maxRepairRounds: U.clamp(U.num(cfg.maxRepairRounds, 3) || 3, 1, 5),
     }
   }
-  const llmPayload = (cfg, f) => ({
-    mode: f.mode === 'custom' ? 'custom' : f.mode === 'follow-dsh' ? 'follow-dsh' : 'auto',
-    dshProviderId: S(f.dshProviderId) || 'active',
-    provider: S(f.provider) || 'custom',
-    format: S(f.format) || 'auto',
-    baseUrl: S(f.baseUrl).trim(),
-    apiKey: S(f.apiKey).trim() || (customKeySaved(cfg) ? KEEP : ''),
-    model: S(f.model).trim(),
-    maxRepairRounds: U.clamp(U.num(f.maxRepairRounds, 3) || 3, 1, 5),
-  })
+  const llmPayload = (cfg, f) =>
+    f.mode === HOST_AGENT
+      ? // nothing to dial: only the mode (the custom address / key / model stay stored for switching back)
+        { mode: HOST_AGENT, maxRepairRounds: U.clamp(U.num(f.maxRepairRounds, 3) || 3, 1, 5) }
+      : {
+          mode: f.mode === 'custom' ? 'custom' : f.mode === 'follow-dsh' ? 'follow-dsh' : 'auto',
+          dshProviderId: S(f.dshProviderId) || 'active',
+          provider: S(f.provider) || 'custom',
+          format: S(f.format) || 'auto',
+          baseUrl: S(f.baseUrl).trim(),
+          apiKey: S(f.apiKey).trim() || (customKeySaved(cfg) ? KEEP : ''),
+          model: S(f.model).trim(),
+          maxRepairRounds: U.clamp(U.num(f.maxRepairRounds, 3) || 3, 1, 5),
+        }
+  /** the agent hosting the plugin by name, for 「由 Codex 代写」 (empty when unknown) */
+  const agentNameOf = (cfg) => S(cfg && cfg.host && cfg.host.id !== 'dsh' ? cfg.host.label : '')
+  const hostAgentLabel = (cfg) => (agentNameOf(cfg) ? `由 ${agentNameOf(cfg)} 代写` : '由当前智能体代写')
+  /** writing tasks waiting for the agent (host-agent mode): the host's live status first, else the loaded summary */
+  const hostPending = (cfg) => {
+    const live = st().status && st().status.llm
+    if (live && live.mode === HOST_AGENT && Number.isFinite(Number(live.pending))) return U.num(live.pending)
+    return cfg && cfg.mode === HOST_AGENT && cfg.hostAgent ? U.num(cfg.hostAgent.pending) : 0
+  }
+
+  /* ---- 看图能力 draft (llmConfig.vision: the settings + what is known; a saved 看图 key never reaches the page) */
+  function visDraftFrom(v = {}) {
+    return {
+      support: v.support === 'yes' || v.support === 'no' ? v.support : 'auto',
+      model: S(v.settingsModel),
+      own: Boolean(S(v.baseUrl)),
+      baseUrl: S(v.baseUrl),
+      format: S(v.format) || 'auto',
+      apiKey: '',
+      clearApiKey: false,
+    }
+  }
+  function visPayload(v, f) {
+    const model = S(f.model).trim()
+    const own = Boolean(f.own && model)
+    const out = { support: f.support, model, baseUrl: own ? S(f.baseUrl).trim() : '', format: own ? S(f.format) || 'auto' : 'auto', provider: 'custom' }
+    if (own && S(f.apiKey).trim()) out.apiKey = S(f.apiKey).trim()
+    // a 看图 key only belongs to the 看图 model's own endpoint: turning that off forgets it
+    if (f.clearApiKey || (!own && v && v.hasApiKey)) out.clearApiKey = true
+    return out
+  }
 
   /* ---- TTS drafts */
   const DEFAULT_TTS_ENGINES = [
@@ -8819,6 +11909,7 @@ try {
       return false
     }
     if (syncOne('llm', () => llmDraftFrom(d.llmConfig || {}))) L.llmStash = null
+    syncOne('vis', () => visDraftFrom((d.llmConfig && d.llmConfig.vision) || {}))
     syncOne('ttsB', () => ttsBuiltinFrom(d.ttsConfig))
     syncOne('cloudCfg', () => cloudDraftFrom(d.cloudMedia || {}))
     if (!L.ttsC) {
@@ -8830,11 +11921,16 @@ try {
     ctx.local.base = ctx.local.base || {}
     ctx.local.base[name] = clone(ctx.local[name])
   }
+  const visDirty = (ctx) => {
+    const L = ctx.local
+    return Boolean(L.vis && L.base && L.base.vis && !same(L.vis, L.base.vis))
+  }
   function keysDirty(ctx) {
     const L = ctx.local
     const base = L.base || {}
     const out = []
     if (L.llm && base.llm && !same(L.llm, base.llm)) out.push('文本大模型')
+    if (visDirty(ctx)) out.push('看图能力')
     if (L.ttsB && base.ttsB && !same(L.ttsB, base.ttsB)) out.push('配音引擎参数')
     if (L.ttsC && base.ttsC && !same(L.ttsC, base.ttsC)) out.push('自定义配音模型')
     if (L.cloudCfg && base.cloudCfg && !same(L.cloudCfg, base.cloudCfg)) out.push('云端生成接口')
@@ -8849,7 +11945,7 @@ try {
     ctx.local.llmTest = null
     ctx.update()
     try {
-      const res = await PK.post('llm-test', llmPayload(cfg, f), { timeout: 150000 })
+      const res = await PK.post('llm-test', llmPayload(cfg, f), { timeout: PK.llmTimeout() })
       ctx.local.llmTest = { ok: true, ...res }
     } catch (err) {
       ctx.local.llmTest = { ok: false, error: friendlyErr(err, '这个大模型接口', '连接失败') }
@@ -8872,7 +11968,16 @@ try {
     ctx.local.llmStash = null
     resetBase(ctx, 'llm')
     ctx.local.reveal = {}
+    if (conf.mode === HOST_AGENT) {
+      PK.toast(`已改为「${hostAgentLabel(conf)}」：需要 AI 写作时，插件会把任务交给正在对话的智能体，请在对话里让它处理视频插件的写作任务。`, 'success')
+      return
+    }
     PK.toast(conf.configured ? `已保存并生效：${conf.sourceLabel || '大模型接口'} · ${conf.model || ''}` : '已保存。注意：当前配置还不完整（缺少地址、模型或密钥），AI 功能暂时不可用。', conf.configured ? 'success' : 'warn')
+  }
+  /** 「改用智能体代写」 in one click (the suggestion shown when the agent has no model key to share) */
+  async function useHostAgent(ctx) {
+    switchLlmMode(ctx, HOST_AGENT)
+    await saveLlm(ctx)
   }
   async function clearLlmKey(ctx) {
     // only the key is removed — every other saved field stays as it is (unsaved edits in the form are not saved)
@@ -8893,8 +11998,45 @@ try {
     f.mode = next
     if (stash[next]) Object.assign(f, stash[next])
     else if (next === 'follow-dsh') Object.assign(f, { dshProviderId: 'active', model: '', format: 'auto' })
-    else if (next === 'auto') Object.assign(f, { model: '', format: 'auto' })
+    else if (next === 'auto' || next === HOST_AGENT) Object.assign(f, { model: '', format: 'auto' })
     ctx.local.llmTest = null
+  }
+
+  /* ---- 看图能力 actions (参考复刻 · 画面自检 · 截图定位) */
+  async function saveVision(ctx, o = {}) {
+    const cfg = ctx.data.llmConfig || {}
+    const f = ctx.local.vis
+    if (f.own && !S(f.model).trim()) throw new PK.Error('「单独的接口」只用于单独指定的看图模型：请先填写看图模型 ID，或取消勾选')
+    if (f.own && !S(f.baseUrl).trim()) throw new PK.Error('请填写看图模型的接口地址，或取消勾选「看图模型用单独的接口地址与密钥」')
+    const res = await PK.post('llm-vision', { action: 'save', vision: visPayload(cfg.vision || {}, f) })
+    if (res && res.config) ctx.data.llmConfig = res.config
+    ctx.local.vis = visDraftFrom((res && (res.vision || (res.config && res.config.vision))) || {})
+    resetBase(ctx, 'vis')
+    ctx.local.visCheck = null
+    if (ctx.local.reveal) delete ctx.local.reveal['llm-vis-key']
+    if (!o.quiet) PK.toast('看图设置已保存。之前记住的看图检测结果已清除，下次用到看图时会重新确认。', 'success')
+  }
+  /** 「检测看图能力」: the saved settings (unsaved edits are saved first) get a tiny probe picture */
+  async function checkVision(ctx) {
+    if (visDirty(ctx)) await saveVision(ctx, { quiet: true })
+    ctx.local.visCheck = { running: true, startedAt: Date.now() }
+    ctx.update()
+    let check
+    try {
+      const res = await PK.post('llm-vision', { action: 'check' }, { timeout: PK.llmTimeout() })
+      if (res && res.config) ctx.data.llmConfig = res.config
+      check = { ...((res && res.check) || {}) }
+    } catch (err) {
+      check = { ok: false, code: 'error', short: '检测没有完成', reason: friendlyErr(err, '本地工作台服务', '检测失败'), fix: '稍后再试一次。' }
+    }
+    if (ctx.frame && ctx.frame.closed) return
+    ctx.local.visCheck = { ...check, at: Date.now() }
+    PK.toast(check.ok ? `看图检测通过：${S(check.short) || '模型能看图'}` : `看图检测：${S(check.short) || '没有通过'}`, check.ok ? 'success' : 'warn', { title: '检测看图能力', timeout: 7000 })
+    // bring the result into view (the vision section sits low in the tab)
+    setTimeout(() => {
+      const el = ctx.body && ctx.body.querySelector('[data-vis-note]')
+      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }, 120)
   }
 
   /* ---- TTS actions */
@@ -9077,9 +12219,17 @@ try {
           `${hostName ? `${hostName} 用账号登录时，` : ''}没有可以共享给插件的模型 API Key（智能体的登录 / 订阅只能它自己用）。可以任选一种：`,
           '① 在智能体的运行环境里设置 ANTHROPIC_API_KEY / OPENAI_API_KEY / DEEPSEEK_API_KEY / GEMINI_API_KEY / OPENROUTER_API_KEY（可再设 *_BASE_URL、*_MODEL），插件会自动跟随；',
           '② 改用「自定义」，填写任意大模型的地址、密钥与模型；',
-          '③ 不配置：创作模式选「本地极速草稿」，或让智能体自己写分镜与代码，再调用插件的检查与渲染出片。',
+          ...(cfg.hostAgentSuggested ? [`③ 改用「${hostAgentLabel(cfg)}」：不需要 API Key，插件里的 AI 写作交给正在对话的${hostName ? ` ${hostName}` : '智能体'}，用它自己的模型完成；`] : []),
+          `${cfg.hostAgentSuggested ? '④' : '③'} 不配置：创作模式选「本地极速草稿」，或让智能体自己写分镜与代码，再调用插件的检查与渲染出片。`,
         ].join('\n'),
-        { level: 'warn', title: hostName ? `${hostName} 没有可共享的模型配置` : '还没有可用的大模型', actions: [toCustom] },
+        {
+          level: 'warn',
+          title: hostName ? `${hostName} 没有可共享的模型配置` : '还没有可用的大模型',
+          actions: [
+            cfg.hostAgentSuggested ? actBtn(ctx, 'llm-host-agent', `改用「${hostAgentLabel(cfg)}」`, () => useHostAgent(ctx), { size: 'sm', kind: 'primary', icon: 'hub', busyText: '切换中…' }) : null,
+            toCustom,
+          ].filter(Boolean),
+        },
       )
     }
     return ui.section(
@@ -9106,10 +12256,18 @@ try {
       ctx.render()
     }
     const out = []
+    const pending = hostPending(cfg)
     out.push(
-      cfg.configured
-        ? ui.note(`${cfg.sourceLabel || '已配置'} · 模型 ${cfg.model || '—'} · 协议 ${protoLabel(cfg.detectedProtocol || cfg.format)}`, { level: 'ok', title: '大模型已就绪' })
-        : ui.note('导演策划、分镜编码、AI 润色与云端提示词助手都靠它。选一种接入方式填好，先「测试连接」，再「保存并生效」。也可以不配置，把创作模式切到「本地极速草稿」零配置出片。', { level: 'warn', title: '还没有可用的大模型' }),
+      cfg.mode === HOST_AGENT
+        ? ui.note(
+            pending
+              ? h('div.pk-stack', { style: { gap: '6px' } }, ui.text(S(cfg.sourceLabel) || hostAgentLabel(cfg)), ui.row([ui.pill(`有 ${pending} 个写作任务在等智能体处理`, 'warn', { dot: true, title: '请回到智能体的对话里，让它处理视频插件的写作任务' })]))
+              : S(cfg.sourceLabel) || hostAgentLabel(cfg),
+            { level: 'ok', title: `大模型已就绪 · ${hostAgentLabel(cfg)}` },
+          )
+        : cfg.configured
+          ? ui.note(`${cfg.sourceLabel || '已配置'} · 模型 ${cfg.model || '—'} · 协议 ${protoLabel(cfg.detectedProtocol || cfg.format)}`, { level: 'ok', title: '大模型已就绪' })
+          : ui.note('导演策划、分镜编码、AI 润色与云端提示词助手都靠它。选一种接入方式填好，先「测试连接」，再「保存并生效」。也可以不配置，把创作模式切到「本地极速草稿」零配置出片。', { level: 'warn', title: '还没有可用的大模型' }),
     )
     out.push(
       ui.section(
@@ -9120,6 +12278,7 @@ try {
             { value: 'auto', label: '跟随当前智能体（推荐）', icon: 'link' },
             ...(dsh.available || f.mode === 'follow-dsh' ? [{ value: 'follow-dsh', label: '指定 DSH 通道', icon: 'hub' }] : []),
             { value: 'custom', label: '自定义（自填地址与密钥）', icon: 'key' },
+            { value: HOST_AGENT, label: `${hostAgentLabel(cfg)}（不需要 API Key）`, icon: 'hub', hint: '用你订阅的智能体自己的模型完成插件里的 AI 写作' },
           ],
           onChange: (v) => {
             switchLlmMode(ctx, v)
@@ -9129,8 +12288,9 @@ try {
       ),
     )
     if (f.mode === 'auto') out.push(renderLlmAuto(ctx, cfg, rerender))
+    if (f.mode === HOST_AGENT) out.push(renderLlmHostAgent(ctx, cfg, pending))
     out.push(
-      f.mode === 'auto' ? null : ui.section(
+      f.mode === 'auto' || f.mode === HOST_AGENT ? null : ui.section(
         { title: '接口协议', en: 'WIRE PROTOCOL', icon: 'code', desc: '点卡片切换。不确定就选「自动识别」；DeepSeek / 通义 / 中转站一般是「OpenAI 兼容 Chat」。' },
         ui.grid(
           WIRE_CARDS.map((c) =>
@@ -9150,7 +12310,7 @@ try {
         ),
       ),
     )
-    if (f.mode === 'auto') {
+    if (f.mode === 'auto' || f.mode === HOST_AGENT) {
       // nothing else to fill in: the source is decided by the agent hosting the plugin (see above)
     } else if (f.mode === 'follow-dsh') {
       if (dsh.available) {
@@ -9273,7 +12433,9 @@ try {
     )
     if (test) {
       out.push(
-        test.ok
+        test.ok && test.mode === HOST_AGENT
+          ? ui.note(S(test.message) || '已设为「智能体代写」。', { level: 'ok', title: '测试结果' })
+          : test.ok
           ? ui.note(
               [
                 `延迟 ${U.num(test.latencyMs)} ms · 协议 ${protoLabel(test.protocol)} · 模型 ${test.model || '—'}`,
@@ -9291,13 +12453,158 @@ try {
           : ui.note(test.error, { level: 'error', title: '连接失败', actions: [ui.btn('打开帮助', () => PK.open('help'), { size: 'sm', kind: 'ghost', icon: 'help' })] }),
       )
     }
+    out.push(renderVision(ctx, cfg))
+    if (ctx.local.focus === 'vision') {
+      // opened from 「看图能力设置」 (e.g. the reference-analysis badge): bring the 看图 section into view once
+      ctx.local.focus = ''
+      setTimeout(() => {
+        const el = ctx.body && ctx.body.querySelector('[data-llm-vision]')
+        if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      }, 160)
+    }
     ctx.foot([
       ui.hint(cfg.configFile ? `配置只保存在本机：${U.baseName(cfg.configFile)}` : '配置只保存在本机'),
       ui.spacer(),
-      actBtn(ctx, 'llm-test', '测试连接并拉取模型', () => testLlm(ctx), { icon: 'bolt', busyText: '正在探测接口…' }),
+      actBtn(ctx, 'llm-test', f.mode === HOST_AGENT ? '查看代写状态' : '测试连接并拉取模型', () => testLlm(ctx), { icon: 'bolt', busyText: '正在探测接口…' }),
       actBtn(ctx, 'llm-save', '保存并生效', () => saveLlm(ctx), { kind: 'primary', icon: 'check', busyText: '保存中…' }),
     ])
     return out
+  }
+
+  /* ---- render: 文本大模型 · 由当前智能体代写 (mode host-agent) */
+  function renderLlmHostAgent(ctx, cfg, pending) {
+    const name = agentNameOf(cfg)
+    const saved = cfg.mode === HOST_AGENT
+    return ui.section(
+      { title: hostAgentLabel(cfg), en: 'HOST AGENT WRITES', icon: 'hub', desc: '不需要 API Key，也不会读取智能体的账号或密钥。' },
+      ui.note(
+        [
+          `用你订阅的 ${name || 'Codex / Claude Code 等智能体'} 自己的模型来完成插件里的 AI 写作（润色、分镜、动画代码、精修）。`,
+          `需要时插件会把任务交给正在对话的${name ? ` ${name}` : '智能体'}；请在智能体对话里让它处理视频插件的写作任务。`,
+          '需要看图的地方（参考复刻、画面自检）也交给它：插件把图片存成文件，由它直接打开来看。',
+        ].join('\n'),
+        { level: 'info', title: '怎么用' },
+      ),
+      saved && pending ? ui.row([ui.pill(`有 ${pending} 个写作任务在等智能体处理`, 'warn', { dot: true, title: '请回到智能体的对话里，让它处理视频插件的写作任务' })]) : null,
+      saved ? null : ui.hint('点下方「保存并生效」后切换到这种方式。'),
+      name ? null : ui.hint('插件现在没有在智能体里运行（独立打开的工作台）：选这种方式后，需要在智能体（例如 Codex、Claude Code）里使用插件，写作任务才有人处理。'),
+    )
+  }
+
+  /* ---- render: 文本大模型 · 看图能力 (参考复刻 · 画面自检 · 截图定位) */
+  /** 600000 → 10 分钟 (the server's model-call limit, for 「最长等待」) */
+  const waitWords = (ms) => {
+    const sec = Math.max(0, Math.round(U.num(ms) / 1000))
+    if (sec < 60) return `${sec} 秒`
+    return sec % 60 ? `${Math.floor(sec / 60)} 分 ${sec % 60} 秒` : `${Math.floor(sec / 60)} 分钟`
+  }
+  function renderVision(ctx, cfg) {
+    const v = cfg.vision || {}
+    if (!ctx.local.vis) ctx.local.vis = visDraftFrom(v)
+    const f = ctx.local.vis
+    const chk = ctx.local.visCheck
+    const dirty = visDirty(ctx)
+    const rr = () => ctx.render()
+    const known = v.status === 'supported' ? 'ok' : v.status === 'unsupported' ? 'warn' : 'info'
+    const who = v.model && !v.hostAgent ? `${v.dedicated ? '看图模型' : '文本模型'} ${v.model}` : ''
+    const status = ui.note(
+      h('div.pk-stack', { style: { gap: '4px' } }, S(v.reason) ? ui.text(S(v.reason)) : null, S(v.fix) ? ui.text(`怎么办：${S(v.fix)}`) : null),
+      { level: v.code === 'not-configured' ? 'warn' : known, title: `现在：${S(v.short) || '还没检测'}${who && !S(v.short).includes(S(v.model)) ? ` · ${who}` : ''}` },
+    )
+    const own = Boolean(f.own)
+    const ownFields = own
+      ? fgrid(
+          [
+            ui.field(
+              { label: '看图模型的接口地址', en: 'BASE URL', required: true, hint: '例如 https://api.openai.com/v1 或中转站地址' },
+              lineField({ key: 'llm-vis-base', value: f.baseUrl, placeholder: '看图模型的 API 地址', onInput: (x) => (f.baseUrl = x) }),
+            ),
+            ui.field(
+              { label: '接口协议', en: 'PROTOCOL' },
+              ui.select({ key: 'llm-vis-format', value: f.format || 'auto', options: WIRE_CARDS.map((c) => ({ value: c.id, label: c.title, hint: c.path })), onChange: (x) => (f.format = x) }),
+            ),
+            ui.field(
+              {
+                label: '看图模型的 API Key',
+                en: 'SECRET',
+                hint: v.hasApiKey ? '已加密保存在本机，不修改就留空' : '在这家服务商的后台创建；本机部署的服务可以不填',
+                aside: v.hasApiKey ? ui.btn(f.clearApiKey ? '撤销清除' : '清除已保存的密钥', () => ((f.clearApiKey = !f.clearApiKey), rr()), { kind: 'link', size: 'sm' }) : null,
+              },
+              secretField(ctx, { key: 'llm-vis-key', value: f.apiKey, saved: v.hasApiKey && !f.clearApiKey, masked: v.maskedApiKey, placeholder: '看图模型的 API Key（sk-...）', onInput: (x) => (f.apiKey = x) }),
+            ),
+          ],
+          { min: 240 },
+        )
+      : null
+    const checkNote = (() => {
+      if (!chk) return null
+      if (chk.running) {
+        return h('div', { 'data-vis-note': '1' }, ui.note(`正在把一张很小的测试图（红色方块）发给模型，问它是什么颜色。慢的模型可能要等一会儿（最长 ${waitWords(cfg.timeoutMs || PK.LLM_TIMEOUT_MS)}）。`, { level: 'info', title: '正在检测看图能力…' }))
+      }
+      const meta = [chk.model ? `模型 ${chk.model}${chk.dedicated ? '（单独的看图模型）' : ''}` : '', chk.protocol && chk.protocol !== HOST_AGENT ? `协议 ${protoLabel(chk.protocol)}` : '', U.num(chk.latencyMs) > 0 ? `用时 ${U.num(chk.latencyMs) >= 1000 ? `${(U.num(chk.latencyMs) / 1000).toFixed(1)} 秒` : `${Math.round(U.num(chk.latencyMs))} 毫秒`}` : '']
+        .filter(Boolean)
+        .join(' · ')
+      return h(
+        'div',
+        { 'data-vis-note': '1' },
+        ui.note(
+          h(
+            'div.pk-stack',
+            { style: { gap: '4px' } },
+            S(chk.reason) ? ui.text(S(chk.reason)) : null,
+            S(chk.fix) ? ui.text(`怎么办：${S(chk.fix)}`) : null,
+            S(chk.answer) ? ui.hint(`模型的回答：「${S(chk.answer)}」`) : null,
+            S(chk.detail) && !S(chk.reason).includes(S(chk.detail)) ? ui.hint(`接口原话：${S(chk.detail)}`) : null,
+            meta ? ui.hint(meta) : null,
+          ),
+          {
+            level: chk.ok ? 'ok' : chk.code === 'not-configured' || chk.code === 'timeout' || chk.code === 'network' ? 'warn' : 'error',
+            title: `${chk.ok ? '✅' : '❌'} ${S(chk.short) || (chk.ok ? '能看图' : '没有通过')}`,
+            actions: [ui.btn('关闭结果', () => ((ctx.local.visCheck = null), rr()), { kind: 'link', size: 'sm', key: 'vis-close' })],
+          },
+        ),
+      )
+    })()
+    return h(
+      'div',
+      { 'data-llm-vision': '1' },
+      ui.section(
+        {
+          title: '看图能力（参考复刻 · 画面自检 · 截图定位）',
+          en: 'VISION',
+          icon: 'image',
+          desc: '这三个功能要让模型「看图」。插件不按模型名字猜：第一次用到时先发一张很小的测试图确认一次，并记住结果（换模型或改设置后会重新确认）。',
+        },
+        status,
+        ui.field(
+          { label: '这个模型能不能看图', en: 'SUPPORT' },
+          ui.seg({
+            value: f.support,
+            options: [
+              { value: 'auto', label: '自动检测（推荐）', hint: '第一次用到时用测试图确认，并记住结果' },
+              { value: 'yes', label: '这个模型支持看图', hint: '直接把图片发给它，不再检测' },
+              { value: 'no', label: '不要发送图片', hint: '参考复刻只做本地实测，画面自检与截图定位跳过看图' },
+            ],
+            onChange: (x) => ((f.support = x), rr()),
+          }),
+        ),
+        ui.field(
+          { label: '单独的看图模型（可选）', en: 'VISION MODEL', hint: '留空 = 用上面的文本模型看图。文本模型看不了图时，填一个能看图的模型 ID（同一个接口里的模型即可，例如 gpt-4o-mini / qwen-vl-max / glm-4v-flash）' },
+          lineField({ key: 'llm-vis-model', value: f.model, placeholder: '留空 = 用文本模型看图', onInput: (x) => (f.model = x), onChange: () => ctx.update() }),
+        ),
+        cfg.mode === HOST_AGENT ? ui.hint('由智能体代写时一般不用设置看图模型（智能体自己看图）；要另外用一个看图模型，请勾选下面的「单独的接口」并填好地址与密钥。') : null,
+        ui.check({ label: '看图模型用单独的接口地址与密钥', hint: '只有看图模型在另一家服务商时才需要', value: own, onChange: (x) => ((f.own = x), rr()) }),
+        ownFields,
+        ui.row(
+          [
+            actBtn(ctx, 'llm-vis-check', '检测看图能力', () => checkVision(ctx), { icon: 'eye', busyText: '正在发送测试图…', title: '发一张 64×64 的红色小图问模型是什么颜色（只消耗极少的额度）；有未保存的看图设置会先保存' }),
+            actBtn(ctx, 'llm-vis-save', '保存看图设置', () => saveVision(ctx), { kind: 'primary', icon: 'check', busyText: '保存中…' }),
+            dirty ? ui.hint('有未保存的修改') : null,
+          ].filter(Boolean),
+        ),
+        checkNote,
+      ),
+    )
   }
 
   /* ---- render: tab · 配音引擎 */
@@ -9370,6 +12677,17 @@ try {
     const db = engines.find((e) => e.id === 'doubao-tts') || {}
     const fld = (label, key, field, placeholder, hint) => ui.field({ label, hint }, lineField({ key: `ttsb-${key}`, value: b[field], placeholder, onInput: (v) => (b[field] = v) }))
     const switchBtn = (id) => (cfg.activeEngineId === id ? ui.pill('使用中', 'ok', { dot: true }) : ui.btn('切换启用', () => selectTtsEngine(ctx, engines.find((e) => e.id === id) || { id }), { size: 'sm' }))
+    // 「测试连接」 of the cloud channels: the values typed below (an empty key / token field = the saved one)
+    const mmPayload = () => ({
+      target: 'tts-builtin',
+      engineId: 'minimax-tts',
+      config: { endpoint: S(b.minimaxTtsEndpoint).trim(), model: S(b.minimaxTtsModel).trim(), voiceId: S(b.minimaxTtsVoiceId).trim(), apiKey: S(b.minimaxTtsApiKey).trim(), clearApiKey: Boolean(b.minimaxClearKey) },
+    })
+    const dbPayload = () => ({
+      target: 'tts-builtin',
+      engineId: 'doubao-tts',
+      config: { endpoint: S(b.doubaoTtsEndpoint).trim(), appId: S(b.doubaoTtsAppId).trim(), token: S(b.doubaoTtsToken).trim(), clearToken: Boolean(b.doubaoClearToken), cluster: S(b.doubaoTtsCluster).trim(), voiceType: S(b.doubaoTtsVoiceType).trim() },
+    })
     ctx.foot([
       actBtn(ctx, 'tts-repair', '自动补齐 voices/ 与默认音色', () => repairTtsVoices(ctx), { icon: 'wand', kind: 'ghost', busyText: '正在补齐…', title: '自动创建 voices/ 目录并生成默认参考音色 WAV' }),
       ui.spacer(),
@@ -9431,7 +12749,7 @@ try {
         ),
       ),
       ui.section(
-        { title: '云端 TTS 配音通道', en: 'CLOUD TTS · 0GB 显存', icon: 'cloud', desc: '不需要显卡，按服务商价格计费。填好密钥后点「保存全部配音设置」，再「切换启用」。' },
+        { title: '云端 TTS 配音通道', en: 'CLOUD TTS · 0GB 显存', icon: 'cloud', desc: '不需要显卡，按服务商价格计费。填好后可以先点「测试连接」（不用保存、不扣费），再点「保存全部配音设置」并「切换启用」。' },
         fgrid(
           [
             ui.section(
@@ -9442,6 +12760,8 @@ try {
                 { label: 'MiniMax API Key', aside: mm.hasApiKey ? ui.check({ value: b.minimaxClearKey, label: '保存时清除已存密钥', onChange: (v) => (b.minimaxClearKey = v) }) : null },
                 secretField(ctx, { key: 'ttsb-mm-key', value: b.minimaxTtsApiKey, saved: mm.hasApiKey, masked: mm.apiKeyMasked, placeholder: '粘贴 MiniMax API Key', onInput: (v) => (b.minimaxTtsApiKey = v) }),
               ),
+              ui.row([connTestBtn(ctx, 'tts-minimax', mmPayload, { size: 'sm', toastLabel: 'MiniMax Speech', title: '用上面填的地址和密钥测试 MiniMax：只查询音色列表，不合成声音，不扣费' })]),
+              connTestNote(ctx, 'tts-minimax', mmPayload()),
             ),
             ui.section(
               { title: '火山方舟 · 豆包语音 TTS', class: 'pk-settings-subcard', actions: [switchBtn('doubao-tts')] },
@@ -9457,6 +12777,8 @@ try {
                 { min: 180 },
               ),
               fgrid([fld('集群 Cluster', 'db-cluster', 'doubaoTtsCluster', 'volcano_tts'), fld('音色 voice_type', 'db-voice', 'doubaoTtsVoiceType', '例如 zh_male_...')], { min: 180 }),
+              ui.row([connTestBtn(ctx, 'tts-doubao', dbPayload, { size: 'sm', toastLabel: '豆包语音', title: '用上面填的 AppID 和 Token 测试：只发送一段空文本，不合成声音，不扣费' })]),
+              connTestNote(ctx, 'tts-doubao', dbPayload()),
             ),
           ],
           { min: 300 },
@@ -9588,6 +12910,12 @@ try {
                 ui.textarea({ key: 'ttsc-payload', value: f.payloadTemplateText, rows: 5, maxRows: 16, mono: true, onInput: set('payloadTemplateText'), expand: { title: 'JSON 请求体模板' } }),
               ),
             ]
+    // 「测试连接」: the address / key typed here (a key left empty while editing = that model's saved key); never synthesises
+    const netKind = f.kind !== 'cli-command'
+    const ttscPayload = () => ({
+      target: 'tts-custom',
+      engine: { editingId: S(f.editingId), id: S(f.id), name: S(f.name).trim(), kind: f.kind, endpoint: S(f.endpoint).trim(), method: f.method, apiKey: S(f.apiKey).trim(), model: S(f.model).trim(), voice: S(f.voice).trim() },
+    })
     ctx.foot([
       ui.hint('保存后立即切换为这个配音模型'),
       ui.spacer(),
@@ -9598,6 +12926,7 @@ try {
             ctx.render()
           }, { kind: 'ghost', icon: 'plus' })
         : null,
+      netKind ? connTestBtn(ctx, 'tts-custom', ttscPayload, { toastLabel: S(f.name).trim() || '自定义配音模型', title: '用上面填的地址和密钥测试能不能连上：不用先保存，不会合成声音，也不扣费' }) : null,
       actBtn(ctx, 'ttsc-save', f.editingId ? '保存修改并启用' : '保存并启用该模型', () => saveCustomTts(ctx), { kind: 'primary', icon: 'save', busyText: '保存中…' }),
     ])
     return [
@@ -9638,6 +12967,7 @@ try {
         }),
       ),
       ...kindFields,
+      netKind ? connTestNote(ctx, 'tts-custom', ttscPayload()) : null,
     ]
   }
   function renderTtsImport(ctx, cfg, active) {
@@ -9689,10 +13019,13 @@ try {
     const preset = presets.find((p) => p.id === d.providerId) || null
     const setC = (k) => (v) => (d.custom[k] = v)
     const configured = CLOUD_CATS.filter((c) => (cm[c.value] || {}).hasApiKey || ((cm[c.value] || {}).protocol === 'custom' && S((cm[c.value] || {}).custom && cm[c.value].custom.submitUrl))).length
+    // 「测试连接」 tries exactly what is typed in this tab's form (a key left empty = the saved key)
+    const testPayload = () => ({ target: 'cloud-media', category: cat, config: cloudCatPayload(d) })
     ctx.foot([
       ui.hint('密钥只保存在本机，不会上传；生成结果先进预览验收区，满意再入库'),
       ui.spacer(),
       ui.btn('去生成', () => PK.open('cloud', { cat }), { icon: 'cloud', kind: 'ghost' }),
+      connTestBtn(ctx, `cloud-${cat}`, testPayload, { toastLabel: catMeta(cat).label, title: `用表单里现在填的地址和密钥测试「${catMeta(cat).label}」：不用先保存，不会生成内容，也不扣费` }),
       actBtn(ctx, 'cloud-save', '保存云端接口配置', () => saveCloudCfg(ctx), { kind: 'primary', icon: 'save', busyText: '保存中…' }),
     ])
     return [
@@ -9800,6 +13133,7 @@ try {
               { min: 220 },
             ),
           ),
+      connTestNote(ctx, `cloud-${cat}`, testPayload()),
       stockKeysSection(ctx, cm, D),
       ui.toggle({
         value: Boolean(D.autoUseCloudBroll),
@@ -9827,6 +13161,7 @@ try {
       fgrid(
         STOCK_KEY_DEFS.map((p) => {
           const k = info[p.id] || {}
+          const testPayload = () => ({ target: 'stock', provider: p.id, apiKey: S(s[p.id]).trim() })
           return ui.field(
             {
               label: `${p.name} API Key · ${k.sourceLabel || '未配置'}`,
@@ -9834,14 +13169,20 @@ try {
               hint: `免费申请：${p.url}`,
               aside: k.hasSavedKey ? ui.check({ value: s[p.clear], label: '保存时清除', onChange: (v) => (s[p.clear] = v) }) : null,
             },
-            secretField(ctx, {
-              key: `stockkey-${p.id}`,
-              value: s[p.id],
-              saved: k.hasSavedKey,
-              masked: k.savedKeyMasked,
-              placeholder: k.hasEnvKey ? `正在用 .env 里的 Key（${k.envKeyMasked || '***'}）· 粘贴新 Key 可覆盖` : `粘贴 ${p.name} API Key`,
-              onInput: (v) => (s[p.id] = v),
-            }),
+            h(
+              'div.pk-stack',
+              { style: { gap: '6px' } },
+              secretField(ctx, {
+                key: `stockkey-${p.id}`,
+                value: s[p.id],
+                saved: k.hasSavedKey,
+                masked: k.savedKeyMasked,
+                placeholder: k.hasEnvKey ? `正在用 .env 里的 Key（${k.envKeyMasked || '***'}）· 粘贴新 Key 可覆盖` : `粘贴 ${p.name} API Key`,
+                onInput: (v) => (s[p.id] = v),
+              }),
+              ui.row([connTestBtn(ctx, `stock-${p.id}`, testPayload, { size: 'sm', toastLabel: p.name, title: `用输入框里的 Key（留空则用已保存的 Key）测试 ${p.name}：免费接口，不扣费` })]),
+              connTestNote(ctx, `stock-${p.id}`, testPayload()),
+            ),
           )
         }),
         { min: 260 },
@@ -9914,7 +13255,8 @@ try {
     order: 10,
     desc: '大模型、配音引擎、云端生成的接口与密钥，低配保护',
     aliases: { llm: { tab: 'llm' }, tts: { tab: 'tts' }, settings: {}, preferences: { tab: 'general' }, cloudKeys: { tab: 'cloud' }, ttsInstall: { tab: 'tts', sub: 'install' } },
-    watch: (s) => s && s.rev,
+    // also re-read when the number of writing tasks waiting for the agent changes (mode 由当前智能体代写)
+    watch: (s) => s && `${s.rev}:${U.num(s.status && s.status.llm && s.status.llm.pending)}`,
     onWatch: async (ctx) => {
       await ctx.load()
       ctx.local.hw = null
@@ -9924,6 +13266,9 @@ try {
     mount(ctx) {
       const a = ctx.args || {}
       ctx.local.tab = KEY_TABS.includes(a.tab) ? a.tab : 'llm'
+      // { focus: 'vision' } (e.g. from the reference-analysis badge): scroll to the 看图能力 section
+      ctx.local.focus = a.focus === 'vision' ? 'vision' : ''
+      if (ctx.local.focus) ctx.local.tab = 'llm'
       ctx.local.ttsSub = ['engines', 'install', 'add', 'import'].includes(a.sub) ? a.sub : 'engines'
       ctx.local.cloudCat = CLOUD_CATS.some((c) => c.value === a.cat) ? a.cat : 'image'
       ctx.listen('settings:jobs', () => ctx.update())
@@ -9935,6 +13280,10 @@ try {
     },
     onArgs(ctx, a) {
       if (KEY_TABS.includes(a.tab)) ctx.local.tab = a.tab
+      if (a.focus === 'vision') {
+        ctx.local.tab = 'llm'
+        ctx.local.focus = 'vision'
+      }
       if (['engines', 'install', 'add', 'import'].includes(a.sub)) ctx.local.ttsSub = a.sub
       if (CLOUD_CATS.some((c) => c.value === a.cat)) ctx.local.cloudCat = a.cat
       if (ctx.local.ttsSub === 'install') loadTtsCatalog(ctx, true)
@@ -9962,7 +13311,7 @@ try {
       const tabs = ui.tabs({
         value: tab,
         items: [
-          { value: 'llm', label: '文本大模型', icon: 'wand', badge: llm.configured ? '✓' : '未配置' },
+          { value: 'llm', label: '文本大模型', icon: 'wand', badge: hostPending(llm) ? `待处理 ${hostPending(llm)}` : llm.configured ? '✓' : '未配置' },
           { value: 'tts', label: '配音引擎', icon: 'voice', badge: engLabel(tts.engines.find((e) => e.id === tts.activeEngineId)) },
           { value: 'cloud', label: '云端生成', icon: 'cloud', badge: `${cloudN}/3` },
           { value: 'general', label: '通用偏好', icon: 'settings', badge: lowSpecLabel(prefs.lowSpecMode || 'auto') },
@@ -10712,7 +14061,7 @@ try {
         existingPrompt: S(g.prompt).trim(),
         instrumental: Boolean(g.instrumental),
       },
-      { timeout: 240000 },
+      { timeout: PK.llmTimeout() },
     )
     if (cat === 'audio') {
       if ((field === 'both' || field === 'prompt') && res && res.prompt) g.prompt = res.prompt
@@ -10884,6 +14233,12 @@ try {
       const assistBusy = (ctx.local.busy || {})
       const modelDrafts = (ctx.local.modelDrafts = ctx.local.modelDrafts || {})
       const ready = cloudReady(c)
+      // 「测试连接」 here: the saved provider + key with the model ID being typed (no key is sent from the page)
+      const cgPayload = () => ({
+        target: 'cloud-media',
+        category: cat,
+        config: { providerId: S(c.providerId), protocol: S(c.protocol), baseUrl: S(c.baseUrl), endpoint: S(c.endpoint), model: S(modelDrafts[cat] !== undefined ? modelDrafts[cat] : c.model).trim(), custom: { ...(c.custom || {}) } },
+      })
       const promptLabel = cat === 'audio' ? '音乐风格与情绪描述' : cat === 'video' ? '视频提示词（实拍镜头画面与运镜）' : '生图提示词（高清配图画面描述）'
       const promptPh =
         cat === 'audio'
@@ -10952,6 +14307,10 @@ try {
             { min: 230 },
           ),
           preset && preset.docsHint ? ui.hint(preset.docsHint) : null,
+          ready
+            ? ui.row([connTestBtn(ctx, `cloudgen-${cat}`, cgPayload, { size: 'sm', toastLabel: meta.label, title: '用已保存的密钥和当前模型测一下能不能连上：不生成内容，也不扣费' }), ui.hint('生成前可以先测一下密钥和网络（不生成内容、不扣费）')], { wrap: true })
+            : null,
+          ready ? connTestNote(ctx, `cloudgen-${cat}`, cgPayload()) : null,
           ready ? null : ui.note('先在「设置 · 模型与密钥 → 云端生成」里填好这个类别的 API Key 并保存。', { level: 'warn', actions: [ui.btn('去配置密钥', () => PK.open('keys', { tab: 'cloud', cat }), { size: 'sm', kind: 'primary', icon: 'key' })] }),
         ),
         ui.section(
@@ -10960,7 +14319,7 @@ try {
             en: 'PROMPT',
             icon: 'prompt',
             actions: [
-              actBtn(ctx, 'assist-main', 'AI 协助生成', () => assistCloudPrompt(ctx, cat === 'audio' ? 'prompt' : 'both'), { size: 'sm', icon: 'sparkle', busyText: 'AI 构思中…', disabled: Boolean(assistBusy['assist-both'] || assistBusy['assist-lyrics']) }),
+              actBtn(ctx, 'assist-main', 'AI 协助生成', () => assistCloudPrompt(ctx, cat === 'audio' ? 'prompt' : 'both'), { size: 'sm', icon: 'sparkle', busyText: PK.llmBusy('AI 构思中…'), disabled: Boolean(assistBusy['assist-both'] || assistBusy['assist-lyrics']) }),
               cat === 'audio' ? actBtn(ctx, 'assist-both', '一键填风格 + 歌词', () => assistCloudPrompt(ctx, 'both'), { size: 'sm', icon: 'bolt', busyText: '生成中…', disabled: Boolean(assistBusy['assist-main'] || assistBusy['assist-lyrics']) }) : null,
             ],
           },
@@ -11111,21 +14470,55 @@ try {
     f.apiKey = ''
     PK.toast('已清除数字人接口的 API Key', 'info')
   }
-  async function installLipsync(ctx, pkg) {
+  /** this computer's graphics-card check for MuseTalk (GET avatar/lipsync → installer.hardware); null until loaded */
+  const lipGate = (ctx) => (ctx.local.lipInstaller && ctx.local.lipInstaller.hardware) || null
+  /** MuseTalk needs an NVIDIA GPU with ≥ 4 GB VRAM: why it does not suit this computer + what to use instead */
+  function lipGateNote(gate) {
+    if (!gate) return null
+    if (gate.suitable === false) {
+      const alts = Array.isArray(gate.alternatives) ? gate.alternatives : []
+      return ui.note(
+        h(
+          'div.pk-stack',
+          { style: { gap: '6px' } },
+          ui.text(S(gate.message)),
+          alts.length ? ui.text(h('b', null, '可以这样做：')) : null,
+          ...alts.map((a, i) => ui.text(`${'①②③④⑤'[i] || '·'} ${S(a.title)}：${S(a.text)}`)),
+        ),
+        { level: 'warn', title: S(gate.title) || '这台电脑不适合安装 MuseTalk' },
+      )
+    }
+    return gate.code === 'NVIDIA_UNVERIFIED' ? ui.note(S(gate.message), { level: 'info', title: S(gate.title) }) : null
+  }
+  async function installLipsync(ctx, pkg, o = {}) {
     if (jobRunning('lipsync-install')) throw new PK.Error('口型引擎正在安装中，请等它完成')
     const L = ctx.local
     const dir = S(L.lipDir).trim() || S(pkg.defaultDir)
     const mirror = L.lipMirror || 'cn'
-    const ok = await PK.confirm({
-      title: `一键安装 ${pkg.shortName || 'MuseTalk 1.5'}？`,
-      text: `将从官方仓库下载并安装「${pkg.name || pkg.shortName}」：\n· 显卡要求：${pkg.vramRequired || '—'}\n· 磁盘占用：${pkg.diskRequired || '—'}\n· 预计耗时：${pkg.etaLabel || '数分钟'}\n· 下载源：${mirror === 'global' ? '官方全球源' : '国内高速镜像（HF-Mirror + 清华源）'}\n· 安装位置：${dir || '默认目录'}\n${pkg.licenseNote ? `· 授权说明：${pkg.licenseNote}\n` : ''}\n安装期间需要联网，可以关闭本面板，完成后会提示你。`,
-      ok: '开始安装',
-    })
+    const force = Boolean(o.force)
+    const gate = lipGate(ctx)
+    const details = `· 显卡要求：${pkg.vramRequired || '—'}\n· 磁盘占用：${pkg.diskRequired || '—'}\n· 预计耗时：${pkg.etaLabel || '数分钟'}\n· 下载源：${mirror === 'global' ? '官方全球源' : '国内高速镜像（HF-Mirror + 清华源）'}\n· 安装位置：${dir || '默认目录'}\n${pkg.licenseNote ? `· 授权说明：${pkg.licenseNote}\n` : ''}`
+    // one paragraph per line (a plain confirm text would run the list together)
+    const lines = (s) => h('div.pk-stack', { style: { gap: '4px' } }, S(s).split('\n').filter((l) => l.trim()).map((l) => ui.text(l)))
+    const ok = await PK.confirm(
+      force
+        ? {
+            title: `这台电脑不适合 ${pkg.shortName || 'MuseTalk'}，仍要安装？`,
+            text: lines(`${S(gate && gate.message) || '这台电脑没有合适的 NVIDIA 显卡。'}\n仍要安装的话会下载约 5 GB 文件，装好后口型同步大概率用不起来（自检会提示失败）。\n不装也能正常出片：克隆真人口播会自动改用无口型合成叠层。\n${details}`),
+            ok: '仍要安装',
+            danger: true,
+          }
+        : {
+            title: `一键安装 ${pkg.shortName || 'MuseTalk 1.5'}？`,
+            text: lines(`将从官方仓库下载并安装「${pkg.name || pkg.shortName}」：\n${details}\n安装期间需要联网，可以关闭本面板，完成后会提示你。`),
+            ok: '开始安装',
+          },
+    )
     if (!ok) return
     startJob('lipsync-install', {
       label: `安装 ${pkg.shortName || 'MuseTalk'}`,
       startText: '正在启动口型引擎一键安装…',
-      start: () => PK.post('avatar/lipsync/install', { engineId: pkg.id || 'musetalk', installDir: S(L.lipDir).trim(), mirror }),
+      start: () => PK.post('avatar/lipsync/install', { engineId: pkg.id || 'musetalk', installDir: S(L.lipDir).trim(), mirror, ...(force ? { force: true } : {}) }),
       doneText: '口型引擎安装完成',
       maxMs: 4 * 3600 * 1000,
     })
@@ -11134,7 +14527,17 @@ try {
         await hostRefresh()
         if (!ctx.frame.closed) loadLipsync(ctx).then(() => ctx.update()).catch(() => {})
       })
-      .catch((err) => PK.toast(`口型引擎安装未完成：${S(err && err.message)}`, 'error', { title: '口型引擎安装失败', timeout: 0 }))
+      .catch((err) => {
+        // the server checks the graphics card again: show its verdict in the panel (with the alternatives), not only a toast
+        const hw = err && err.code === 'LIPSYNC_GPU_UNSUITABLE' && err.body && err.body.hardware
+        if (hw) {
+          L.lipInstaller = { ...(L.lipInstaller || {}), hardware: hw }
+          if (!ctx.frame.closed) ctx.update()
+          PK.toast(S(hw.message), 'warn', { title: S(hw.title) || '这台电脑不适合安装 MuseTalk', timeout: 0 })
+          return
+        }
+        PK.toast(`口型引擎安装未完成：${S(err && err.message)}`, 'error', { title: '口型引擎安装失败', timeout: 0 })
+      })
   }
 
   /** `PK.open('avatar', { tab })` jump targets (版本历史 · 工程安全 → 口型引擎 opens `{ tab: 'lipsync' }`) */
@@ -11198,6 +14601,7 @@ try {
     const prov = data.avatarProvider || {}
     const hasProject = PK.hasProject()
     const ls = L.lipsync
+    const lipCloud = Boolean(ls && (S(ls.engine) === 'cloud-fal' || (ls.cloud && ls.cloud.hasApiKey)))
     const lipPkgs = (L.lipInstaller && Array.isArray(L.lipInstaller.packages) && L.lipInstaller.packages) || []
     const genBusy = jobRunning('avatar-gen')
     const set = (patch, msg) =>
@@ -11359,7 +14763,11 @@ try {
               const r = ctx.local.lipsync
               PK.toast(r && r.ready ? '口型引擎深度检测通过（已加载模型与 CUDA）' : S(r && r.reason) || '检测未通过', r && r.ready ? 'success' : 'info')
             }, { size: 'sm', icon: 'search', kind: 'ghost', busyText: '检测中…', title: '加载模型与显卡做一次完整检测（可能要一两分钟）' }),
-          ],
+            // the cloud engine's key lives in .env (AVATAR_LIPSYNC_CLOUD_API_KEY / FAL_KEY): check it for real, free of charge
+            lipCloud
+              ? connTestBtn(ctx, 'lipsync-cloud', () => ({ target: 'lipsync-cloud' }), { size: 'sm', kind: 'ghost', label: '测试 fal.ai 密钥', toastLabel: '云端口型 fal.ai', title: '用 .env 里的 fal.ai 密钥测试一次：只查询价格表，不生成视频，不扣费' })
+              : null,
+          ].filter(Boolean),
         },
         ls
           ? ui.note(S(ls.reason) || (ls.ready ? '口型引擎已就绪' : '口型引擎未就绪'), { level: ls.ready ? 'ok' : 'warn', title: ls.ready ? `唇形同步引擎已就绪${LIPSYNC_ENGINES[S(ls.engine)] ? ` · ${LIPSYNC_ENGINES[S(ls.engine)]}` : ''}` : '唇形同步引擎未就绪' })
@@ -11369,8 +14777,11 @@ try {
                 ctx.update()
               }))
             : ui.spinner('正在检测口型引擎…'),
+        lipCloud ? connTestNote(ctx, 'lipsync-cloud') : null,
         ui.text('克隆真人口播会用本地 MuseTalk 1.5（或 .env 里配置的云端 fal LatentSync）对口型；引擎不可用时会自动退回无口型的合成叠层，不会中断出片。', { tone: 'muted' }),
-        ls && !ls.ready && ls.installHint ? ui.field({ label: '手动安装命令（高级）' }, ui.code(ls.installHint)) : null,
+        // graphics-card check before offering the install (MuseTalk needs an NVIDIA GPU with ≥ 4 GB VRAM)
+        lipPkgs.length && !(ls && ls.ready && ls.engine === 'musetalk') ? lipGateNote(lipGate(ctx)) : null,
+        ls && !ls.ready && ls.installHint && !(lipGate(ctx) && lipGate(ctx).suitable === false) ? ui.field({ label: '手动安装命令（高级）' }, ui.code(ls.installHint)) : null,
         lipPkgs.length && !(ls && ls.ready && ls.engine === 'musetalk')
           ? h(
               'div.pk-stack',
@@ -11382,15 +14793,26 @@ try {
                 ],
                 { min: 240 },
               ),
-              ...lipPkgs.map((pkg) =>
-                ui.card({
+              ...lipPkgs.map((pkg) => {
+                const gate = lipGate(ctx)
+                const running = jobRunning('lipsync-install')
+                // no suitable NVIDIA GPU: no one-click install, only an explicit 「仍要安装」 behind a warning
+                const unsuited = pkg.suitable === false || Boolean(gate && gate.suitable === false)
+                return ui.card({
                   key: `lip-pkg-${pkg.id}`,
                   title: pkg.shortName || pkg.name,
                   body: h('div.pk-stack', { style: { gap: '4px' } }, ui.text(pkg.name || '', { tone: 'muted' }), ui.text(`${pkg.vramRequired || '—'} · 占用 ${pkg.diskRequired || '—'} · ${pkg.etaLabel || ''}`, { tone: 'dim' }), pkg.licenseNote ? ui.text(pkg.licenseNote, { tone: 'dim' }) : null),
-                  tags: [pkg.installed ? ui.pill('已安装', 'ok', { dot: true }) : ui.pill('可选安装', 'warn')],
-                  actions: [ui.btn(jobRunning('lipsync-install') ? '正在安装…' : pkg.installed ? '重新安装 / 修复' : `一键安装 ${pkg.shortName || pkg.id}`, () => installLipsync(ctx, pkg), { kind: pkg.installed ? 'secondary' : 'primary', icon: 'download', size: 'sm', disabled: jobRunning('lipsync-install') })],
-                }),
-              ),
+                  tags: [
+                    pkg.installed ? ui.pill('已安装', 'ok', { dot: true }) : ui.pill('可选安装', 'warn'),
+                    unsuited ? ui.pill('不适合这台电脑', 'err', { dot: true, title: S(gate && gate.message) }) : gate && gate.code === 'OK' ? ui.pill('本机显卡满足要求', 'ok', { title: S(gate.message) }) : null,
+                  ].filter(Boolean),
+                  actions: [
+                    unsuited
+                      ? ui.btn(running ? '正在安装…' : pkg.installed ? '仍要重新安装…' : '仍要安装…', () => installLipsync(ctx, pkg, { force: true }), { kind: 'ghost', icon: 'warn', size: 'sm', disabled: running, title: '这台电脑没有合适的 NVIDIA 显卡，不建议安装；确定要装可以点这里' })
+                      : ui.btn(running ? '正在安装…' : pkg.installed ? '重新安装 / 修复' : `一键安装 ${pkg.shortName || pkg.id}`, () => installLipsync(ctx, pkg), { kind: pkg.installed ? 'secondary' : 'primary', icon: 'download', size: 'sm', disabled: running }),
+                  ],
+                })
+              }),
             )
           : null,
         jobView('lipsync-install'),
@@ -11398,6 +14820,9 @@ try {
     )
     const ep = L.ep
     const epDirty = !same(ep, L.epBase)
+    // 「测试连接」 of the external service: the typed address / key (an empty key field = the saved key); never generates
+    const avPayload = () => ({ target: 'avatar-provider', config: { provider: ep.provider || 'auto', endpoint: S(ep.endpoint).trim(), apiKey: S(ep.apiKey).trim() } })
+    const avTestable = (ep.provider || 'auto') !== 'local-composite'
     out.push(
       ui.section(
         { key: AVATAR_JUMP.provider, title: '外接数字人 / 唇形驱动服务（高级）', en: 'EXTERNAL PROVIDER', icon: 'link', desc: '免外部算力模式：AI 主播按音轨声波实时驱动眨眼 / 嘴型生成透明 WebM；克隆真人则对本人视频叠加克隆声音。需要对真人照片 / 视频做真实唇形同步时，填写外接 MuseTalk / LatentSync 接口。' },
@@ -11432,7 +14857,12 @@ try {
           },
           secretField(ctx, { key: 'av-key', value: ep.apiKey, saved: prov.hasApiKey, masked: prov.maskedApiKey, placeholder: '可选：Bearer API Key（留空表示本地无鉴权）', onInput: (v) => (ep.apiKey = v) }),
         ),
-        ui.row([ui.spacer(), actBtn(ctx, 'av-ep-save', '保存接口', () => saveAvatarEndpoint(ctx), { kind: epDirty ? 'primary' : 'secondary', icon: 'save', busyText: '保存中…' })]),
+        ui.row([
+          ui.spacer(),
+          avTestable ? connTestBtn(ctx, 'avatar-ep', avPayload, { toastLabel: '外接数字人服务', title: '用上面填的地址和密钥测试能不能连上：不用先保存，不会生成数字人，也不扣费' }) : null,
+          actBtn(ctx, 'av-ep-save', '保存接口', () => saveAvatarEndpoint(ctx), { kind: epDirty ? 'primary' : 'secondary', icon: 'save', busyText: '保存中…' }),
+        ]),
+        avTestable ? connTestNote(ctx, 'avatar-ep', avPayload()) : null,
       ),
     )
     return out
@@ -12007,7 +15437,12 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
     if (stage === 'motion_qa' || stage === 'motion' || stage === 'render') return /渲染|MP4|导出|成品|编码|响度|质检报告/i.test(text) ? 'qa' : 'motion'
     return 'system'
   }
-  const runModeLabel = (r) => (/draft/i.test(String((r && r.mode) || '')) ? '极速本地出片' : 'AI 团队协同出片')
+  const runModeLabel = (r) => {
+    const m = String((r && r.mode) || '')
+    return m === 'talk-edit' ? '口播剪辑（本地）' : /draft/i.test(m) ? '极速本地出片' : 'AI 团队协同出片'
+  }
+  /** runs that never call a paid model: local drafts and 口播剪辑 */
+  const isLocalRun = (r) => /draft|talk-edit/i.test(String((r && r.mode) || ''))
   const CONTROL_OK = { pause: '已暂停任务', resume: '已恢复执行', stop: '已停止任务与子进程', retry: '已发起重新执行', 'pause-all': '已全部暂停', 'stop-all': '已紧急停止全部任务' }
   const BILLING_GUIDE = '为避免重复扣费，系统不会自己重跑。请先到对应平台充值，再点「重新执行」；已完成的步骤与已付费的云端素材会被复用。'
 
@@ -12089,13 +15524,13 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
 
   async function confirmRetry(run, task) {
     const billing = run.errorKind === 'billing'
-    const draft = /draft/i.test(String(run.mode || ''))
+    const draft = isLocalRun(run)
     const parts = []
     if (task) parts.push(`将从「${task.name || task.id}」重新执行，并重做它之后的全部步骤。`)
     else if (run.status === 'completed') parts.push('将重新执行整条出片流水线，新成片会覆盖当前的 output/final.mp4。')
     else parts.push('将从失败 / 停止的步骤继续执行，已完成的步骤会被复用。')
     if (billing) parts.push('这次任务是因为账户余额不足而停止的：请先确认已经到对应平台充值，否则会再次停止。')
-    parts.push(draft ? '本地极速草稿模式，不消耗大模型额度。' : 'AI 团队协同模式会再次调用大模型 / 云端服务（会消耗少量额度）。')
+    parts.push(run.mode === 'talk-edit' ? '口播剪辑在本机运行（本地语音识别 + 剪辑），不消耗大模型额度。' : draft ? '本地极速草稿模式，不消耗大模型额度。' : 'AI 团队协同模式会再次调用大模型 / 云端服务（会消耗少量额度）。')
     return PK.confirm({ title: task ? '从这一步重新执行？' : '重新执行这次出片？', text: parts.join('\n'), ok: '重新执行' })
   }
 
@@ -12319,15 +15754,23 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
     PK.needProject()
     const d = curDirector()
     const draft = d.creationMode === 'fast-draft'
+    const talk = d.productionType === 'talk-edit'
     const topic = String(d.topic || '').trim()
     const ok = await PK.confirm({
       title: '启动一键出片？',
-      text: h(
-        'div',
-        null,
-        h('p.pk-text', null, `创作模式：${draft ? '本地极速草稿（零配置、不消耗额度）' : 'AI 团队协同（会调用大模型，消耗少量额度）'}`),
-        h('p.pk-text.pk-text--muted', null, topic ? `创意需求：${U.trimText(topic, 120)}` : '还没有写创意需求，AI 会按工程标题和素材自动构思。'),
-      ),
+      text: talk
+        ? h(
+            'div',
+            null,
+            h('p.pk-text', null, '作品类型：口播剪辑（用你上传的真人出镜视频：自动去停顿 / 口头禅 / 重录，配真实字幕和轻音乐）'),
+            h('p.pk-text.pk-text--muted', null, '全部在本机完成：本地语音识别 + 剪辑，不调用大模型、不花钱。'),
+          )
+        : h(
+            'div',
+            null,
+            h('p.pk-text', null, `创作模式：${draft ? '本地极速草稿（零配置、不消耗额度）' : 'AI 团队协同（会调用大模型，消耗少量额度）'}`),
+            h('p.pk-text.pk-text--muted', null, topic ? `创意需求：${U.trimText(topic, 120)}` : '还没有写创意需求，AI 会按工程标题和素材自动构思。'),
+          ),
       ok: '立即出片',
     })
     if (!ok) return
@@ -12525,6 +15968,8 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
   const transitionLabel = (x) => (TRANSITION_NAMES[x] ? `${TRANSITION_NAMES[x]}` : String(x))
   const tplCover = (t) => (t && (t.coverUrl || t.coverFile) ? PK.routeUrl('plaza/cover', { id: t.id }) : '')
   const tplPreview = (t) => (t && (t.previewUrl || t.hasPreview) ? PK.routeUrl('plaza/preview', { id: t.id, v: t.previewBytes || t.previewDurationSec || '' }) : '')
+  // 可填空模板: templates that ship their storyboard (the detail view knows the exact scene count)
+  const fillable = (t, L) => Boolean(t) && (L && L.detail && L.detail.template && L.detail.template.id === t.id ? U.num(L.detail.sceneCount, 0) > 0 : U.num(t.shotCount, 0) > 0)
   const tplVertical = (t) => /^9\s*:\s*16$/.test(String((t && t.aspectRatio) || '').trim())
   const tplMetaLine = (t) =>
     [
@@ -12687,7 +16132,7 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
       actions: [
         ui.btn('一键套用同款', () => applyTemplate(ctx, t, false), { kind: 'primary', size: 'sm', icon: 'wand', busyText: '套用中…', disabled: !PK.hasProject(), title: PK.hasProject() ? '把这个模板的节奏、配色与 MOTION.md 蓝图套用到当前工程' : '先新建或打开一个工程才能套用' }),
         ui.btn(prev ? '样片' : '详情', () => openPlazaDetail(ctx, t.id), { size: 'sm', icon: prev ? 'play' : 'eye' }),
-        ui.btn('MOTION.md', () => openPlazaDetail(ctx, t.id), { size: 'sm', kind: 'ghost', icon: 'code' }),
+        fillable(t) ? ui.btn('填空套用', () => PK.open('templateFill', { templateId: t.id }), { size: 'sm', icon: 'edit', disabled: !PK.hasProject(), title: PK.hasProject() ? '保留模板的镜头、节奏和音效，把文字、图片、视频和配乐换成你自己的' : '先新建或打开一个工程才能套用' }) : ui.btn('MOTION.md', () => openPlazaDetail(ctx, t.id), { size: 'sm', kind: 'ghost', icon: 'code' }),
       ],
     })
   }
@@ -13579,6 +17024,7 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
           ui.hint(PK.hasProject() ? `套用到：${(s.project && s.project.title) || '当前工程'}` : '先新建或打开工程才能套用'),
           ui.spacer(),
           t ? ui.btn('连同分镜一起套用', () => applyTemplate(ctx, t, true), { icon: 'layers', busyText: '套用中…', disabled: !PK.hasProject(), title: '用模板的分镜替换当前分镜（会覆盖）' }) : null,
+          t && fillable(t, L) ? ui.btn('填空套用', () => PK.open('templateFill', { templateId: t.id }), { icon: 'edit', disabled: !PK.hasProject(), title: '保留模板的镜头、节奏和音效，把文字、图片、视频和配乐换成你自己的' }) : null,
           t ? ui.btn('一键套用同款基因', () => applyTemplate(ctx, t, false), { kind: 'primary', icon: 'wand', busyText: '套用中…', disabled: !PK.hasProject() }) : null,
         ])
         return plazaDetailView(ctx)
@@ -13853,10 +17299,53 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
       [rs.bpm ? String(Math.round(rs.bpm)) : '—', '音乐 BPM'],
       [String(rs.dropsCount || (rs.drops || []).length || 0), '高潮突降'],
     ]
+    // 看图 (vision): did a model look at the contact sheet, and if not, why — in plain words (visionStatus comes from
+    // the shared capability check; analyses saved before it existed only say whether a model looked)
+    const fromPlaza = Boolean(rs.plazaTemplateId && !rs.sourceRelPath)
+    const vs = rs.visionStatus && typeof rs.visionStatus === 'object' && rs.visionStatus.code ? rs.visionStatus : null
+    const looked = Boolean(rs.visionAnalyzed)
+    const visModel = String(rs.visionModel || (vs && vs.model) || '')
+    const visQuiet = Boolean(vs && (vs.code === 'disabled' || vs.code === 'user-off'))
+    const openVision = () => PK.open('keys', { tab: 'llm', focus: 'vision' })
+    const visTip = vs ? [vs.reason, vs.fix ? `怎么办：${vs.fix}` : ''].filter(Boolean).join('\n') : ''
+    const visionPill = fromPlaza
+      ? ui.pill('影核广场模板基因', 'acc')
+      : looked
+        ? ui.pill(`AI 看图已拆解${visModel ? ` · ${visModel}` : ''}`, 'ok', { title: '画风、人物、特效与转场由看图模型看过 9 宫格关键帧后拆解；镜头数、节奏与 BPM 是本地实测。' })
+        : vs
+          ? ui.pill(vs.short || '没有用 AI 看图', visQuiet ? 'mute' : 'warn', { title: visTip })
+          : ui.pill('本地实测', 'mute', { title: '这份基因由较早的版本拆解，没有记录当时为什么没有让 AI 看图。点「重新拆解」会重新确认当前模型能不能看图。' })
+    const visionNote = fromPlaza || looked
+      ? null
+      : vs
+        ? ui.note(
+            h('div.pk-stack', { style: { gap: '4px' } }, ui.text(vs.reason || vs.short || ''), vs.fix ? ui.text(`怎么办：${vs.fix}`) : null, ui.hint('镜头数、平均镜长、快切、BPM 与高潮点仍是本地实测，数据准确。')),
+            {
+              level: visQuiet ? 'info' : 'warn',
+              title: vs.used ? 'AI 看图这次没有成功，已改用本地测量结果' : '这次没有让 AI 看图，已用本地测量结果',
+              actions: [
+                ui.btn('看图能力设置', openVision, { size: 'sm', icon: 'settings' }),
+                videoRel ? ui.btn('重新拆解', () => reanalyzeReference(videoRel).catch((err) => PK.reportError(err, '重新拆解失败')), { size: 'sm', icon: 'retry', busyText: '拆解中…', disabled: Boolean(REF.job) }) : null,
+              ].filter(Boolean),
+            },
+          )
+        : ui.note(
+            rs.visionError
+              ? `看图模型这次没有成功（${String(rs.visionError).slice(0, 160)}），已用本地测量结果生成复刻基因，节奏数据仍然准确。`
+              : '这份基因只用了本地实测（镜头数、节奏、BPM 都准确），画风与特效描述没有经过 AI 看图。点「重新拆解」会重新确认当前模型能不能看图。',
+            {
+              level: rs.visionError ? 'warn' : 'info',
+              title: rs.visionError ? 'AI 看图拆解未完成' : '本地实测',
+              actions: [
+                ui.btn('看图能力设置', openVision, { size: 'sm', icon: 'settings' }),
+                videoRel ? ui.btn('重新拆解', () => reanalyzeReference(videoRel).catch((err) => PK.reportError(err, '重新拆解失败')), { size: 'sm', icon: 'retry', busyText: '拆解中…', disabled: Boolean(REF.job) }) : null,
+              ].filter(Boolean),
+            },
+          )
     return [
       refJobNote(),
       REF.lastError && !REF.job ? ui.note(REF.lastError, { level: 'error', title: '上一次拆解没有成功', actions: [ui.btn('知道了', () => ((REF.lastError = ''), ctx.render()), { size: 'sm' })] }) : null,
-      rs.visionError ? ui.note(`视觉大模型这次没有成功（${rs.visionError}），已用本地测量结果生成复刻基因，节奏数据仍然准确。`, { level: 'warn', title: 'AI 视觉拆解未完成' }) : null,
+      visionNote,
       rs.plazaTemplateId && !rs.sourceRelPath
         ? ui.note(
             `这份同款复刻基因来自影核广场模板「${rs.title || rs.genreLabel || rs.plazaTemplateId}」，不是上传的参考视频，所以没有关键帧与实测镜头切点。${
@@ -13890,11 +17379,7 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
               title: rs.title || rs.genreLabel || '同款复刻基因',
               en: 'STYLE DNA',
               icon: 'target',
-              actions: [
-                rs.plazaTemplateId && !rs.sourceRelPath
-                  ? ui.pill('影核广场模板基因', 'acc')
-                  : ui.pill(rs.visionAnalyzed ? `AI 视觉已拆解${rs.visionModel ? ` · ${rs.visionModel}` : ''}` : '本地实测（未调用视觉大模型）', rs.visionAnalyzed ? 'ok' : 'mute'),
-              ],
+              actions: [visionPill],
             },
             ui.kv(
               [
@@ -14904,7 +18389,8 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
     const topic = String(d0.topic || script.displayTitle || script.title || (s.project && s.project.title) || '品牌与产品实战介绍').trim()
     const tone = PK.optionLabel('styles', d0.style, d0.style || 'tech')
     const prev = TELE.text
-    const d = await PK.post('teleprompter/generate', { projectDir: dir, topic, durationSec: TELE.durationSec, tone }, { timeout: 120000 })
+    // one model call on the server (the shared model time limit) — the panel waits for it instead of giving up first
+    const d = await PK.post('teleprompter/generate', { projectDir: dir, topic, durationSec: TELE.durationSec, tone }, { timeout: PK.llmTimeout() })
     const text = String((d && (d.text || (d.lines || []).join('\n\n'))) || '').trim()
     if (!text) throw new PK.Error('AI 没有返回提词稿，请稍后再试')
     TELE.text = text
@@ -15727,7 +19213,8 @@ try {
       const res = await PK.post(
         'publish-pack/cover',
         { projectDir: dir, action: 'ai-prompt', aspect: aiAspectOf(ctx), platform: L.platform, timeSec: hasNum(eff.timeSec) ? eff.timeSec : undefined, draft: d.prompt },
-        { timeout: 150000 },
+        // one model call on the server: wait for the shared model time limit (it used to give up after 150 s)
+        { timeout: PK.llmTimeout() },
       )
       const next = String((res && res.prompt) || '').trim()
       if (!next) throw new PK.Error('AI 没有写出提示词，请再试一次')
@@ -17214,6 +20701,7 @@ try {
     figureStyleChoice: '人物画风',
     figureStyleChoiceNote: '人物画风',
     visualReview: '画面自检',
+    visualReviewFine: '逐个机位看图',
   }
   const knownLabel = (k) => {
     const s = String(k || '')

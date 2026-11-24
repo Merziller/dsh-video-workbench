@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { normalizeSceneCuts } from './beat-analyzer.js'
 import { buildGenreGuidance, detectGenre, isEpicCombatContext, isHistoricalContent, resolveGenreSelection } from './genre-router.js'
 import { buildVibeToolkitCoderGuide, buildVisualFxPreferenceGuide, getVibeToolkitStatus, selectVibeTools, writeVibeToolkitRemotionLib } from './vibe-toolkit-lib.js'
 import { buildFigureKitCoderGuide, inferFigureStyle, resolveFigureStyleNote } from './figure-kit.js'
@@ -3617,6 +3618,8 @@ export function buildRemotionCoderSkillsPrompt({
         startFrame: s.startFrame,
         durationInFrames: s.durationInFrames,
         durationSec: s.durationSec,
+        // beat-aligned sub-shot windows: the compositor re-frames at each one; draw a new composition per window
+        subShots: subShotWindowsForPrompt(s, timingContract?.fps || 30),
         shotType: plan.scenes?.[i]?.shotType || 'hero-title',
         headline: plan.scenes?.[i]?.headline || s.title,
         kicker: plan.scenes?.[i]?.kicker || `SCENE 0${i + 1}`,
@@ -3640,6 +3643,27 @@ export function buildRemotionCoderSkillsPrompt({
  * Produces `src/scenes/BatchNN.tsx` exporting `BATCH_NN_SCENES: Record<string, React.FC<CustomSceneProps>>`,
  * where EVERY scene receives genuine custom TSX/SVG/UI/motion choreography driven by useCurrentFrame().
  */
+/**
+ * Sub-shot windows of one scene (beat-analyzer.js `scene.cuts`) for the scene-code prompt: frames inside the scene,
+ * seconds, the framing the compositor cuts to and the window's subtitle chunk. undefined for a single-picture scene.
+ */
+export function subShotWindowsForPrompt(s, fps = 30) {
+  const f = Number(fps) > 0 ? Number(fps) : 30
+  const dur = Math.round(Number(s?.durationInFrames) || Number(s?.durationSec) * f || 0)
+  const cuts = normalizeSceneCuts(s?.cuts, dur)
+  if (!cuts.length) return undefined
+  return cuts.map((c, i) => ({
+    index: i,
+    startFrame: c.start,
+    endFrame: c.end,
+    fromSec: Number((c.start / f).toFixed(2)),
+    toSec: Number((c.end / f).toFixed(2)),
+    framing: c.framing,
+    focus: c.focus,
+    text: c.text || undefined,
+  }))
+}
+
 export function buildBatchedRemotionScenesPrompt({
   batchIndex,
   totalBatches,
@@ -3756,7 +3780,8 @@ ${figureGuide}
 - **【第二画笔：原生动态 \`<svg>\` + 数学路径与弹簧物理】**：
   \`buildSmoothSvgPath(points)\`、\`describeSvgArc(cx, cy, r, a0, a1)\`、\`computeBeatSpring(frame, fps, beats)\`、\`spring()\`、\`interpolate()\`。
 - **【构图与镜头多样性（任何题材）】**：严格按每镜 visualBlueprint 写明的机位与景别构图（俯/仰/平视、侧面、反打、过肩、特写、远景）；相邻两镜至少在「景别 / 机位角度 / 主体位置」三项里的两项明显不同；每镜 JSON 的 \`prevShot\` / \`nextShot\` 是前后镜头，衔接要顺（承接动作、匹配剪辑）但构图不要雷同；同一批次里同一种背景母题（大日轮、同一条山脊线、同一片天空渐变）最多用 2 次，室内镜头要有室内结构（墙、帐、柱、案、灯），不要所有镜头都是"天空 + 山 + 太阳"。
-- **【整镜持续运动（任何题材）】**：入场动画只占每镜前 15–25% 的帧，之后不能定住——用覆盖整镜的插值（\`interpolate(frame, [0, durationInFrames], …)\`）保持慢速运动：人物呼吸、说话、转头、行走，前景与背景差速漂移（每秒 6–20px），镜头缓推 2–4%，粒子与光影流动；任何一秒都要有看得见的变化（成片质检会逐秒测量画面变化量，几乎不动的秒数会被标出来）。
+- **【整镜持续运动（任何题材）】**：入场动画只占每镜前 15–25% 的帧，之后不能定住——用覆盖整镜的插值（\`interpolate(frame, [0, durationInFrames], …)\`；有 \`subShots\` 的镜头按子镜头窗口计时）保持慢速运动：人物呼吸、说话、转头、行走，前景与背景差速漂移（每秒 6–20px），镜头缓推 2–4%，粒子与光影流动；任何一秒都要有看得见的变化（成片质检会逐秒测量画面变化量，几乎不动的秒数会被标出来）。
+- **【镜内硬切（每镜 JSON 的 \`subShots\`）】**：踩点后较长的镜头已被系统按节拍切成几个子镜头窗口（\`startFrame\`/\`endFrame\` 是本镜内的帧号，\`framing\` 是景别 wide 全景 / medium 中景 / close 近景 / detail 特写 / low 低角度 / high 高角度，\`text\` 是这个窗口的字幕）。主合成器会在每个切点自动瞬间重新取景（按 framing 推近或拉远到 \`focus\` 点），你要让**每个窗口都是一个新画面**：换主体位置、换人物动作、换信息层（新的关键词、数字、图形、道具）或换前景背景，绝不要用一个慢推镜头撑满 10 秒；运行时读 \`scene.cut\`（当前窗口 \`{ index, count, start, end, framing, focus, text }\`，没有子镜头时为 null）与 \`scene.cuts\`（全部窗口），按 \`scene.cut.index\` 切换构图，窗口内的动画用 \`frame - scene.cut.start\` 计时；切点上不要自己加全屏闪白或转场。
 - **【亮度与可读性】**：主体（人物、产品、关键文字）任何时候都要清楚可辨：夜景、阴天、室内暗场也要用月光、火光、灯光、轮廓光或逆光把主体从背景里分离出来；不要整屏压暗，暗角/压暗叠层的不透明度不超过 0.35；整幅画面的平均亮度不能低到看不清人物（成片质检会逐镜测亮度，过暗的镜头会被自动提亮并提示）。
 - **【防错位与安全留白规则】**：
   1. **每幕独立写专属视觉结构**：严禁定义单个全局函数套全批分镜仅替换右侧 3 行字；允许复用小型通用工具（如文字/粒子辅助），但主体构图与交互动效必须随本幕台词与视觉蓝图显著变化！
@@ -3817,6 +3842,8 @@ ${buildVisualFxPreferenceGuide(visual3dMode)}`
           durationSec: s.durationSec,
           durationInFrames: s.durationInFrames,
           startSec: s.startSec,
+          // beat-aligned sub-shot windows (scene.cuts): one new composition / action per window
+          subShots: subShotWindowsForPrompt(s, fps),
           stageSpec: s.stageSpec || undefined,
           toolPlan: { must: p.must || [], suggest: p.suggest || [] },
           cast: Array.isArray(p.cast) && p.cast.length ? p.cast : undefined,
@@ -3888,7 +3915,8 @@ ${directorNotes ? `\n【导演备注（仅供视觉写码参考，严禁把指�
    window.__totalFrames = <totalDurationInFrames>;
    window.__seekToFrame = function(frameIndex) { ... };
    调用 window.__seekToFrame(f) 时必须立刻、同步地将整个 DOM + Canvas（含 3D 透视几何/动态 SVG 路径/HUD 遥测时间码/粒子/数字滚动/转场闪白/中文字幕/重拍频谱条）渲染至精确的第 f 帧状态！
-9. 必须为每个分镜保留对应的 <template id="scene-01">...</template> 或 <section data-scene-id="scene-01"> 元素以配合系统场景覆盖率检测。`
+9. 必须为每个分镜保留对应的 <template id="scene-01">...</template> 或 <section data-scene-id="scene-01"> 元素以配合系统场景覆盖率检测。
+10. 镜内硬切：分镜 JSON 带 subShots（startFrame/endFrame 为本镜内帧号，framing 为景别 wide/medium/close/detail/low/high，focus 为取景中心 0~1，text 为该窗口字幕）时，window.__seekToFrame 必须按窗口切换画面——每个窗口瞬间换一次取景（按 framing 推近或拉远到 focus 点）并换主体位置、人物动作或信息层，字幕切到该窗口的 text；不要用一个慢推镜头撑满整镜，切点不要加全屏闪白。`
 
   const user = JSON.stringify(
     {
@@ -3911,6 +3939,8 @@ ${directorNotes ? `\n【导演备注（仅供视觉写码参考，严禁把指�
         startFrame: s.startFrame,
         durationInFrames: s.durationInFrames,
         durationSec: s.durationSec,
+        // beat-aligned sub-shot windows: the compositor re-frames at each one; draw a new composition per window
+        subShots: subShotWindowsForPrompt(s, timingContract?.fps || 30),
         shotType: plan.scenes?.[i]?.shotType || 'hero-title',
         headline: plan.scenes?.[i]?.headline || s.title,
         kicker: plan.scenes?.[i]?.kicker || `SCENE 0${i + 1}`,

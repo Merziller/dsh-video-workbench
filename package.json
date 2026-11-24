@@ -1,7 +1,7 @@
 {
   "name": "dsh-video-workbench",
-  "version": "0.6.0",
-  "description": "全智能体通用双引擎 AI 视频工作台 (DSH / Claude Code / Codex / WorkBuddy / Cursor / 无黑窗静默后台)：41 个 MCP & Cordis 工具、全新 AI Agent 作战大屏（三套皮肤）、内置人物库与「人物画风」、AI 看图画面自检、影核广场 (CinePulse Hub) MOTION.md 模板社区、全品类自适应 FFmpeg 节拍卡点与 48kHz 音效母带、参考视频左右分屏同步对比、多轨时间轴可视化微调、可选 BYOK 云端生图/生视频/Suno & MiniMax 音频及自定义协议、可选本地 TTS 一键依赖安装包。原创作者: Merziller (QQ: 1411574209 | 微信: Merziller | k26789228@gmail.com)",
+  "version": "0.7.0",
+  "description": "全智能体通用双引擎 AI 视频工作台 (DSH / Claude Code / Codex / WorkBuddy / Cursor / 无黑窗静默后台)：「我的动漫形象」会说话的动漫讲解员（免费档 / 本地模型 / 自带云端密钥）、AI 剪辑口播与 Vlog 高光、48 个 MCP & Cordis 工具、AI Agent 作战大屏（三套皮肤）、内置人物库与「人物画风」、AI 看图画面自检、影核广场 (CinePulse Hub) MOTION.md 模板社区、全品类自适应 FFmpeg 节拍卡点与 48kHz 音效母带、参考视频左右分屏同步对比、多轨时间轴可视化微调、可选 BYOK 云端生图/生视频/Suno & MiniMax 音频及自定义协议、可选本地 TTS 一键依赖安装包。原创作者: Merziller (QQ: 1411574209 | 微信: Merziller | k26789228@gmail.com)",
   "license": "MIT",
   "author": {
     "name": "Merziller",
@@ -55,6 +55,12 @@
     "scripts/install-profile.mjs",
     "scripts/install-tts-engine.mjs",
     "scripts/install-tts-engine.ps1",
+    "scripts/install-lipsync-engine.mjs",
+    "scripts/install-lipsync-engine.ps1",
+    "scripts/avatar/*.py",
+    "scripts/avatar/tha3",
+    "!**/__pycache__",
+    "!**/*.pyc",
     "scripts/tts-bridge.py",
     "scripts/tts-server.py",
     "start-workbench.vbs",

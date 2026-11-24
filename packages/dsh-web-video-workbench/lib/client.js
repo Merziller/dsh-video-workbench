@@ -123,9 +123,11 @@ window.__ModuleLoader__?.load({
       'tts/install-options', 'brand-kit', 'cloud-media', 'cloud-media/staging', 'plaza/templates', 'plaza/template', 'color-lut',
       'project/history', 'project/scene-edits', 'project/characters', 'project/cloud-jobs',
       'publish-pack/cover', 'plaza/submissions', 'style-presets',
+      'asr/status', 'talk/state', 'footage/state', 'highlight/state', 'plaza/slots',
+      'anime/characters', 'anime/character', 'anime/estimate', 'anime/local', 'anime/cloud',
     ])
     const KIT_API_POST = new Set([
-      'hardware', 'llm-config', 'llm-test', 'tts-config', 'tts-test', 'script', 'assets/import', 'assets/delete', 'assets/role',
+      'hardware', 'llm-config', 'llm-test', 'llm-vision', 'tts-config', 'tts-test', 'script', 'assets/import', 'assets/delete', 'assets/role',
       'assets/curate', 'assets/starter-pack', 'assets/recording', 'plan', 'produce', 'ai-produce', 'ai-refine', 'qa', 'voices/import',
       'voices/clone-upload', 'voices/delete', 'voices/clone-preview', 'voices/match', 'audio/llm-compose', 'audio/tts-compose',
       'publish-pack', 'vendor/import', 'action', 'tasks/control', 'teleprompter/generate', 'avatar/generate', 'avatar/config',
@@ -137,15 +139,31 @@ window.__ModuleLoader__?.load({
       'project/characters/attach', 'project/stock/search', 'project/stock/import', 'project/refine',
       'publish-pack/cover', 'plaza/submit', 'plaza/submissions/delete', 'plaza/remote-sync', 'plaza/reveal',
       'style-presets/save', 'style-presets/rename', 'style-presets/delete',
+      'asr/install', 'talk/roughcut', 'talk/build', 'talk/transcribe', 'talk/pack', 'footage/index', 'highlight/build',
+      'plaza/fill', 'plaza/fill-suggest',
+      'delivery/save-as',
+      'cloud-media/test', 'connection-test',
+      'anime/create', 'anime/update', 'anime/rebuild', 'anime/delete', 'anime/local/install', 'anime/cloud', 'anime/cloud/test',
     ])
     // POSTs that only read / preview — no host refresh afterwards
     const KIT_API_NO_REFRESH = new Set([
       'llm-test', 'tts-test', 'voices/clone-preview', 'cloud-media/assist-prompt', 'polish-topic', 'teleprompter/generate',
       'project/history/diff', 'project/stock/search', 'scopes', 'qa-deep',
       'plaza/submit', 'plaza/submissions/delete', 'plaza/reveal',
+      'delivery/save-as',
+      'cloud-media/test', 'connection-test',
+      'plaza/fill-suggest',
+      'anime/cloud/test',
     ])
     // Raw binary uploads (body = file bytes, metadata in the query string)
-    const KIT_UPLOAD_PATHS = new Set(['assets/upload', 'bgm/upload', 'reference/upload', 'skin/upload'])
+    const KIT_UPLOAD_PATHS = new Set(['assets/upload', 'bgm/upload', 'reference/upload', 'skin/upload', 'anime/upload'])
+    // 由当前智能体代写 (llm mode 'host-agent'): the top status pill names the agent, or how many writing tasks wait for it
+    const hostAgentLlmStatus = (cfg) => {
+      if (!cfg || cfg.mode !== 'host-agent') return null
+      const pending = Math.max(0, Number(cfg.hostAgent?.pending) || 0)
+      const agent = cfg.host?.id && cfg.host.id !== 'dsh' && cfg.host.label ? ` ${String(cfg.host.label)} ` : '智能体'
+      return { configured: true, mode: 'host-agent', pending, label: pending ? `有 ${pending} 个写作任务在等智能体处理` : `由${agent}代写` }
+    }
 
 
 
@@ -386,6 +404,13 @@ window.__ModuleLoader__?.load({
     ]
     const FIGURE_STYLE_VALUES = FIGURE_STYLE_OPTIONS.map((o) => o.value)
     const cleanFigureNote = (v) => String(v ?? '').replace(/["“”'`]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40)
+
+    // 作品类型 (same list as PRODUCTION_TYPES in dsh-tool-media/pipeline-orchestrator.js)
+    const PRODUCTION_TYPE_OPTIONS = [
+      { value: 'ai-film', label: 'AI 原创成片', hint: '按你的需求由 AI 写文案、配音、做画面（动画、宣传片、科普、MV…）' },
+      { value: 'talk-edit', label: '口播剪辑（我录好的真人视频）', hint: '用你上传的出镜视频：自动去停顿、口头禅和重录，配真实字幕和轻音乐；本机运行不花钱' },
+    ]
+    const PRODUCTION_TYPE_VALUES = PRODUCTION_TYPE_OPTIONS.map((o) => o.value)
 
     const PLATFORM_OPTIONS = [
       { id: 'universal', label: '通用全平台', hint: '标准 5% 安全边距' },
@@ -1060,8 +1085,10 @@ window.__ModuleLoader__?.load({
         aiBadgeText: '',
         visual3dMode: 'auto',
         visualReview: true,
+        visualReviewFine: true,
         figureStyleChoice: 'auto',
         figureStyleChoiceNote: '',
+        productionType: 'ai-film',
         useDraftReference: true,
         fps: 30,
         voiceId: 'auto',
@@ -1632,8 +1659,10 @@ window.__ModuleLoader__?.load({
                   targetDurationSec: Number(ap.script?.targetDurationSec) >= 10 ? Math.round(Number(ap.script.targetDurationSec)) : (prev.targetDurationSec || 120),
                   visual3dMode: ap.script?.visual3dMode || 'auto',
                   visualReview: ap.script?.visualReview !== false,
+                  visualReviewFine: ap.script?.visualReviewFine !== false,
                   figureStyleChoice: FIGURE_STYLE_VALUES.includes(ap.script?.figureStyleChoice) ? ap.script.figureStyleChoice : 'auto',
                   figureStyleChoiceNote: cleanFigureNote(ap.script?.figureStyleChoiceNote),
+                  productionType: PRODUCTION_TYPE_VALUES.includes(ap.script?.productionType) ? ap.script.productionType : 'ai-film',
                   targetPlatform: ap.script?.targetPlatform || 'universal',
                   aspectRatio: ap.script?.requestedAspectRatio || ap.script?.aspectRatio || 'auto',
                   quality: ap.script?.quality || '1080p',
@@ -1797,6 +1826,27 @@ window.__ModuleLoader__?.load({
         const timer = setInterval(fetchTaskRuns, ms)
         return () => clearInterval(timer)
       }, [activeProjectDir, hasLiveTask, activeNav, fetchTaskRuns])
+
+      // 由当前智能体代写: writing tasks waiting for the agent come and go without any other state change, so only in that
+      // mode the saved model settings are re-read now and then to keep the top status pill current
+      const llmHostMode = llmConfig?.mode === 'host-agent'
+      useEffect(() => {
+        if (!llmHostMode) return undefined
+        let stop = false
+        const timer = setInterval(async () => {
+          if (document.hidden) return
+          try {
+            const res = await connFetch('/api/video-workbench/llm-config')
+            const cfg = (await res.json())?.config
+            if (stop || !cfg) return
+            setLlmConfig((prev) => (prev && prev.mode === cfg.mode && Number(prev.hostAgent?.pending) === Number(cfg.hostAgent?.pending) ? prev : cfg))
+          } catch {}
+        }, 5000)
+        return () => {
+          stop = true
+          clearInterval(timer)
+        }
+      }, [llmHostMode, connFetch])
 
       // Teleprompter auto-scroll loop
       useEffect(() => {
@@ -2426,7 +2476,7 @@ window.__ModuleLoader__?.load({
         if (!activeProjectDir) return null
         const modeToRun = (typeof overrideMode === 'string' && overrideMode) || directorForm.creationMode || 'ai-coded'
         const topicText = String(typeof overrides?.topic === 'string' ? overrides.topic : directorForm.topic || '').trim()
-        if (modeToRun === 'ai-coded' && !llmConfig?.configured) {
+        if (modeToRun === 'ai-coded' && !llmConfig?.configured && directorForm.productionType !== 'talk-edit') {
           setShowLlmModal(true)
           notify('尚未配置 AI 大模型接口，请先填入 API Key 或切换为「本地草稿预演」一键生成', 'info')
           return null
@@ -2478,8 +2528,16 @@ window.__ModuleLoader__?.load({
               targetDurationSec: directorForm.durationMode === 'custom' ? Math.max(15, Math.min(600, Math.round(Number(directorForm.targetDurationSec) || 120))) : 0,
               visual3dMode: directorForm.visual3dMode || 'auto',
               visualReview: directorForm.visualReview !== false,
+              visualReviewFine: directorForm.visualReviewFine !== false,
+              // 「出片时参考现有草稿」: the existing storyboard is the pacing reference for 开始出片 too
+              useDraftReference: directorForm.useDraftReference !== false,
               figureStyleChoice: FIGURE_STYLE_VALUES.includes(directorForm.figureStyleChoice) ? directorForm.figureStyleChoice : 'auto',
               figureStyleChoiceNote: cleanFigureNote(directorForm.figureStyleChoiceNote),
+              productionType: PRODUCTION_TYPE_VALUES.includes(directorForm.productionType) ? directorForm.productionType : 'ai-film',
+              // 口播剪辑 with a cloud anime presenter: the cost the user confirmed in the panel for this run (never stored)
+              ...(directorForm.productionType === 'talk-edit' && Number.isFinite(Number(overrides?.presenterConfirmedRmb)) && Number(overrides.presenterConfirmedRmb) >= 0
+                ? { talkEdit: { presenterConfirmedRmb: Math.round(Number(overrides.presenterConfirmedRmb) * 100) / 100 } }
+                : {}),
               fps: Number(directorForm.fps) || 30,
               uploadedBgmPath: script?.bgm?.uploadedPath || uploadedMusicAsset?.path || '',
               voiceId: directorForm.voiceId,
@@ -2769,6 +2827,7 @@ window.__ModuleLoader__?.load({
             ['llm-coded', 'AI 写代码作曲'],
             ['uploaded', '使用已上传 BGM'],
             ['tts-engine', 'TTS 氛围音景'],
+            ['generated', '本机合成配乐（按节拍自动生成）'],
           ]),
           pacingModes: o([
             ['auto', 'AI 自动节奏'],
@@ -3112,8 +3171,10 @@ window.__ModuleLoader__?.load({
             aiBadgeText: String(directorForm.aiBadgeText || ''),
             visual3dMode: String(directorForm.visual3dMode || 'auto'),
             visualReview: directorForm.visualReview !== false,
+            visualReviewFine: directorForm.visualReviewFine !== false,
             figureStyleChoice: FIGURE_STYLE_VALUES.includes(directorForm.figureStyleChoice) ? directorForm.figureStyleChoice : 'auto',
             figureStyleChoiceNote: cleanFigureNote(directorForm.figureStyleChoiceNote),
+            productionType: PRODUCTION_TYPE_VALUES.includes(directorForm.productionType) ? directorForm.productionType : 'ai-film',
             useDraftReference: directorForm.useDraftReference !== false,
           },
           runOptions: {
@@ -3151,6 +3212,7 @@ window.__ModuleLoader__?.load({
               { value: 'bottom-left', label: '左下角' },
             ],
             figureStyles: FIGURE_STYLE_OPTIONS,
+            productionTypes: PRODUCTION_TYPE_OPTIONS,
             visual3dModes: [
               { value: 'auto', label: 'AI 按需自由创作（推荐）' },
               { value: 'on', label: '偏好 3D 与全息 HUD 科技感' },
@@ -3171,7 +3233,7 @@ window.__ModuleLoader__?.load({
             styleCards: warStyleOptions.styleCards,
           },
           status: {
-            llm: { configured: Boolean(llmConfig?.configured), label: llmConfig?.configured ? String(llmConfig?.model || '已连接') : '未配置' },
+            llm: hostAgentLlmStatus(llmConfig) || { configured: Boolean(llmConfig?.configured), label: llmConfig?.configured ? String(llmConfig?.model || '已连接') : '未配置' },
             tts: { ready: Boolean(ttsStatus?.ready), label: String(activeTtsLabel || 'TTS') },
             gpu: { label: gpuName ? `${gpuName}${num(gpu.vramGB) > 0 ? ` · ${Math.round(num(gpu.vramGB))} GB` : ''}` : 'CPU 模式', lowSpecMode: String(hardwarePreferences?.lowSpecMode || 'auto') },
             lipsync: { ready: Boolean(lipsyncStatus?.ready), label: lipsyncLabel },
@@ -3374,8 +3436,10 @@ window.__ModuleLoader__?.load({
           else if (k === 'aiBadgeText') sync.aiBadgeText = String(v ?? '').slice(0, 40)
           else if (k === 'visual3dMode' && ['auto', 'on', 'off'].includes(v)) sync.visual3dMode = v
           else if (k === 'visualReview') sync.visualReview = Boolean(v)
+          else if (k === 'visualReviewFine') sync.visualReviewFine = Boolean(v)
           else if (k === 'figureStyleChoice' && FIGURE_STYLE_VALUES.includes(v)) sync.figureStyleChoice = v
           else if (k === 'figureStyleChoiceNote') sync.figureStyleChoiceNote = cleanFigureNote(v)
+          else if (k === 'productionType' && PRODUCTION_TYPE_VALUES.includes(v)) sync.productionType = v
           else if (k === 'speechTempo' && Number(v) >= 0.5 && Number(v) <= 2) setSpeechTempo(Number(v))
           else if (k === 'useHostVocal') setUseHostVocal(Boolean(v))
           else if (k === 'aiAuthorCode') setAiAuthorCode(Boolean(v))
@@ -3485,7 +3549,8 @@ window.__ModuleLoader__?.load({
             case 'run': {
               needProject()
               if (hasLiveTask) throw new Error('已有出片任务在运行，可先暂停或停止')
-              if ((directorForm.creationMode || 'ai-coded') === 'ai-coded' && !llmConfig?.configured) {
+              // 口播剪辑 runs fully local (speech recognition + cutting): no model needed
+              if (directorForm.productionType !== 'talk-edit' && (directorForm.creationMode || 'ai-coded') === 'ai-coded' && !llmConfig?.configured) {
                 return reply(false, { error: '尚未配置 AI 大模型接口：请先在「设置 · 模型与密钥」填入 API Key，或把创作模式切换为「本地极速草稿」', code: 'need-llm' })
               }
               const topic = typeof payload.topic === 'string' ? cleanBriefText(payload.topic) : undefined
@@ -3493,7 +3558,11 @@ window.__ModuleLoader__?.load({
                 warTopicRef.current = topic
                 setDirectorForm((p) => ({ ...p, topic }))
               }
-              const started = await handleStartOneClickPipeline(undefined, { topic: topic !== undefined ? topic : warTopicRef.current })
+              const presenterConfirmedRmb = Number(payload.presenterConfirmedRmb)
+              const started = await handleStartOneClickPipeline(undefined, {
+                topic: topic !== undefined ? topic : warTopicRef.current,
+                ...(Number.isFinite(presenterConfirmedRmb) && presenterConfirmedRmb >= 0 ? { presenterConfirmedRmb } : {}),
+              })
               if (!started) throw new Error(llmConfig?.configured ? '出片任务未能启动，请查看提示' : '请先配置 AI 大模型接口（已为你打开设置）')
               return reply(true, { data: { runId: started.runId || '' } })
             }

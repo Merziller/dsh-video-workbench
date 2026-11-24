@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   loadEnv,
+  PACKAGE_ROOT,
   REPO_ROOT,
   resolveEnvPath,
   runCommandRedirected,
@@ -503,7 +504,8 @@ async function main() {
     }
 
     if (url.pathname === '/client.js') {
-      const clientJsPath = join(REPO_ROOT, 'packages', 'dsh-web-video-workbench', 'lib', 'client.js')
+      // shipped code lives in the package; REPO_ROOT is the user's data folder once the plugin is installed
+      const clientJsPath = join(PACKAGE_ROOT, 'packages', 'dsh-web-video-workbench', 'lib', 'client.js')
       res.setHeader('Content-Type', 'application/javascript; charset=utf-8')
       res.setHeader('Cache-Control', 'no-store')
       res.end(readFileSync(clientJsPath, 'utf8'))

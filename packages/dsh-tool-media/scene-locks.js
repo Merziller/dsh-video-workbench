@@ -117,6 +117,12 @@ export function isBlankSubtitleOverride(value) {
  */
 export function followNarrationSubtitles(scene, script) {
   if (!scene || typeof scene !== 'object') return scene
+  // 口播剪辑 host voice: the recognised cues ARE the narration's lines, timed to the real speech — restore them (after
+  // a text edit) or keep them; re-deriving lines from the narration would lose that timing
+  if (scene.voiceSource === 'host') {
+    restoreHostSubtitles(scene)
+    return scene
+  }
   const fps = Number(script?.fps) > 0 ? Number(script.fps) : 30
   const narration = scene.narration ?? scene.text ?? ''
   const current = (Array.isArray(scene.subtitles) ? scene.subtitles : []).filter((s) => s && String(s.text || '').trim())
@@ -135,6 +141,58 @@ export function followNarrationSubtitles(scene, script) {
   scene.subChunks = lines.length > 0 ? lines : undefined
   scene.subtitleText = lines.join(' ')
   return scene
+}
+
+/**
+ * 口播剪辑 (host voice) scenes: every cue carries the real speech timing from speech recognition, so a subtitle text
+ * edit (typically fixing a misheard word) must keep it. Lines are separated by「，」(the separator the cut joins them
+ * with) or line breaks; the same number of lines maps one to one onto the existing cues, a different number is spread
+ * over the original speech span by text width. The recognised cues are kept once in `hostSubtitlesOriginal`, so an
+ * empty override restores them. Returns false when the scene has no timed cues (the caller falls back).
+ */
+export function retimeHostSubtitles(scene, text, fps = 30) {
+  const original = Array.isArray(scene.hostSubtitlesOriginal) && scene.hostSubtitlesOriginal.length ? scene.hostSubtitlesOriginal : null
+  const cues = (Array.isArray(scene.subtitles) ? scene.subtitles : []).filter((s) => s && String(s.text || '').trim() && Number.isFinite(Number(s.startSec)) && Number.isFinite(Number(s.endSec)))
+  if (!cues.length && !original) return false
+  if (!original) scene.hostSubtitlesOriginal = cues.map((c) => ({ ...c }))
+  const base = scene.hostSubtitlesOriginal
+  const lines = String(text ?? '')
+    .split(/\r?\n|[，,]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (!lines.length) return false
+  const r3 = (v) => Number(Number(v).toFixed(3))
+  let next
+  if (lines.length === base.length) {
+    next = base.map((c, i) => (String(c.text || '').trim() === lines[i] ? { ...c } : { ...c, text: lines[i], userEdited: true }))
+  } else {
+    const start = Number(base[0].startSec)
+    const end = Number(base[base.length - 1].endSec)
+    const width = (s) => [...s].reduce((a, ch) => a + (ch.charCodeAt(0) < 0x2e80 ? 0.5 : 1), 0)
+    const total = lines.reduce((a, l) => a + Math.max(1, width(l)), 0)
+    let t = start
+    next = lines.map((l, i) => {
+      const s = t
+      const e = i === lines.length - 1 ? end : t + ((end - start) * Math.max(1, width(l))) / total
+      t = e
+      return { index: i + 1, text: l, startSec: r3(s), endSec: r3(e), startFrame: Math.floor(s * fps), endFrame: Math.max(Math.floor(s * fps) + 1, Math.ceil(e * fps)), userEdited: true }
+    })
+  }
+  scene.subtitles = next.map((c, i) => ({ ...c, index: i + 1, sceneId: scene.id }))
+  scene.subChunks = scene.subtitles.map((c) => c.text)
+  scene.subtitleText = scene.subChunks.join('，')
+  return true
+}
+
+/** Empty 屏幕字幕 override on a host-voice scene: back to the recognised lines with their original timing. */
+function restoreHostSubtitles(scene) {
+  const base = Array.isArray(scene.hostSubtitlesOriginal) ? scene.hostSubtitlesOriginal : null
+  if (!base || !base.length) return false
+  scene.subtitles = base.map((c) => ({ ...c }))
+  scene.subChunks = scene.subtitles.map((c) => c.text)
+  scene.subtitleText = scene.subChunks.join('，')
+  delete scene.hostSubtitlesOriginal
+  return true
 }
 
 function applyFieldOverride(scene, field, value, script) {
@@ -158,6 +216,7 @@ function applyFieldOverride(scene, field, value, script) {
       followNarrationSubtitles(scene, script)
       return
     }
+    if (scene.voiceSource === 'host' && retimeHostSubtitles(scene, value, fps)) return
     const text = String(value ?? '')
     scene.subtitleText = text
     scene.subChunks = undefined

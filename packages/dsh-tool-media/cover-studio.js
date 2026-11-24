@@ -750,6 +750,8 @@ export function deleteCoverFile(projectDir, { file } = {}) {
 function llmStatus() {
   try {
     const c = resolveLlmConfig()
+    // 宿主智能体代写: the agent in the conversation writes the prompts — no endpoint or key involved
+    if (c.mode === 'host-agent') return { configured: true, model: 'host-agent', label: String(c.sourceLabel || '') }
     const local = c.provider === 'ollama' || /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])/i.test(String(c.baseUrl || ''))
     return { configured: Boolean(c.baseUrl && c.model && (c.apiKey || local)), model: String(c.model || ''), label: String(c.sourceLabel || '') }
   } catch {
@@ -812,7 +814,8 @@ export async function writeAiCoverPrompt(projectDir, { timeSec = null, aspect = 
   const invoke = typeof callLlmChatFn === 'function' ? callLlmChatFn : (p) => callLlmChat({ ...p, signal })
   let reply
   try {
-    reply = await invoke({ system, messages: [{ role: 'user', content: JSON.stringify(payload) }], temperature: 0.7, maxTokens: 900, timeoutMs: 90_000 })
+    // no own timeout: the shared model-call limit applies (llm-client getLlmTimeoutMs, 10 min by default)
+    reply = await invoke({ system, messages: [{ role: 'user', content: JSON.stringify(payload) }], temperature: 0.7, maxTokens: 900 })
   } catch (err) {
     const msg = String((err && err.message) || err)
     if (NEED_LLM_RE.test(msg)) throw new CoverError(`「AI 写提示词」需要先配置 AI 大模型接口：${msg}`, { status: 400, code: 'need-llm' })

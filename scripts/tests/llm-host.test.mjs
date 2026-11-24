@@ -87,7 +87,8 @@ try {
   }
   {
     const c = scenario({ DSH_VIDEO_HOST_AGENT: 'claude-code', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-subscription-token', ANTHROPIC_AUTH_TOKEN: 'gateway-token-ignored' })
-    check('an agent login / subscription token is never used', c.resolvedBy === 'none' && !c.apiKey && c.sourceLabel === 'Claude Code 没有可共享的模型配置', `${c.resolvedBy} key=${Boolean(c.apiKey)} | ${c.sourceLabel}`)
+    // the token stays unused; the label points to 智能体代写 (the agent writes the answers itself, nothing is borrowed)
+    check('an agent login / subscription token is never used', c.resolvedBy === 'none' && !c.apiKey && c.sourceLabel.startsWith('Claude Code 没有可共享的模型配置') && /代写/.test(c.sourceLabel) && c.hostAgentSuggested === true, `${c.resolvedBy} key=${Boolean(c.apiKey)} | ${c.sourceLabel}`)
   }
   {
     const c = scenario({ DSH_VIDEO_HOST_AGENT: 'hermes' }, { mode: 'auto', configVersion: 2, provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: 'fake-own-key' })

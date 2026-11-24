@@ -1,4 +1,4 @@
-# 🎬 DSH Video Workbench (`dsh-video-workbench` · v0.6.0)
+# 🎬 DSH Video Workbench (`dsh-video-workbench` · v0.7.0)
 
 > **全智能体通用双引擎 AI 视频全链路工作台（不限 DSH！支持 DeepSeek Harness · Claude Code · OpenAI Codex CLI · WorkBuddy · Cursor · Windsurf · Cline · Antigravity · 无黑窗静默后台独立网页）**  
 > **Universal Multi-Agent Dual-Engine AI Video Studio — CinePulse Hub (影核广场) `MOTION.md` Template Plaza, Cross-Genre Adaptive Beat-Sync & 48kHz SFX Mastering, Reference vs Remake Split/Curtain Sync Compare Player, 4-Track Visual Timeline, Optional BYOK Cloud Image/Video/Music (`Seedream` / `Seedance` / `Kling` / `Flux` / `Suno` / `MiniMax` + Open Custom HTTP Protocol), & Optional 1-Click Local TTS Installer**
@@ -12,6 +12,35 @@
 [![Gmail: k26789228@gmail.com](https://img.shields.io/badge/Gmail-k26789228%40gmail.com-EA4335.svg)](#-联系作者与原创版权声明-author--copyright)
 
 > 🛡️ **原创开源署名声明**：本项目由 **Merziller** 原创开源并依据 [MIT 协议](./LICENSE) 免费提供使用。任何二次分发、修改、打包、转载或商业/演示使用，**必须完整保留原作者署名与联系方式（作者：`Merziller` ｜ QQ：`1411574209` ｜ 微信：`Merziller` ｜ Gmail：`k26789228@gmail.com` ｜ 官方仓库：`https://github.com/Merziller/dsh-video-workbench`）**，严禁抹除作者信息冒充原创。详见 [`NOTICE`](./NOTICE)。
+
+---
+
+## 🆕 `v0.7.0` 更新：我的动漫形象讲解员 · AI 剪辑你自己的素材 · 模板填空 · 由当前智能体代写
+
+> - **🧑‍🎤 我的动漫形象（会说话的动漫讲解员）**：口播剪辑 / 录屏讲解里的「卡通讲解员」不再只是一张跟着声音跳动的抠图。打开工具菜单里的 **「我的动漫形象」**，用你的照片（或现成的卡通图）做一个动漫形象，**做一次，以后每条视频都能用**：
+>   - 照片变动漫：用你在「云端生图」里配置的服务画（即梦 Seedream 4.0、可灵、Flux Kontext 这类能参考照片的服务，一张几毛钱，生成前先确认价格），或者装好本地模型后在电脑上免费画（DCT-Net，日系 / 3D 卡通 / 扁平三种画风）。
+>   - 自动找出嘴巴和眼睛的位置，你可以在图上点一下微调，还能「试看嘴型和眨眼」。
+>   - 三种动法，在「口播包装 → 卡通讲解员」里选：**免费档**（默认，所有电脑都能用：嘴型跟着每个字开合，会眨眼、点头、呼吸）；**显卡档**（可选安装本地模型 Talking Head Anime 3，嘴、眼睛、眉毛、头和身体都会动，不花钱；NVIDIA 显卡上大约实时生成，没有 NVIDIA 显卡也能用但慢很多；安装约占 10 GB）；**云端档**（填你自己的 Vidu / 火山引擎 / Runway 密钥，约 1.5～18 元/分钟，按秒收费，每次生成前先告诉你这段大约多少钱，你确认后才生成；同一段声音不会重复收费）。显卡档和云端档用不了时，自动改用免费档并说明原因。
+> - **🔎 画面自检「逐个机位看图」**：画面自检时，镜头里切出来的每个机位（远景、中景、特写）都单独截图检查，长镜头约每 4 秒多看一张；推近后裁掉标题或人物的机位，直接改成更宽的景别（不用重写代码）；返工过的镜头会再复查一次，返工后反而更差的批次会退回返工前的画面。默认打开，可在「画面规格」里关掉（多看的图一般只占整条片子大模型费用的 5%～20%）。
+> - **💰 本次大模型用量**：每次出片结束后，在任务中心日志里告诉你这次一共调用了几次大模型、输入 / 输出多少 tokens（含多少张图片），并按「策划分镜 / 画面代码与质检 / 画面自检……」分项列出；同时保存在工程的 `output/llm-usage.json`。实际费用以模型平台的账单为准。
+> - **🧩 DSH NEXT 的「视频制作模式」**：新版 DSH 桌面端（DSH NEXT）安装插件后，会自动在智能体模式里出现「视频制作模式」（自动写入 DSH 的 `.agent-presets` 文件夹，你改过的不会被覆盖）；也可以手动执行 `node bin/dsh-video-cli.mjs install-preset`。
+> - **🤖 用 Codex / Claude Code 订阅也能用（不用 API Key）**：在「设置 · 模型与密钥」里选 **「由当前智能体代写」**，插件里需要大模型的工作（AI 润色、AI 编码出片、参考视频看图拆解、声音修音建议等）会作为「写作任务」交给你正在用的智能体，由它用自己的模型写好再交回插件。插件不读取、不借用你的账号登录或订阅凭证；智能体通过 MCP 工具 `host_llm_task` 领取任务，大屏顶部的模型状态会显示「待处理 N」。
+> - **🎙️ AI 剪辑 · 口播粗剪（本机语音识别，不调用大模型、不花钱）**：上传你自己录的口播视频，自动剪掉长停顿、「嗯 / 啊」口癖、结巴和说错重来的部分（保留最后一遍），生成和实际说话一字不差的字幕；在文字稿上点一下就能恢复或删掉某句。
+> - **📦 口播包装**：关键词弹出、章节卡、按讲话内容从素材库自动插空镜、字幕开关；**「这是录屏讲解」** 模式不做跳切放大，不会裁掉软件界面；**「卡通讲解员」** 用一张卡通形象图（或一段纯色背景的卡通说话小视频），自动抠掉背景，站在画面角落跟着你的声音点头、说话。
+> - **🎞️ 看懂素材库，长视频只用需要的那一段**：素材库里的视频会自动分成一个个镜头，按清晰度、曝光、稳定和动感打分，并听写里面说的话；出片时每个镜头只截取最合适的那一段，不再从头播放整段长视频，讲到什么就优先用说到相关内容的那段。
+> - **🎬 AI 剪辑 · Vlog 高光**：一堆随手拍的视频，按音乐节拍自动剪成 15 / 30 / 60 秒的精彩短片：安静段落镜头长一些、鼓点和高潮处快切，可选「按拍摄顺序」或「精彩优先」，全部在本机完成。
+> - **🧩 模板填空**：影核广场的模板可以 **「填空套用」**：镜头、节奏、版式、转场和音效都保持模板原样，只把文字、图片、视频和配乐换成你自己的。改了某一镜的文字，这一镜画面上的标题、重点词、大字也会跟着换，不会和模板原文混在一起；空着的画面位自动从素材库挑素材；配乐换成你的歌时会按新歌的节拍重新卡点。也可以写一句主题，让 AI 按模板每一镜帮你写好文字，你检查后再生成。
+> - **👁️ 能不能看图，一目了然**：设置里会自动检测并显示当前模型能不能看图（例如支持图片的 DeepSeek 新模型），参考视频拆解在能看图时会真正看关键帧；不能看图时会说明原因，也可以单独指定一个能看图的模型。
+> - **⏱️ 大模型等待时间统一 10 分钟**：AI 润色、AI 立即改、AI 协助、分步精修等都最多等 10 分钟（可用 `DSH_LLM_TIMEOUT_MS` 调整），等待时持续显示进度，不会再中途超时失败。
+> - **🔌 每个云端连接都有「测试连接」**：大模型、云端配音、云端生图 / 视频 / 音乐、免费素材库等，填好后先点「测试连接」看能否连通、密钥是否有效（不用保存，不生成内容）。
+> - **💾 下载可以选保存位置**：精修和交付里的下载会弹出系统的「另存为」窗口。
+> - **🧑‍🎨 AI 润色更完整，点名的人物一定出镜**：润色会按你的需求把人物、事件、场景、节奏逐条写全，不再只套用历史类特效；文案里点名的人物会进入演员表，在对应镜头里画出来，画面自检时也会检查有没有漏人。
+> - **🥁 高燃卡点不再一张图停十几秒**：分镜不够时自动补足并如实说明；长镜头按节拍切成远景、中景、特写交替的多个机位；成片质检新增 **「画面停留检测」**：卡点片超过 30% 的时间停在同一画面、或单次停留超过 6 秒，会判为不合格并列出时间段和镜头。
+> - **🧹 画面上不再出现指令词**：像「竹节弹簧回弹」「推镜」这类动效说明不会再作为文字显示在画面上（你自己写的文字不受影响）。
+> - **🧩 新版 DSH 桌面端（DSH NEXT）能正常加载**：修复了在新版宿主里导致工具全部注册失败、动效库找不到的 4 个插件设计问题（插件没有声明要用的宿主服务、工具缺少新版要求的结果展示格式、动效组件库和 Three.js 按数据目录而不是插件目录查找）；某个工具被宿主拒绝时只跳过它，不再连累其它工具；任务中心的桥接也已修好。
+> - **🖥️ 数字人对口型（MuseTalk）安装修复**：修复了安装时 uv 报「`--index-url` 不能重复使用」的错误。MuseTalk 只能用显存 4 GB 以上的 NVIDIA 显卡运行：没有 NVIDIA 显卡的电脑（例如 Intel Arc、AMD 显卡）安装前就会用大白话说明原因，不会下载 5 GB 后才发现用不了（确实想装也可以点「仍要安装」）。
+> - **🔒 隐私清理**：内置模板里残留的本机音色文件路径已删除；套用或发布模板时也会自动去掉这类路径。
+> - **🤖 智能体接口**：新增 MCP 工具 `manage_anime_presenter`（我的动漫形象）、`host_llm_task`、`transcribe_media`、`rough_cut_talking_head`、`index_footage`、`make_highlight_reel`、`speech_engine`；`rough_cut_talking_head` 的卡通讲解员可以直接用动漫形象（`characterId` + `engine`）；`manage_template_plaza` 新增 `slots` / `fill`（模板填空）；`configure_llm_model` 支持 `mode: 'host-agent'`。现在共 48 个 MCP 工具。
 
 ---
 
@@ -57,10 +86,10 @@
 ## 🎥 官方完整实操教程视频 & `v0.5.0` 核心亮点
 
 > - **仓库内教程视频**：[`docs/tutorial/dsh-video-workbench-tutorial.mp4`](./docs/tutorial/dsh-video-workbench-tutorial.mp4)（1080P · 3 分 17 秒 · 由本插件全链路自动生成）
->   - 📌 这段教程录制于 v0.5 旧版界面，按钮位置和现在不同；v0.6.0 的界面操作请以下文「三、工作台使用指南」为准。
+>   - 📌 这段教程录制于 v0.5 旧版界面，按钮位置和现在不同；现在的界面操作请以下文「三、工作台使用指南」为准。
 > - **GitHub Release 高速直链下载**：
->   - 插件全能单包：[`dsh-video-workbench-0.6.0.tgz`](https://github.com/Merziller/dsh-video-workbench/releases/download/v0.6.0/dsh-video-workbench-0.6.0.tgz)
->   - 可选本地配音一键安装包（`Edge-TTS` / `IndexTTS-2.5` / `GPT-SoVITS`）：[`dsh-tts-installer-pack-0.6.0.zip`](https://github.com/Merziller/dsh-video-workbench/releases/download/v0.6.0/dsh-tts-installer-pack-0.6.0.zip)
+>   - 插件全能单包：[`dsh-video-workbench-0.7.0.tgz`](https://github.com/Merziller/dsh-video-workbench/releases/download/v0.7.0/dsh-video-workbench-0.7.0.tgz)
+>   - 可选本地配音一键安装包（`Edge-TTS` / `IndexTTS-2.5` / `GPT-SoVITS`）：[`dsh-tts-installer-pack-0.7.0.zip`](https://github.com/Merziller/dsh-video-workbench/releases/download/v0.7.0/dsh-tts-installer-pack-0.7.0.zip)
 >   - 1080P 教程成片：[`dsh-video-workbench-tutorial.mp4`](https://github.com/Merziller/dsh-video-workbench/releases/download/v0.6.0/dsh-video-workbench-tutorial.mp4)
 > - **✨ `v0.5.0` 重磅新能力**：
 >   1. **🔇 无黑窗后台静默守护**：Windows 双击 `start-workbench.cmd` / `start-workbench.vbs` 自动隐藏 CMD 黑窗并在后台静默常驻 `http://127.0.0.1:4399`，双击 `stop-workbench.cmd` 或 `node bin/dsh-video-cli.mjs stop` 优雅停止；
@@ -76,6 +105,7 @@
 ---
 
 ## 📖 目录 / Table of Contents
+- [🆕 v0.7.0 更新：我的动漫形象讲解员 · AI 剪辑你自己的素材 · 模板填空](#-v070-更新我的动漫形象讲解员--ai-剪辑你自己的素材--模板填空--由当前智能体代写)
 - [🆕 v0.6.0 更新：全新「AI Agent 作战大屏」界面（三套皮肤）](#-v060-更新全新ai-agent-作战大屏界面三套皮肤自由切换)
 - [🎥 官方完整实操教程视频 & v0.5.0 核心亮点](#-官方完整实操教程视频--v050-核心亮点)
 - [一、核心特性 (Features)](#-一核心特性-features)
@@ -283,6 +313,9 @@ flowchart TB
 | 算力体检 | 本机硬件检测、低配保护三档、Vibecoding 工具箱就绪情况 | 点顶栏「算力 / GPU」状态；工具菜单 |
 | 任务中心 | 出片任务、运行记录、实时日志，暂停 / 停止 / 重试 | 顶栏「任务中心」；棱镜「任务」按钮；墨韵「运行记录」 |
 | 影核广场 | `MOTION.md` 模板社区：看样片、「一键套用同款」、把当前工程发布为模板；「投稿到影核广场」把自己的作品打成投稿包发给作者审核收录，「刷新在线模板」获取新收录的模板（作者用 `node bin/dsh-video-cli.mjs plaza review / accept / add / index` 维护，见 [docs/plaza-community.md](docs/plaza-community.md)） | 顶栏「影核广场」 |
+| 模板填空 | 套用影核广场的模板：镜头、节奏、版式、转场和音效不变，把文字、图片、视频和配乐换成你自己的；可让 AI 按主题帮你写好每一镜的文字 | 影核广场模板卡片 / 模板详情里的「填空套用」；工具菜单「模板填空」 |
+| AI 剪辑 · 口播粗剪 | 你自己录的口播视频：本机语音识别，自动去停顿、口头禅和重录，配逐字字幕；口播包装（关键词、章节、空镜、录屏讲解、卡通讲解员） | 工具菜单「AI 剪辑 · 口播粗剪」 |
+| AI 剪辑 · Vlog 高光 | 一堆随手拍的视频按音乐节拍自动剪成 15 / 30 / 60 秒精彩短片 | 工具菜单「AI 剪辑 · Vlog 高光」 |
 | 参考复刻 | 上传一段爆款视频，AI 拆解镜头节奏、BPM 与风格后做同款，还能同步对比 | 工具菜单（星舰叫「参考视频复刻对比」） |
 | 提词器录制 | 对着摄像头边看提词边录口播 / 数字人底板，录好直接入库 | 工具菜单（星舰「提词器真人录制」/ 墨韵「提词器」）；「01 素材 → 更多素材来源」 |
 | 发布包导出 | 选平台，一键打包成片、封面、九宫格、质检报告和发布说明；「封面」可选：默认自动挑最好的一帧（避开黑屏、转场和模糊画面）/ 选用视频里的画面 / AI 重新生成（提示词可改，比例 3:4 · 9:16 · 16:9 · 1:1 · 4:3）/ 给封面加标题 | 工具菜单（墨韵叫「发布导出」）；「04 交付」 |
@@ -430,6 +463,11 @@ node scripts/pack-bundle.mjs
    - **克隆真人底板 (`cloned-human`)**：用 `IndexTTS-2.5` 克隆本人声音，并用 FFmpeg 对上传的本人写真图/出镜视频做圆角画中画或绿幕色键 (`chromakey`) 抠像叠加（**此默认本地模式不做静态照神经网络唇形改写**）。
 2. **外接真实神经网络对口型服务（可选扩展）**：
    - 打开 **「数字人」** 面板（点大屏顶栏的「口型」状态，或从工具菜单进入），在 **「外接数字人 / 唇形驱动服务（高级）」** 里（或编辑 `.env` 中的 `AVATAR_PROVIDER` / `AVATAR_ENDPOINT` / `AVATAR_API_KEY`）填入你部署的 **MuseTalk** 或 **LatentSync** 推理接口，插件即可把真人头像+配音提交到远程生成真实唇形驱动的透明 `.webm`；面板里的 **「口型引擎」** 区还可以深度检测并一键安装本地 MuseTalk 1.5。
+3. **我的动漫形象（口播剪辑 / 录屏讲解的动漫讲解员，`v0.7.0` 起）**：MuseTalk 只能处理真人脸，动漫形象由单独的「我的动漫形象」负责（工具菜单 → 我的动漫形象；MCP 工具 `manage_anime_presenter`）。形象做一次、反复使用，存在插件数据目录的 `anime-characters/` 里。三种动法：
+   - **免费档**（默认）：本机按声音逐帧切换嘴型（闭 / 半张 / 啊 / 哦 / 衣）、眨眼、点头和呼吸，不需要显卡，不花钱。
+   - **显卡档**（可选安装，约 10 GB）：本地模型 **Talking Head Anime 3** 让嘴、眼睛、眉毛、头和身体一起动，生成透明背景视频；NVIDIA 显卡上大约实时，没有 NVIDIA 显卡时用 CPU（慢很多）。同时安装的 **DCT-Net** 可以在本机把照片画成动漫形象。
+   - **云端档**（可选，填你自己的密钥，在「我的动漫形象 → 填写云端密钥」里设置）：**Vidu 数字人**（国内，约 1.9 元/分钟，失败自动退款）、**火山引擎单图音频驱动**（官方写明支持动漫形象，约 18 元/分钟，另需一个你自己的对象存储 TOS 桶临时放图片和声音，用完即删）、**Runway Characters**（海外，约 1.5 元/分钟，需要国际信用卡）。按秒收费，生成前先显示预计费用并要你确认；已经提交的任务和下载好的片段都会记账，中途停止、重试都不会重复收费；平台上的形象只建一次，之后反复使用。价格以各平台官方价目为准（2026-11-24 核对）。
+   - 模型来源与署名：Talking Head Anime 3 © Pramook Khungurn，模型权重采用 CC BY 4.0、代码采用 MIT（https://github.com/pkhungurn/talking-head-anime-3-demo ）；DCT-Net（阿里巴巴达摩院，Apache-2.0）；U²-Net 人像分割（Apache-2.0）；动漫人物分割 anime-segmentation（SkyTNT，Apache-2.0）。模型文件由你的电脑从作者官方地址（或校验一致的镜像）下载，不包含在本仓库里。详见 [`packages/dsh-tool-avatar/ANIME-NOTICE.md`](./packages/dsh-tool-avatar/ANIME-NOTICE.md)。
 
 ---
 
@@ -475,9 +513,23 @@ node scripts/pack-bundle.mjs
 ## 🌐 八、English Documentation
 
 ### Overview
-**DSH Video Workbench (`dsh-video-workbench` v0.6.0)** is an open-source, **universal multi-agent Dual-Engine AI Video Studio** compatible with **Claude Code, OpenAI Codex CLI, WorkBuddy, Cursor, Windsurf, Cline, OpenCode, Antigravity, DeepSeek Harness (DSH), and Standalone Local Browser**. It exposes **41 MCP & Cordis tools** plus a visual Web Studio supporting **Remotion 4.x TSX + Three.js 3D** & **HyperFrames HTML5/Canvas**, **Reference Video Deep Reverse-Engineering & Same-Style Remake (`MOTION.md` + Brand Kit)**, high-energy beat-synced silhouette/combat historical animation (`NarrativeDioramaStage`, `HeroWarriorFigure`, `SlashBurstOverlay`, 34–54 shots), **optional one-click local TTS installer** (`Edge-TTS 0GB`, `IndexTTS-2.5`, `IndexTTS-2`, `GPT-SoVITS`, plus zero-install `Windows Native SAPI` with automatic `voices/` seeding), real-time **Hardware Preflight & Low-Spec Protection Mode** (`8GB RAM + iGPU` supported), commercial-safe OFL typography, and model-agnostic 4-protocol LLM authoring.
+**DSH Video Workbench (`dsh-video-workbench` v0.7.0)** is an open-source, **universal multi-agent Dual-Engine AI Video Studio** compatible with **Claude Code, OpenAI Codex CLI, WorkBuddy, Cursor, Windsurf, Cline, OpenCode, Antigravity, DeepSeek Harness (DSH), and Standalone Local Browser**. It exposes **48 MCP & Cordis tools** plus a visual Web Studio supporting **Remotion 4.x TSX + Three.js 3D** & **HyperFrames HTML5/Canvas**, **Reference Video Deep Reverse-Engineering & Same-Style Remake (`MOTION.md` + Brand Kit)**, high-energy beat-synced silhouette/combat historical animation (`NarrativeDioramaStage`, `HeroWarriorFigure`, `SlashBurstOverlay`, 34–54 shots), **optional one-click local TTS installer** (`Edge-TTS 0GB`, `IndexTTS-2.5`, `IndexTTS-2`, `GPT-SoVITS`, plus zero-install `Windows Native SAPI` with automatic `voices/` seeding), real-time **Hardware Preflight & Low-Spec Protection Mode** (`8GB RAM + iGPU` supported), commercial-safe OFL typography, and model-agnostic 4-protocol LLM authoring.
 
 **Vibecoding toolkit (8 tools, v0.5.3).** The AI director and coder **match tools to each video and shot** (none is mandatory; when no tool fits, the AI writes custom Canvas2D / SVG / CSS / WebGL code). Scene code can use **Three.js**, **Anime.js** (paused v4 timeline seeked per Remotion frame), **Tween.js** (three-bundled), **Ammo.js** (Bullet rigid bodies pre-simulated at a fixed step), **TSL Textures** (procedural node materials via `three/webgpu`), **Remotion** and **FFmpeg**. **SuperCollider** is optional: when `sclang` is installed, the AI writes an NRT score for the music bed after a safety gate rejects any file/system/server calls; otherwise the built-in JS DSP synthesizer is used. Readiness is shown in the Web Studio hardware panel and in `check_hardware_profile`.
+
+### What's New in v0.7.0 — your own anime presenter, edit your own footage, fill-in templates, the agent writes for you
+
+- **My anime presenter (「我的动漫形象」)**: the cartoon presenter of talking-head and screen-tutorial cuts becomes a reusable character that talks with your own voice. Make it once from your photo (anime likeness by your own cloud image service — Seedream 4.0 / Kling / Flux Kontext, a few cents per picture, price confirmed first — or free with the optional local DCT-Net model) or from a cartoon picture; mouth and eyes are found automatically and adjustable with a click. Three ways to move, chosen per video: **free** (default, every computer: a mouth shape per syllable, blinks, nods, breathing), **local model** (optional Talking Head Anime 3 install: mouth, eyes, brows, head and body; about real time on an NVIDIA GPU, much slower on CPU; ~10 GB), **cloud** (your own Vidu / Volcengine / Runway key, roughly 0.2–2.5 USD per minute, billed per second, cost confirmed before every generation, a voice is never paid for twice). When the local model or the cloud is not available the free tier is used and the reason is shown.
+- **Fine visual self-review (逐个机位看图)**: every re-framed sub-shot (wide / medium / close-up) gets its own review still (long shots about every 4 s); a punch-in that crops a title or a person is fixed locally with a looser framing (no code rewrite); rewritten shots are checked again and a batch that got worse is reverted. On by default, switchable in 画面规格 (typically 5–20 % more model cost per film).
+- **Model usage of a run**: after each production the Task Center log shows the number of model calls, input / output tokens (and pictures), grouped by stage (planning, scene code & QA, visual review …), also saved as `output/llm-usage.json`. Real cost is on your provider's bill.
+- **DSH NEXT 「视频制作模式」 preset**: on the new DSH desktop host the plugin writes its agent mode into DSH's `.agent-presets` folder (a preset you edited is kept); `node bin/dsh-video-cli.mjs install-preset` does it by hand.
+- **Works with a Codex / Claude Code subscription, no API key**: choose **「由当前智能体代写」 (host agent writes)** in Settings · 模型与密钥. Every job that needs a language model (polishing, AI-coded production, reference-video vision analysis, voice-mastering advice …) becomes a writing task that the agent you are using answers with its own model through the MCP tool `host_llm_task`. The plugin never reads or borrows the agent's login or subscription credentials.
+- **AI 剪辑 · talking-head rough cut** (local speech recognition, no model, no cost): long pauses, fillers, stutters and retakes are cut (the last take stays), captions are exactly what was said, and every cut can be undone on the transcript. **Packaging**: pop-up keywords, chapter cards, B-roll from the library matched to what is said, captions on/off, a screen-recording mode without punch-ins, and a **cartoon presenter** (a cut-out picture or a plain-background talking loop) that moves with the voice.
+- **The footage library is understood**: clips are split into shots, scored (sharpness, exposure, stability, motion) and transcribed; a long upload only contributes the window each scene needs.
+- **Vlog highlights**: a pile of clips cut to a song's beats (15 / 30 / 60 s, story order or best-first), fully local.
+- **Fill-in templates (模板填空)**: keep a plaza template's shots, rhythm, layouts, transitions and sound design, and swap in your own words, pictures, clips and music; a shot whose words change gets all its on-screen words from them, empty picture places are filled from the library, and a new song re-cuts the shots to its beats. Optionally the configured model writes all the text for a topic first.
+- **Also fixed**: vision capability detection (models that can read images are used for keyframe analysis), a shared 10-minute model timeout, a no-cost 「测试连接」 for every cloud connection, a save-location dialog for downloads, complete polishing with every named character on screen, no more 10-second held pictures in beat films (new **held-picture QA**), no production directives as on-screen text, loading on the new DSH desktop host (DSH NEXT), the MuseTalk installer (`--index-url` error; non-NVIDIA computers are told before downloading), and local voice-pack paths removed from the built-in templates.
+- **Agent interface**: new MCP tools `manage_anime_presenter`, `host_llm_task`, `transcribe_media`, `rough_cut_talking_head`, `index_footage`, `make_highlight_reel`, `speech_engine`; the cartoon presenter of `rough_cut_talking_head` can be an anime character (`characterId` + `engine`); `manage_template_plaza` gains `slots` / `fill`; `configure_llm_model` accepts `mode: 'host-agent'` — 48 MCP tools in total.
 
 ### What's New in v0.6.0 — the "AI Agent War Room" UI
 - **The war room is the workbench.** The old "classic" UI is gone: the plugin opens straight into a native AI Agent war room with three switchable skins — **C · 棱镜实验室 PRISM LAB (default)**, **A · 星舰剪辑甲板 NOVA DECK** and **B · 墨韵织机 INK LOOM**. Your choice is remembered, and projects, assets and parameters stay the same when you switch.

@@ -11,6 +11,7 @@ import {
   ensureWin11ProjectGuards,
   loadEnv,
   readScriptJson,
+  registerTool,
   REPO_ROOT,
   resolveBinaries,
   resolveBrowserExecutable,
@@ -32,10 +33,12 @@ import {
   renderHtmlVideoToMp4,
   renderRemotionProject,
   resolveCompositionAudioPlan,
+  resolveHtmlCaptureBrowser,
 } from './frame-renderer.js'
 import { enforceAudioTruePeak } from './true-peak-guard.js'
 import { enforceExposure } from './exposure-guard.js'
 import {
+  runHeldPictureAnalysis,
   runPostRenderQa,
   runTemporalQaAnalysis,
   runTypecheckOnProject,
@@ -44,7 +47,7 @@ import {
 import { DELIVERY_FORMATS, exportProjectPackage } from './delivery-export.js'
 import { applyColorLut, applyProjectColorLut, BUILTIN_LUTS, listColorLuts, renderVideoScopes, SCOPE_KINDS } from './color-tools.js'
 
-export { resolveBrowserExecutable, runPostRenderQa, runTemporalQaAnalysis, runTypecheckOnProject, scanAiGeneratedCodeSandbox }
+export { resolveBrowserExecutable, runHeldPictureAnalysis, runPostRenderQa, runTemporalQaAnalysis, runTypecheckOnProject, scanAiGeneratedCodeSandbox }
 export { applyColorLut, applyProjectColorLut, exportProjectPackage, listColorLuts, renderVideoScopes }
 
 /**
@@ -420,7 +423,7 @@ export async function executeVideoSnapshot(args = {}) {
 
   const sampleFrames = computeSampleFrames(script)
   const { ffmpeg } = resolveBinaries()
-  const browserBin = resolveBrowserExecutable()
+  const browserBin = resolveHtmlCaptureBrowser()
   const htmlEntry = join(targetDir, 'index.html')
 
   let captureMethod = 'ffmpeg-fallback'
@@ -641,7 +644,7 @@ export async function executeVideoRender(args = {}) {
   }
 
   if (!renderMethod) {
-    const browserBin = resolveBrowserExecutable()
+    const browserBin = resolveHtmlCaptureBrowser()
     const htmlEntry = join(targetDir, 'index.html')
     if (!browserBin || !existsSync(htmlEntry)) {
       throw new Error(`Cannot render HTML video: missing browser (${browserBin}) or ${htmlEntry}`)
@@ -754,7 +757,7 @@ export const name = 'dsh-tool-video-suite'
 export const inject = ['tools']
 
 export function apply(ctx) {
-  ctx.tools.register({
+  registerTool(ctx, {
     name: 'video_lint',
     description:
       'Validate a dual-engine (HTML/GSAP or Remotion) video project: checks <template> scene wrapping, DOM/SVG ID collisions, WCAG AA contrast ratio, Windows 11 local fonts, and Remotion frame-driven animation rules.',
@@ -791,7 +794,7 @@ export function apply(ctx) {
     },
   })
 
-  ctx.tools.register({
+  registerTool(ctx, {
     name: 'video_snapshot',
     description:
       'Generate a 3x3 contact sheet PNG (`snapshot-3x3.png`) by sampling 9 evenly spaced frames across the video timeline (HTML/GSAP via headless Chromium or Remotion still capture) for multimodal QA with `read_image`.',
@@ -828,7 +831,7 @@ export function apply(ctx) {
     },
   })
 
-  ctx.tools.register({
+  registerTool(ctx, {
     name: 'video_render',
     description:
       'Render the video project (HTML/GSAP or Remotion) and mix all scene WAV audio tracks via FFmpeg into a final H.264 (`yuv420p`) MP4 file.',
@@ -873,7 +876,7 @@ export function apply(ctx) {
     },
   })
 
-  ctx.tools.register({
+  registerTool(ctx, {
     name: 'export_project_package',
     description:
       'Export a delivery package into <projectDir>/output/export/: SRT/WebVTT subtitles (global timing), aligned audio stems (voice/sfx/bgm WAV), and NLE timelines — FCPXML 1.10 (Final Cut Pro / DaVinci Resolve) and Final Cut Pro 7 XML (xmeml v5, Premiere Pro / DaVinci Resolve) referencing per-scene ranges of the final MP4 plus the stems, with markers at scene cuts, musical downbeats and drops. Only documented interchange formats are produced. Optionally grade the video with a LUT first.',
@@ -906,7 +909,7 @@ export function apply(ctx) {
     },
   })
 
-  ctx.tools.register({
+  registerTool(ctx, {
     name: 'apply_color_lut',
     description:
       'Grade a rendered video with a 3D LUT via FFmpeg lut3d (tetrahedral) and an intensity mix (0–1), writing a graded copy (H.264 BT.709, audio copied) ONLY inside the project\'s output/ folder (default output/<source>.graded-<lut>.mp4). Never overwrites the source, and never overwrites an existing file unless overwrite=true is passed explicitly: an existing outputPath is refused, the default name gets a -2, -3 … suffix instead. Built-in 17³ LUTs: teal-orange, warm-film, bleach-bypass, mono-contrast, night-cool; or pass a user .cube path. Pass lut="list" to list built-ins.',
@@ -938,7 +941,7 @@ export function apply(ctx) {
     },
   })
 
-  ctx.tools.register({
+  registerTool(ctx, {
     name: 'render_video_scopes',
     description:
       'Render broadcast scopes for one timestamp of a video into output/scopes/: luma waveform, vectorscope and RGB/YUV histogram PNGs plus the analysed frame (FFmpeg waveform / vectorscope / histogram filters). Use read_image on the returned files to judge exposure, clipping and colour balance.',

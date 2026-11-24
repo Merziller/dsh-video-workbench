@@ -6,6 +6,9 @@
  * - Reuses an existing CUDA PyTorch (e.g. the IndexTTS-2.5 base interpreter) instead of downloading ~3 GB again.
  * - Every cache (uv / pip / HF / torch hub / temp) is kept under the install base, never on the system drive by default.
  * - Writes `<home>/lipsync-engine.json` and (optionally) `AVATAR_LIPSYNC_*` keys into `.env`.
+ * - Hardware gate: MuseTalk needs an NVIDIA (CUDA) GPU with >= 4 GB VRAM. Other computers are refused with a plain
+ *   explanation and the alternatives (no-lip-sync overlay, AI presenter, cloud fal LatentSync) unless `force` is set.
+ * - Every package install uses exactly ONE index (see buildPipInstallArgs).
  */
 import { spawn } from 'node:child_process'
 import {
@@ -24,7 +27,7 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { loadEnv, REPO_ROOT, resolveEnvPath } from '../shared/index.js'
+import { loadEnv, probeHardwareProfile, REPO_ROOT, resolveEnvPath } from '../shared/index.js'
 import { getLipsyncStatus, resolveLipsyncConfig } from './lipsync-engine.js'
 
 export const LIPSYNC_INSTALLER_PACKAGES = [
@@ -98,15 +101,213 @@ export const MUSETALK_WEIGHTS = [
   { repo: 'ByteDance/LatentSync', file: 'auxiliary/syncnet_v2.model', root: 'eval', rel: 'syncnet_v2.model', approxMb: 55, optional: 'eval' },
 ]
 
-export function getLipsyncInstallerCatalog() {
+// ---------------------------------------------------------------------------
+// Package indexes: exactly ONE index per install invocation
+// ---------------------------------------------------------------------------
+
+export const PYPI_INDEX_URLS = Object.freeze({
+  cn: 'https://pypi.tuna.tsinghua.edu.cn/simple',
+  global: 'https://pypi.org/simple',
+})
+// Official PyTorch CUDA 12.8 wheel index (RTX 50 series / Blackwell ready). It also carries torch's own dependencies,
+// so — exactly like the official install command — it is the only index of the torch install. A PyPI mirror is never
+// added there: on Windows PyPI only has the CPU-only torch build.
+export const TORCH_CUDA_INDEX_URL = 'https://download.pytorch.org/whl/cu128'
+export const MUSETALK_TORCH_PACKAGES = ['torch==2.8.0', 'torchvision==0.23.0']
+
+/** The single index a package group installs from: 'torch' → the PyTorch CUDA index, anything else → PyPI / its CN mirror. */
+export function resolvePackageIndex(group, mirror = 'cn') {
+  if (group === 'torch') return TORCH_CUDA_INDEX_URL
+  return String(mirror || 'cn').toLowerCase() === 'global' ? PYPI_INDEX_URLS.global : PYPI_INDEX_URLS.cn
+}
+
+// Flags that add or replace a package source. The builder owns the one index, so they are never accepted as extras.
+const SOURCE_FLAG_RX = /^(?:-[if].*|--(?:index-url|extra-index-url|index|default-index|find-links|no-index|index-strategy|torch-backend)(?:=.*)?)$/
+
+/**
+ * Arguments of one `uv pip install` / `python -m pip install` call with exactly one package index.
+ * uv refuses a repeated `--index-url` ("cannot be used multiple times"), and an `--extra-index-url` would not be a
+ * fallback either: uv searches extra indexes FIRST and by default takes a package from the first index that has it
+ * (e.g. a mirror's CPU-only torch would win over the CUDA build). So every package group gets its own call with its
+ * own single index (resolvePackageIndex).
+ *   uv:  ['pip', 'install', '--python', <venv python>, '--index-url', <index>, ...extraArgs, ...packages]  (run with uv)
+ *   pip: ['-m', 'pip', 'install', '--index-url', <index>, ...extraArgs, ...packages]                       (run with the venv python)
+ */
+export function buildPipInstallArgs({ uv = false, python = '', packages = [], indexUrl = '', extraArgs = [] } = {}) {
+  const pkgs = (Array.isArray(packages) ? packages : [packages]).map((p) => String(p || '').trim()).filter(Boolean)
+  if (!pkgs.length) throw new Error('buildPipInstallArgs: no packages to install')
+  const index = String(indexUrl || '').trim()
+  if (!/^https?:\/\/\S+$/i.test(index)) throw new Error('buildPipInstallArgs: exactly one http(s) index URL is required')
+  if (uv && !String(python || '').trim()) throw new Error('buildPipInstallArgs: uv needs the target environment python (--python)')
+  const extra = (Array.isArray(extraArgs) ? extraArgs : []).map(String)
+  const bad = extra.find((a) => SOURCE_FLAG_RX.test(a))
+  if (bad) throw new Error(`buildPipInstallArgs: "${bad}" would add a second package source (one index per install)`)
+  return uv
+    ? ['pip', 'install', '--python', String(python), '--index-url', index, ...extra, ...pkgs]
+    : ['-m', 'pip', 'install', '--index-url', index, ...extra, ...pkgs]
+}
+
+// Package-source settings inherited from the user's environment would bring a second source back into an install
+// (uv searches UV_INDEX / UV_EXTRA_INDEX_URL before --index-url; UV_TORCH_BACKEND replaces the torch index), so the
+// install commands run without them. Keys set to `undefined` are left out of the child environment.
+export const INHERITED_INDEX_ENV_KEYS = Object.freeze([
+  'UV_INDEX',
+  'UV_EXTRA_INDEX_URL',
+  'UV_DEFAULT_INDEX',
+  'UV_INDEX_URL',
+  'UV_FIND_LINKS',
+  'UV_TORCH_BACKEND',
+  'PIP_INDEX_URL',
+  'PIP_EXTRA_INDEX_URL',
+  'PIP_FIND_LINKS',
+])
+export function withoutInheritedIndexEnv(env = {}) {
+  const out = { ...env }
+  for (const key of INHERITED_INDEX_ENV_KEYS) out[key] = undefined
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// Hardware gate: MuseTalk 1.5 needs an NVIDIA (CUDA) GPU with >= 4 GB VRAM
+// ---------------------------------------------------------------------------
+
+export const MUSETALK_MIN_VRAM_GB = 4
+// a "4 GB" card reports 4095 MiB, some laptop parts a little less
+const VRAM_TOLERANCE_GB = 0.25
+// Windows WMI reports AdapterRAM as a 32-bit value: anything from ~4 GB up reads as ~4 GB
+const WMI_VRAM_CAP_GB = 3.9
+const NVIDIA_NAME_RX = /nvidia|geforce|quadro|tesla|titan|\brtx\b|\bgtx\b/i
+
+const fmtGb = (gb) => {
+  const v = Number(gb) || 0
+  return `${v >= 9.5 ? Math.round(v) : v.toFixed(1).replace(/\.0$/, '')} GB`
+}
+
+/** What a computer that is not suited for MuseTalk can use instead (plain words, no UI positions). */
+export function lipsyncAlternatives({ cloudReady = false } = {}) {
+  return [
+    {
+      id: 'composite',
+      title: '不装也能正常出片',
+      text: '克隆真人口播时如果没有口型引擎，会自动改用「无口型合成叠层」：画面里还是你本人，配音照常播放，只是嘴型不会跟着声音动。',
+    },
+    {
+      id: 'ai-human',
+      title: '改用「纯 AI 主播形象」',
+      text: '在数字人设置里把「形象来源」选成「纯 AI 主播形象」，嘴型会跟着配音自动动起来，不需要显卡。',
+    },
+    cloudReady
+      ? {
+          id: 'cloud-fal',
+          title: '已配置云端 fal LatentSync 口型同步',
+          text: '已检测到 fal.ai 密钥：克隆真人口播会自动交给云端对口型，不占用这台电脑的显卡（需要联网，按次计费）。',
+        }
+      : {
+          id: 'cloud-fal',
+          title: '需要真人对口型：用云端 fal LatentSync（按次付费）',
+          text: '在插件的 .env 设置文件里填写 AVATAR_LIPSYNC_CLOUD_API_KEY=你的 fal.ai 密钥，口型同步就会交给云端完成，不占用这台电脑的显卡（需要联网，按次计费）。',
+        },
+  ]
+}
+
+/**
+ * Pure decision: is this computer suitable for local MuseTalk 1.5?
+ * `profile` has the shape of probeHardwareProfile() (packages/shared/hardware-guard.js): `gpu.hasNvidiaCuda` is true when
+ * nvidia-smi answered, and its entries in `gpu.all` (vendor 'nvidia' + `freeVramGB`) carry the exact VRAM.
+ * → { suitable, code: 'OK' | 'NVIDIA_UNVERIFIED' | 'VRAM_LOW' | 'NO_NVIDIA', gpuName, vendor, vramGB, minVramGb,
+ *     title, message, alternatives }
+ * An NVIDIA card whose VRAM cannot be read (nvidia-smi missing, old driver) is never blocked: 'NVIDIA_UNVERIFIED'.
+ */
+export function assessLipsyncHardware(profile, { minVramGb = MUSETALK_MIN_VRAM_GB, cloudReady = false } = {}) {
+  const need = Number(minVramGb) > 0 ? Number(minVramGb) : MUSETALK_MIN_VRAM_GB
+  const gpu = (profile && profile.gpu) || {}
+  const all = (Array.isArray(gpu.all) ? gpu.all : []).filter((g) => g && String(g.name || '').trim())
+  const isNvidia = (g) => g.vendor === 'nvidia' || NVIDIA_NAME_RX.test(String(g.name))
+  const byVram = (a, b) => (Number(b.vramGB) || 0) - (Number(a.vramGB) || 0)
+  let smi = gpu.hasNvidiaCuda ? all.filter((g) => isNvidia(g) && g.freeVramGB !== undefined).sort(byVram) : []
+  if (gpu.hasNvidiaCuda && !smi.length && gpu.vendor === 'nvidia' && gpu.primaryName) {
+    smi = [{ name: gpu.primaryName, vendor: 'nvidia', vramGB: gpu.vramGB }]
+  }
+  const wmiNvidia = all.filter(isNvidia).sort(byVram)
+  const base = { minVramGb: need, alternatives: lipsyncAlternatives({ cloudReady }) }
+  const result = (suitable, code, g, title, message) => ({
+    ...base,
+    suitable,
+    code,
+    gpuName: g ? String(g.name).trim() : '',
+    vendor: g ? String(g.vendor || '') : '',
+    vramGB: g && Number(g.vramGB) > 0 ? Number(Number(g.vramGB).toFixed(2)) : null,
+    title,
+    message,
+  })
+
+  const best = smi[0]
+  if (best) {
+    const v = Number(best.vramGB) || 0
+    if (v + VRAM_TOLERANCE_GB >= need) {
+      return result(true, 'OK', best, '这台电脑可以安装 MuseTalk', `检测到 NVIDIA 显卡「${best.name}」，显存 ${fmtGb(v)}，满足 MuseTalk 1.5 的要求（NVIDIA 显卡、显存至少 ${need} GB）。`)
+    }
+    return result(false, 'VRAM_LOW', best, '显卡显存不够，不建议安装 MuseTalk', `MuseTalk 1.5 需要显存至少 ${need} GB 的 NVIDIA 显卡。这台电脑的「${best.name}」只有 ${fmtGb(v)} 显存，装好后口型同步很可能失败或特别慢，还会白白占用约 5 GB 硬盘。`)
+  }
+  const nv = wmiNvidia[0]
+  if (nv) {
+    const v = Number(nv.vramGB) || 0
+    if (v > 0 && v < WMI_VRAM_CAP_GB && v + VRAM_TOLERANCE_GB < need) {
+      return result(false, 'VRAM_LOW', nv, '显卡显存不够，不建议安装 MuseTalk', `MuseTalk 1.5 需要显存至少 ${need} GB 的 NVIDIA 显卡。这台电脑的「${nv.name}」只有 ${fmtGb(v)} 显存，装好后口型同步很可能失败或特别慢，还会白白占用约 5 GB 硬盘。`)
+    }
+    return result(true, 'NVIDIA_UNVERIFIED', nv, '检测到 NVIDIA 显卡，但读不到显存大小', `检测到「${nv.name}」，但没能读出它的显存大小（通常是 NVIDIA 显卡驱动没装好或版本太旧）。MuseTalk 1.5 需要显存至少 ${need} GB，建议先把 NVIDIA 显卡驱动更新到最新版再安装。`)
+  }
+  const other = all.slice().sort(byVram)[0] || (gpu.primaryName && gpu.vendor !== 'integrated' ? { name: gpu.primaryName, vendor: gpu.vendor, vramGB: gpu.vramGB } : null)
+  return result(
+    false,
+    'NO_NVIDIA',
+    other,
+    '这台电脑不适合安装 MuseTalk',
+    other
+      ? `MuseTalk 1.5 只能用 NVIDIA（英伟达）显卡运行，并且显存至少要 ${need} GB。这台电脑的显卡是「${String(other.name).trim()}」，不是 NVIDIA 显卡，装好后也用不起来，还会白白占用约 5 GB 硬盘。`
+      : `MuseTalk 1.5 只能用 NVIDIA（英伟达）显卡运行，并且显存至少要 ${need} GB。这台电脑没有检测到 NVIDIA 显卡，装好后也用不起来，还会白白占用约 5 GB 硬盘。`,
+  )
+}
+
+/** The hardware gate of this computer (cached hardware probe + whether a cloud lip-sync key is configured). */
+export function getLipsyncHardwareGate({ profile = null, forceRefresh = false, cfg = null } = {}) {
+  let hw = profile
+  if (!hw) {
+    try {
+      hw = probeHardwareProfile({ targetDir: REPO_ROOT, forceRefresh })
+    } catch {
+      hw = null
+    }
+  }
+  let cloudReady = false
+  try {
+    cloudReady = Boolean((cfg || resolveLipsyncConfig()).cloud.apiKey)
+  } catch {}
+  return assessLipsyncHardware(hw, { cloudReady })
+}
+
+/** Error thrown when the gate refuses an install that was not forced (code LIPSYNC_GPU_UNSUITABLE, HTTP 409). */
+export function lipsyncHardwareRefusal(gate) {
+  const err = new Error(`${gate.title}：${gate.message}（如果确定仍要安装：在面板里点「仍要安装」，或在命令行加 --force）`)
+  err.code = 'LIPSYNC_GPU_UNSUITABLE'
+  err.status = 409
+  err.expose = true
+  err.gate = gate
+  return err
+}
+
+export function getLipsyncInstallerCatalog({ hardwareProfile = null } = {}) {
   const cfg = resolveLipsyncConfig()
+  const hardware = getLipsyncHardwareGate({ profile: hardwareProfile, cfg })
   return {
     defaultHome: cfg.home,
     configuredEngine: cfg.engine,
+    hardware,
     packages: LIPSYNC_INSTALLER_PACKAGES.map((pkg) => ({
       ...pkg,
       installed: pkg.id === 'musetalk' ? Boolean(cfg.musetalk.installed) : false,
       defaultDir: cfg.home,
+      suitable: pkg.id === 'musetalk' ? hardware.suitable : true,
     })),
   }
 }
@@ -347,6 +548,10 @@ export async function installLipsyncEngine(options = {}) {
     writeEnv = true,
     skipModelDownload = false,
     cacheDir = '',
+    // install even when the hardware gate says this computer has no suitable NVIDIA GPU (UI 「仍要安装」 / CLI --force)
+    force = false,
+    // probeHardwareProfile()-shaped profile; probed live when omitted
+    hardwareProfile = null,
     signal,
     onProgress,
   } = options
@@ -354,16 +559,20 @@ export async function installLipsyncEngine(options = {}) {
   const pkg = LIPSYNC_INSTALLER_PACKAGES.find((p) => p.id === engineId)
   if (!pkg) throw new Error(`不支持的唇形同步引擎: ${engineId}（当前支持: musetalk）`)
 
+  // Hardware gate first: nothing is downloaded on a computer that cannot run MuseTalk unless explicitly forced
+  const gate = getLipsyncHardwareGate({ profile: hardwareProfile })
+  if (!gate.suitable && !force) throw lipsyncHardwareRefusal(gate)
+
   const logs = []
   const emit = (progress, message) => {
     logs.push(message)
     if (logs.length > 200) logs.shift()
     onProgress?.({ stage: 'lipsync-install', progress, message, logs: logs.slice(-24) })
   }
+  emit(1, gate.suitable ? `显卡检查：${gate.message}` : `⚠ ${gate.title}：已按你的要求仍然安装（${gate.message}）`)
 
   const useCn = String(mirror || 'cn').toLowerCase() !== 'global'
   const hfEndpoint = String(process.env.HF_ENDPOINT || '').trim() || (useCn ? 'https://hf-mirror.com' : 'https://huggingface.co')
-  const pypiIndex = useCn ? 'https://pypi.tuna.tsinghua.edu.cn/simple' : 'https://pypi.org/simple'
 
   const cfg = resolveLipsyncConfig()
   const home = resolve(installDir || cfg.home)
@@ -479,13 +688,26 @@ export async function installLipsyncEngine(options = {}) {
     emit(22, `检测到已有虚拟环境 ${venvDir}，继续补齐依赖`)
   }
 
-  // 4. Python packages
-  const pipInstall = async (pkgs, extraArgs = [], progress = 40) => {
-    const args = uv
-      ? ['pip', 'install', '--python', venvPy, '--index-url', pypiIndex, ...extraArgs, ...pkgs]
-      : ['-m', 'pip', 'install', '-i', pypiIndex, ...extraArgs, ...pkgs]
+  // 4. Python packages — one install call per package group, each with exactly one index (buildPipInstallArgs)
+  const pipEnv = withoutInheritedIndexEnv(childEnv)
+  if (!uv) {
+    // a venv made by `uv venv` (e.g. by an earlier attempt) has no pip of its own
+    const pipCheck = await streamCmd(venvPy, ['-m', 'pip', '--version'], { env: pipEnv, timeoutMs: 120_000, signal }).catch((err) => {
+      if (err?.name === 'AbortError') throw err
+      return { code: 1 }
+    })
+    if (pipCheck.code !== 0) {
+      emit(24, '虚拟环境里还没有 pip，正在用 ensurepip 补齐...')
+      const ep = await streamCmd(venvPy, ['-m', 'ensurepip', '--upgrade'], { env: pipEnv, timeoutMs: 300_000, signal })
+      if (ep.code !== 0) throw new Error(`虚拟环境缺少 pip 且自动补齐失败（安装 uv 后重试即可）: ${(ep.stderr || ep.stdout).slice(-300)}`)
+    }
+  }
+  const pipInstall = async (pkgs, { group = 'pypi', extraArgs = [], progress = 40 } = {}) => {
+    const indexUrl = resolvePackageIndex(group, mirror)
+    const args = buildPipInstallArgs({ uv: Boolean(uv), python: venvPy, packages: pkgs, indexUrl, extraArgs })
+    emit(progress, `[${uv ? 'uv' : 'pip'}] 下载源 ${indexUrl}`)
     const res = await streamCmd(uv ? uv.bin : venvPy, args, {
-      env: childEnv,
+      env: pipEnv,
       timeoutMs: 3_600_000,
       signal,
       onLine: (l) => emit(progress, `[${uv ? 'uv' : 'pip'}] ${l.slice(0, 140)}`),
@@ -493,12 +715,13 @@ export async function installLipsyncEngine(options = {}) {
     if (res.code !== 0) throw new Error(`安装 Python 依赖失败: ${(res.stderr || res.stdout).slice(-500)}`)
   }
   if (!reuse) {
-    emit(28, '正在安装 PyTorch 2.8 (CUDA 12.8, 支持 RTX 50 系 Blackwell)...')
-    await pipInstall(['torch==2.8.0', 'torchvision==0.23.0'], ['--index-url', 'https://download.pytorch.org/whl/cu128'], 30)
-    await pipInstall(MUSETALK_FRESH_BASE_PACKAGES, [], 36)
+    // torch only from the official PyTorch CUDA index (no CN mirror carries the CUDA wheels), the rest from PyPI / mirror
+    emit(28, '正在从 PyTorch 官方源安装 PyTorch 2.8 (CUDA 12.8, 支持 RTX 50 系 Blackwell，约 3 GB)...')
+    await pipInstall(MUSETALK_TORCH_PACKAGES, { group: 'torch', progress: 30 })
+    await pipInstall(MUSETALK_FRESH_BASE_PACKAGES, { progress: 36 })
   }
   emit(40, `正在安装 MuseTalk 推理依赖（免 mmcv/mmpose 编译）：${MUSETALK_EXTRA_PACKAGES.join(' ')}`)
-  await pipInstall(MUSETALK_EXTRA_PACKAGES, ['--no-deps'], 44)
+  await pipInstall(MUSETALK_EXTRA_PACKAGES, { extraArgs: ['--no-deps'], progress: 44 })
 
   // 5. Verify imports inside the new environment
   emit(50, '正在校验 Python 运行环境 (torch / diffusers / transformers / cv2 / face_alignment)...')
@@ -630,6 +853,7 @@ export async function installLipsyncEngine(options = {}) {
     env: envWrite,
     status,
     usage,
+    hardware: gate,
     logs,
   }
 }
