@@ -709,6 +709,20 @@ function collectProjectSourceFiles(projectDir) {
 /**
  * Handle API calls from the frontend Video Workbench UI (`/api/video-workbench/*`).
  */
+/**
+ * What this studio is doing right now: live pipeline runs (queued / running / paused) and running background jobs
+ * (renders, clips, rough cuts …). The studio launcher never restarts a studio in the middle of either.
+ */
+export function workbenchActivity() {
+  let jobs = 0
+  for (const j of ASYNC_JOBS.values()) if (j.status === 'running') jobs++
+  let runs = 0
+  try {
+    runs = taskManager.listRuns().filter((r) => r.status === 'queued' || r.status === 'running' || r.status === 'paused').length
+  } catch {}
+  return { runs, jobs }
+}
+
 export async function handleWorkbenchApiRequest(req) {
   const url = new URL(req.url, 'http://localhost')
   const pathname = url.pathname

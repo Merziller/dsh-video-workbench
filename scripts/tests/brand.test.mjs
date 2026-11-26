@@ -34,6 +34,7 @@ if (!process.env.DSH_ASR_AUTO_INSTALL) process.env.DSH_ASR_AUTO_INSTALL = '0'
 
 const imp = (rel) => import(pathToFileURL(join(ROOT, ...rel.split('/'))).href)
 const read = (rel) => readFileSync(join(ROOT, ...rel.split('/')), 'utf8').replace(/\r\n/g, '\n')
+const PKG = JSON.parse(read('package.json'))
 const results = []
 const check = (name, ok, detail = '') => {
   results.push({ name, ok: Boolean(ok) })
@@ -151,7 +152,7 @@ await section('LICENSE · NOTICE · README · agent docs · market entry', async
   check('NOTICE: dual copyright, studio, contacts and the origin statement', notice.includes(COPYRIGHT) && notice.includes(`禾杨智绘 · ${STUDIO}`) && notice.includes(BRAND.origin) && AUTHOR.every((t) => notice.includes(t)))
   check('NOTICE: third-party notices kept (AutoClip MIT, OFL fonts)', notice.includes('Third-party notices') && notice.includes('AutoClip') && /OFL|Open Font License/.test(notice))
   const readme = read('README.md')
-  check('README: title shows the short name, package name unchanged', readme.split('\n')[0] === `# 🎬 ${NAME} · DSH Video Workbench (\`dsh-video-workbench\` · v0.8.0)`)
+  check('README: title shows the short name, package name unchanged', readme.split('\n')[0] === `# 🎬 ${NAME} · DSH Video Workbench (\`dsh-video-workbench\` · v${PKG.version})`)
   check('README: copyright section has the dual copyright, the studio, the origin statement and the commercial note', readme.includes(`\`${COPYRIGHT}\``) && readme.includes(`**出品工作室 / Studio**：**禾杨智绘**（${STUDIO}）`) && readme.includes(BRAND.origin) && readme.includes('商业免配整合包与企业定制'))
   check('README: author badges and contacts kept, anchors unchanged', AUTHOR.every((t) => readme.includes(t)) && readme.includes('## 📬 联系作者与原创版权声明 (Author & Copyright)') && count(readme, '(#-联系作者与原创版权声明-author--copyright)') >= 5)
   check('README: English contact block carries the copyright and the studio', readme.includes(`- **Copyright**: \`${COPYRIGHT}\``) && readme.includes(`- **Studio**: **禾杨智绘** (${STUDIO})`))
@@ -160,7 +161,7 @@ await section('LICENSE · NOTICE · README · agent docs · market entry', async
   check('AGENTS.md / SKILL.md: short name + dual copyright in the header; identifiers rule', agents.includes(COPYRIGHT) && skill.includes(COPYRIGHT) && agents.split('\n')[0].includes(NAME) && /\n# .*禾杨视频工坊/.test(skill) && agents.includes('Never rename identifiers'))
   check('SKILL.md frontmatter name unchanged', /^---\nname: dsh-video-workbench\n/.test(skill))
   const entry = read('docs/awesome-dsh-plugin-entry.yml')
-  check('market entry template: v0.8.0 tarball, 49 tools, short name and dual copyright', entry.includes('releases/download/v0.8.0/dsh-video-workbench-0.8.0.tgz') && entry.includes('49 MCP') && entry.includes(NAME) && entry.includes(COPYRIGHT) && entry.includes('name: Merziller/dsh-video-workbench'))
+  check(`market entry template: v${PKG.version} tarball, 49 tools, short name and dual copyright`, entry.includes(`releases/download/v${PKG.version}/dsh-video-workbench-${PKG.version}.tgz`) && entry.includes('49 MCP') && entry.includes(NAME) && entry.includes(COPYRIGHT) && entry.includes('name: Merziller/dsh-video-workbench'))
   for (const f of ['LICENSE', 'NOTICE', 'package.json', 'README.md', 'index.js', 'bin/dsh-video-mcp.mjs', 'packages/dsh-web-video-workbench/lib/client.js', '.claude-plugin/plugin.json']) {
     const t = read(f)
     check(`attribution kept in ${f} (Merziller · QQ · Gmail)`, AUTHOR.every((x) => t.includes(x)))

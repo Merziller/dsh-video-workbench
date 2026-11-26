@@ -12,7 +12,7 @@ This repository is a **universal, agent-agnostic Dual-Engine AI Video Studio** c
    ```bash
    node ./bin/dsh-video-mcp.mjs
    ```
-3. Launch the standalone visual Web Studio — the **AI Agent War Room** with three switchable skins (default **棱镜实验室 Prism Lab**, plus **星舰剪辑甲板 Nova Deck** and **墨韵织机 Ink Loom**) — silently in background (zero black CMD window on Windows; stop via `stop-workbench.cmd` or `node ./bin/dsh-video-cli.mjs stop`):
+3. Launch the standalone visual Web Studio — the **AI Agent War Room** with three switchable skins (default **棱镜实验室 Prism Lab**, plus **星舰剪辑甲板 Nova Deck** and **墨韵织机 Ink Loom**) — silently in background (zero black CMD window on Windows; stop via `stop-workbench.cmd` or `node ./bin/dsh-video-cli.mjs stop`; after a plugin update, starting it again replaces a background studio that still runs the old code — never in the middle of a render):
    ```bash
    node ./bin/dsh-video-cli.mjs studio --open
    ```

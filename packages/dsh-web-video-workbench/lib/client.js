@@ -859,6 +859,9 @@ window.__ModuleLoader__?.load({
       // War-room skin bridge state: 'loading' until the skin posts dsh-vw/ready, 'failed' → recovery screen (retry / other skin)
       const [warSkinPhase, setWarSkinPhase] = useState('loading')
       const [warSkinCatalog, setWarSkinCatalog] = useState(null) // null = pending · false = unknown (assume installed) · { [skinId]: available }
+      // the local service is older than this page (a background studio / DSH started before the plugin was updated):
+      // it has no war-room routes, so every skin would only time out
+      const [warServerStale, setWarServerStale] = useState(false)
       const [warSkinReloadKey, setWarSkinReloadKey] = useState(0)
       // Bumped after every completed /state load — lets the in-skin panels know their cached data is stale
       const [stateRev, setStateRev] = useState(0)
@@ -2756,7 +2759,7 @@ window.__ModuleLoader__?.load({
       const warSkinMeta = WARROOM_SKINS.find((s) => s.id === warSkin) || null
       const warSkinPending = Boolean(warSkinMeta) && warSkinCatalog === null
       const warSkinAvailable = Boolean(warSkinMeta) && (warSkinCatalog === false || Boolean(warSkinCatalog && warSkinCatalog[warSkinMeta.id] !== false))
-      const warSkinActive = (warSkinPending || warSkinAvailable) && warSkinPhase !== 'failed'
+      const warSkinActive = !warServerStale && (warSkinPending || warSkinAvailable) && warSkinPhase !== 'failed'
       const warSkinReady = warSkinActive && warSkinPhase === 'ready'
       const warSkinTargetOrigin = (() => {
         try {
@@ -2769,9 +2772,13 @@ window.__ModuleLoader__?.load({
 
       const refreshWarSkinCatalog = useCallback(() => {
         connFetch('/api/video-workbench/warroom/skins')
-          .then((r) => r.json())
-          .then((d) => {
-            if (d?.ok && Array.isArray(d.skins)) setWarSkinCatalog(Object.fromEntries(d.skins.map((s) => [s.id, Boolean(s.available)])))
+          .then(async (r) => {
+            const d = await r.json().catch(() => null)
+            // 404: the service (a background studio, or DSH with the plugin loaded before an update) still runs code from
+            // before the war room existed — every version since v0.6.0 answers this route
+            const stale = Number(r?.status) === 404
+            setWarServerStale(stale)
+            if (!stale && d?.ok && Array.isArray(d.skins)) setWarSkinCatalog(Object.fromEntries(d.skins.map((s) => [s.id, Boolean(s.available)])))
             else setWarSkinCatalog((c) => c || false)
           })
           .catch(() => setWarSkinCatalog((c) => c || false))
@@ -3978,6 +3985,16 @@ window.__ModuleLoader__?.load({
         fontWeight: 800,
         cursor: 'pointer',
       })
+      const warSkinFailTitle = warServerStale
+        ? '工作台的后台程序还是旧版本，需要重新启动'
+        : `作战大屏「${warSkinMeta ? `${warSkinMeta.short} · ${warSkinMeta.name}` : warSkin}」${warSkinAvailable ? '加载超时' : '尚未安装'}`
+      const warSkinFailText = warServerStale
+        ? isStandaloneHost
+          ? '插件已经更新，但电脑后台还在运行更新之前启动的工作台程序，新页面和它对不上，三套大屏都打不开。请关掉这个页面，重新双击插件文件夹里的 start-workbench.vbs（会自动换成新版；后台正在出片时，会等它出完再换）。仍然这样的话，先双击 stop-workbench.cmd，再双击 start-workbench.vbs。'
+          : '插件已经更新，但 DSH 里还在运行更新之前的插件程序，新页面和它对不上，三套大屏都打不开。请完全退出 DSH 再重新打开。'
+        : warSkinAvailable
+          ? '大屏在 9 秒内没有响应（电脑繁忙或页面脚本出错时会出现）。请点「重新载入」，或先切换到另一套大屏继续创作。'
+          : '插件里缺少这套大屏的文件，请更新或重新安装插件；也可以先切换到另一套大屏继续创作。'
       const warSkinFailView = !warSkinActive
         ? h(
             'div',
@@ -3986,18 +4003,8 @@ window.__ModuleLoader__?.load({
               'div',
               { style: { width: '100%', maxWidth: '540px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', color: skinInk, textAlign: 'center' } },
               h('div', { style: { width: '42px', height: '42px', borderRadius: '50%', border: `2px solid ${skinSwatch}`, display: 'grid', placeItems: 'center', fontSize: '20px', fontWeight: 900, color: skinSwatch } }, '!'),
-              h(
-                'div',
-                { style: { fontSize: '18px', fontWeight: 800, lineHeight: 1.5 } },
-                `作战大屏「${warSkinMeta ? `${warSkinMeta.short} · ${warSkinMeta.name}` : warSkin}」${warSkinAvailable ? '加载超时' : '尚未安装'}`,
-              ),
-              h(
-                'div',
-                { style: { fontSize: '13px', lineHeight: 1.75, opacity: 0.82 } },
-                warSkinAvailable
-                  ? '大屏在 9 秒内没有响应（电脑繁忙或页面脚本出错时会出现）。请点「重新载入」，或先切换到另一套大屏继续创作。'
-                  : '插件里缺少这套大屏的文件，请更新或重新安装插件；也可以先切换到另一套大屏继续创作。',
-              ),
+              h('div', { style: { fontSize: '18px', fontWeight: 800, lineHeight: 1.5 } }, warSkinFailTitle),
+              h('div', { style: { fontSize: '13px', lineHeight: 1.75, opacity: 0.82 } }, warSkinFailText),
               h(
                 'div',
                 { style: { display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' } },
@@ -4012,11 +4019,14 @@ window.__ModuleLoader__?.load({
                     },
                     style: recoverBtn(true),
                   },
-                  '重新载入',
+                  warServerStale ? '已重新启动，再检测一次' : '重新载入',
                 ),
-                ...WARROOM_SKINS.filter((sk) => sk.id !== warSkin).map((sk) =>
-                  h('button', { key: sk.id, type: 'button', onClick: () => changeWarSkin(sk.id), style: recoverBtn(false) }, `改用 ${sk.short} · ${sk.name}`),
-                ),
+                // another skin cannot help while the service itself is outdated
+                ...(warServerStale
+                  ? []
+                  : WARROOM_SKINS.filter((sk) => sk.id !== warSkin).map((sk) =>
+                      h('button', { key: sk.id, type: 'button', onClick: () => changeWarSkin(sk.id), style: recoverBtn(false) }, `改用 ${sk.short} · ${sk.name}`),
+                    )),
               ),
             ),
           )

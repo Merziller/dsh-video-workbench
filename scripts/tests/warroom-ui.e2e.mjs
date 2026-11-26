@@ -55,6 +55,9 @@ const { handleWorkbenchApiRequest } = await import('../../packages/dsh-web-video
 // the studio runner's own guard + forwarding, so this test exercises exactly what the user's studio runs
 const { standaloneShellHtml, apiRequestRejection, forwardApiRequest, sendJson, API_FORBIDDEN_MESSAGE } = await import('../dsh-runner.mjs')
 
+// on: answer like a background studio started before the war room existed (no war-room routes) — the page must say
+// that the service is outdated instead of letting every skin time out
+let simulateOutdatedService = false
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://127.0.0.1:${PORT}`)
@@ -64,6 +67,10 @@ const server = createServer(async (req, res) => {
         sendJson(res, 403, { ok: false, error: API_FORBIDDEN_MESSAGE, reason: why })
         return
       }
+    }
+    if (simulateOutdatedService && url.pathname.startsWith('/api/video-workbench/warroom/')) {
+      sendJson(res, 404, { ok: false, error: `Route not found: ${url.pathname}` })
+      return
     }
     if (url.pathname.startsWith('/api/video-workbench/')) {
       await forwardApiRequest(req, res, url, handleWorkbenchApiRequest)
@@ -737,6 +744,36 @@ try {
     // back to the first project (the optional one-click run below uses its brief)
     await evaluate(`${SW}.PK.action('selectProject', { dir: ${JSON.stringify(created || '')} }).then(() => true, () => false)`)
     await waitFor(`${SW}.PK.state.project && ${SW}.PK.state.project.dir === ${JSON.stringify(created || '')}`, 20000, 'first project again').catch(() => {})
+  }
+
+  // A service older than the page (a background studio started before the plugin was updated: no war-room routes):
+  // the page says so at once — restart, not 「加载超时」 / 「改用另一套」 — and recovers after 「再检测一次」
+  {
+    simulateOutdatedService = true
+    await viewport(1600, 900)
+    await cdp('Page.navigate', { url: BASE })
+    const seen = await waitFor(`/后台程序还是旧版本/.test(document.body.innerText) && /start-workbench\\.vbs/.test(document.body.innerText) && !/加载超时|改用 /.test(document.body.innerText)`, 30000, 'outdated-service card').then(() => true, () => false)
+    for (const [w, hgt] of VIEWPORTS) {
+      await viewport(w, hgt)
+      await sleep(600)
+      const issues = await evaluate(`(() => {
+        const card = document.querySelector('[role=alert]'); if (!card) return ['no card']
+        const vis = (e) => { const s = getComputedStyle(e); return s.display !== 'none' && s.visibility !== 'hidden' }
+        const texts = [...card.querySelectorAll('*')].filter((e) => vis(e) && [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()))
+        const R = texts.map((e) => [e, e.getBoundingClientRect()]).filter(([, r]) => r.width > 1 && r.height > 1), bad = []
+        for (let i = 0; i < R.length; i++) for (let j = i + 1; j < R.length; j++) { const [a, ra] = R[i], [b, rb] = R[j]; if (a.contains(b) || b.contains(a)) continue
+          if (Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left) > 2 && Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top) > 2) bad.push('OVERLAP ' + a.textContent.trim().slice(0, 20) + ' ⟂ ' + b.textContent.trim().slice(0, 20)) }
+        for (const [e, r] of R) { if (e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).overflowX !== 'visible') bad.push('CLIPPED ' + e.textContent.trim().slice(0, 24))
+          if (r.right > innerWidth + 1 || r.left < -1 || r.bottom > innerHeight + 1 || r.top < -1) bad.push('OFFSCREEN ' + e.textContent.trim().slice(0, 24)) }
+        return bad })()`)
+      await shot(`outdated-service-${w}x${hgt}`)
+      check(`outdated background service: plain restart advice, no skin timeout @${w}x${hgt}`, seen && issues.length === 0, JSON.stringify({ seen, issues }))
+    }
+    simulateOutdatedService = false
+    await viewport(1600, 900)
+    await evaluate(`(() => { const b = [...document.querySelectorAll('[role=alert] button')].find((x) => /再检测一次/.test(x.textContent)); if (b) b.click(); return Boolean(b) })()`)
+    const back = await waitFor(`${SW} && ${SW}.PK && ${SW}.PK.state && !document.querySelector('[role=alert]')`, 30000, 'skin back after restart').then(() => true, () => false)
+    check('outdated background service: 「再检测一次」 loads the war room once the service is current', back)
   }
 
   // optional: real local-draft one-click run through the skin

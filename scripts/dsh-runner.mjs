@@ -1,6 +1,7 @@
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -19,6 +20,7 @@ import PresetVideoPlugin from '../packages/dsh-preset-video/index.js'
 import WebVideoWorkbenchPlugin, {
   handleWorkbenchApiRequest,
   listVideoProjects,
+  workbenchActivity,
 } from '../packages/dsh-web-video-workbench/lib/index.js'
 
 /**
@@ -154,6 +156,48 @@ export async function forwardApiRequest(req, res, url, handler) {
       } catch {}
     }
   }
+}
+
+/**
+ * Fingerprint of the plugin code on disk: the package version plus the size and modification time of every
+ * .js / .mjs / .cjs file the studio loads (packages/, bin/, index.js, this runner). A background studio keeps running
+ * the code it started with; when the plugin folder is updated while it runs, its routes no longer match the pages it
+ * serves from disk. The launcher compares this stamp and restarts such a studio instead of reusing it.
+ */
+export function pluginCodeStamp(root = PACKAGE_ROOT) {
+  let version = ''
+  try {
+    version = String(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version || '')
+  } catch {}
+  const lines = []
+  const add = (abs, rel) => {
+    try {
+      const st = statSync(abs)
+      if (st.isFile()) lines.push(`${rel}:${st.size}:${Math.round(st.mtimeMs)}`)
+    } catch {}
+  }
+  const walk = (dir, rel) => {
+    let entries = []
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const d of entries) {
+      if (d.name === 'node_modules' || d.name === '__pycache__' || d.name.startsWith('.')) continue
+      const abs = join(dir, d.name)
+      const r = `${rel}/${d.name}`
+      if (d.isDirectory()) walk(abs, r)
+      else if (/\.(m?js|cjs)$/i.test(d.name)) add(abs, r)
+    }
+  }
+  walk(join(root, 'packages'), 'packages')
+  walk(join(root, 'bin'), 'bin')
+  add(join(root, 'index.js'), 'index.js')
+  add(join(root, 'scripts', 'dsh-runner.mjs'), 'scripts/dsh-runner.mjs')
+  lines.sort()
+  const stamp = createHash('sha1').update(`v=${version}\n${lines.join('\n')}`).digest('hex').slice(0, 16)
+  return { version, stamp, files: lines.length }
 }
 
 export function standaloneShellHtml(profileName = 'video') {
@@ -323,6 +367,8 @@ async function main() {
 
   // Start HTTP Verification / Standalone Preview Server for `dsh-web-video-workbench`
   const RUNNER_VERSION = 'v9'
+  // the plugin code this process loads (a studio started before an update keeps running its old code)
+  const CODE = pluginCodeStamp()
   const basePort = Number(process.env.DSH_VIDEO_PORT || 4399)
   const daemonInfoPath = join(REPO_ROOT, '.tmp', 'workbench-daemon.json')
   // DSH_VIDEO_RUNNER_ISOLATED=1 (tests, a second preview of the same checkout): never reuse the studio that is already
@@ -371,10 +417,54 @@ async function main() {
     return null
   }
 
+  const runnerAnswers = async (port) => {
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/api/video-workbench/runner-info`, { signal: AbortSignal.timeout(800) })
+      return r.ok
+    } catch {
+      return false
+    }
+  }
+  // Stop a running studio: its own stop route first, its PID when it does not go away. Resolves once it stopped answering.
+  const stopRunner = async (existing) => {
+    let asked = false
+    try {
+      const stopResp = await fetch(`http://127.0.0.1:${existing.port}/api/video-workbench/runner-stop`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(2500),
+      })
+      asked = stopResp.ok
+    } catch {}
+    for (let i = 0; i < 20 && (await runnerAnswers(existing.port)); i++) await new Promise((r) => setTimeout(r, 250))
+    if (!(await runnerAnswers(existing.port))) return true
+    if (existing.info?.pid) {
+      try {
+        process.kill(Number(existing.info.pid))
+      } catch {}
+      for (let i = 0; i < 12 && (await runnerAnswers(existing.port)); i++) await new Promise((r) => setTimeout(r, 250))
+    }
+    return asked || !(await runnerAnswers(existing.port))
+  }
+  // Is the studio in the middle of a render or a job? (studios before v0.8.1 do not report it: ask their task list)
+  const studioBusy = async (existing) => {
+    const b = existing.info?.busy
+    if (b && typeof b === 'object') return Number(b.runs) > 0 || Number(b.jobs) > 0
+    try {
+      const r = await fetch(`http://127.0.0.1:${existing.port}/api/video-workbench/tasks`, { signal: AbortSignal.timeout(2500) })
+      const d = await r.json()
+      return Array.isArray(d?.runs) && d.runs.some((x) => x && (x.status === 'queued' || x.status === 'running' || x.status === 'paused'))
+    } catch {
+      return false
+    }
+  }
+
   if (shouldStatus) {
     const existing = await probeExisting()
     if (existing) {
-      console.log(`✅ 后台静默服务运行中: ${existing.info.url} (PID ${existing.info.pid} · ${existing.info.version})`)
+      console.log(`✅ 后台静默服务运行中: ${existing.info.url} (PID ${existing.info.pid} · ${existing.info.version}${existing.info.pkgVersion ? ` · v${existing.info.pkgVersion}` : ''})`)
+      if (existing.info.repoRoot === REPO_ROOT && existing.info.codeStamp !== CODE.stamp) {
+        console.log('   ⚠️ 它运行的是插件更新之前的旧程序；重新启动工作台（start-workbench）会自动换成新版。')
+      }
       console.log(`   日志文件: ${daemonLogPath}`)
     } else {
       console.log('⚪ 当前未检测到运行中的 DSH Video Workbench 后台服务。')
@@ -385,21 +475,7 @@ async function main() {
   if (shouldStop) {
     let stopped = false
     const existing = await probeExisting()
-    if (existing) {
-      try {
-        const stopResp = await fetch(`http://127.0.0.1:${existing.port}/api/video-workbench/runner-stop`, {
-          method: 'POST',
-          signal: AbortSignal.timeout(2500),
-        })
-        if (stopResp.ok) stopped = true
-      } catch {}
-      if (!stopped && existing.info?.pid) {
-        try {
-          process.kill(Number(existing.info.pid))
-          stopped = true
-        } catch {}
-      }
-    }
+    if (existing) stopped = await stopRunner(existing)
     if (existsSync(daemonInfoPath)) {
       try {
         const saved = JSON.parse(readFileSync(daemonInfoPath, 'utf8'))
@@ -419,10 +495,29 @@ async function main() {
   // Check if an existing runner is already active
   if (!smokeMode && !isDaemonChild && !isolatedRun) {
     const existing = await probeExisting()
-    if (existing && existing.info?.version === RUNNER_VERSION && existing.info?.repoRoot === REPO_ROOT) {
-      console.log(`\n✅ Active DSH Video Workbench (${RUNNER_VERSION}) already listening at: ${existing.info.url}`)
-      if (shouldOpenBrowser) openBrowserSilently(existing.info.url)
-      return
+    if (existing && existing.info?.repoRoot === REPO_ROOT) {
+      if (existing.info?.version === RUNNER_VERSION && existing.info?.codeStamp === CODE.stamp) {
+        console.log(`\n✅ Active DSH Video Workbench (${RUNNER_VERSION}) already listening at: ${existing.info.url}`)
+        if (shouldOpenBrowser) openBrowserSilently(existing.info.url)
+        return
+      }
+      // The studio of this folder was started before the plugin was updated: it still runs its old code, whose routes
+      // no longer match the pages it serves from disk (all three war-room skins time out). Restart it with the code on
+      // disk — but never in the middle of a render or a job (then it is reused; restart once it is done).
+      if (await studioBusy(existing)) {
+        console.log(`\n⚠️ 后台工作台还在运行插件更新之前的旧程序，而且正在出片 / 处理任务：先不重启，等它完成后再重新启动工作台。`)
+        if (shouldOpenBrowser) openBrowserSilently(existing.info.url)
+        return
+      }
+      console.log(`\n♻️ 后台工作台还在运行插件更新之前的旧程序${existing.info.pkgVersion ? `（v${existing.info.pkgVersion}）` : ''}，正在自动换成新版${CODE.version ? ` v${CODE.version}` : ''}…`)
+      const stopped = await stopRunner(existing)
+      if (stopped) {
+        try {
+          if (existsSync(daemonInfoPath)) unlinkSync(daemonInfoPath)
+        } catch {}
+      } else {
+        console.log('   ⚠️ 旧的后台工作台没有退出；请运行 stop-workbench.cmd 后再启动。')
+      }
     }
   }
 
@@ -480,6 +575,15 @@ async function main() {
         JSON.stringify({
           ok: true,
           version: RUNNER_VERSION,
+          pkgVersion: CODE.version,
+          codeStamp: CODE.stamp,
+          busy: (() => {
+            try {
+              return workbenchActivity()
+            } catch {
+              return null
+            }
+          })(),
           pid: process.pid,
           port: actualPort,
           url: `http://127.0.0.1:${actualPort}`,
@@ -570,6 +674,8 @@ async function main() {
           port: actualPort,
           url: `http://127.0.0.1:${actualPort}`,
           version: RUNNER_VERSION,
+          pkgVersion: CODE.version,
+          codeStamp: CODE.stamp,
           daemonMode: isDaemonChild,
           startedAt: new Date().toISOString(),
         }, null, 2) + '\n',

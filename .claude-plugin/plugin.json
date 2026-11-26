@@ -1,6 +1,6 @@
 {
   "name": "dsh-video-workbench",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "禾杨视频工坊 (DSH Video Workbench, 禾杨智绘出品) — Universal Multi-Agent Dual-Engine AI Video Studio (Remotion 4.x + Three.js 3D & HTML5 motion engine) with CinePulse Hub (影核广场) MOTION.md Template Plaza, Cross-Genre Adaptive Beat-Sync & 48kHz SFX Mastering, Reference vs Remake Split Sync Compare, Visual Multi-Track Timeline, Optional BYOK Cloud Media (Seedream/Seedance/Kling/Flux/Suno/MiniMax + Custom HTTP), and Optional Local TTS Cloning.",
   "author": {
     "name": "Merziller",
