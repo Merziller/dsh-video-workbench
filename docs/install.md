@@ -1,4 +1,4 @@
-# Universal Installation Guide — DSH Video Workbench (`v0.7.0`)
+# Universal Installation Guide — DSH Video Workbench (`v0.8.0`)
 
 > **Original Author**: Merziller · **QQ**: `1411574209` · **WeChat**: `Merziller` · **Email**: `k26789228@gmail.com`  
 > **GitHub**: https://github.com/Merziller/dsh-video-workbench (MIT Open Source)

@@ -11,6 +11,8 @@ import { copyFileSync, existsSync, linkSync, mkdirSync, writeFileSync } from 'no
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import {
   buildComplianceNoticeText,
+  END_NOTICE_TSX_ELEMENT,
+  renderEndNoticeTsxConstants,
   resolveSafeZoneSpec,
   syncProjectFonts,
 } from '../shared/index.js'
@@ -208,7 +210,8 @@ const SANS = FONT_SANS;
 const MONO = FONT_MONO;
 const DEFAULT_SUBTITLE_BOTTOM = ${safeZone.subtitleBottomPx};
 const DEFAULT_BADGE_TEXT = ${JSON.stringify(complianceNotice.badgeText)};
-const DEFAULT_END_NOTICE = ${JSON.stringify(complianceNotice.endNoticeBody)};
+// 片尾声明 (last line of the film): shown only when script.json has endNotice: true; the plugin credit only with endNoticeCredit
+${renderEndNoticeTsxConstants(complianceNotice)}
 const easeOut = Easing.bezier(0.22, 1, 0.36, 1);
 
 const PARTICLES = Array.from({ length: 34 }, (_, i) => {
@@ -2639,10 +2642,7 @@ export const VideoComposition: React.FC = () => {
         />
       </div>
 
-      <EndNotice
-        text={DEFAULT_END_NOTICE}
-        accentColor={PALETTE.accent}
-      />
+      ${END_NOTICE_TSX_ELEMENT}
 
       ${hasMasterAudio ? `<Audio src={staticFile('master-audio.wav')} />` : ''}
     </AbsoluteFill>

@@ -57,7 +57,7 @@ import { executeCurateAndEditAssets } from './media-editor.js'
 import { generateAiCodedSfxCues } from './audio-coder.js'
 import { runMultiAgentPipeline, startPipelineBackground } from './pipeline-orchestrator.js'
 import { taskManager } from './task-manager.js'
-import { getAsrInstallerCatalog, getAsrStatus, installAsrEngine, transcribeMedia, transcriptPlainText } from './speech-recognition.js'
+import { getAsrInstallerCatalog, getAsrInstallState, getAsrStatus, startAsrInstall, transcribeMedia, transcriptPlainText } from './speech-recognition.js'
 import { buildCaptions, captionsToSrt, planRoughCut } from './rough-cut.js'
 import { buildTalkEditProject, runTalkRoughCut } from './talk-edit.js'
 import { describeFootageForPrompt, indexFootage } from './footage-index.js'
@@ -215,6 +215,8 @@ export async function produceFullVideo(options = {}) {
     width,
     height,
     aiBadge = true,
+    endNotice,
+    endNoticeCredit,
     targetPlatform = 'universal',
     bgmMode = 'auto',
     voiceId = 'auto',
@@ -256,6 +258,8 @@ export async function produceFullVideo(options = {}) {
     width,
     height,
     aiBadge,
+    endNotice,
+    endNoticeCredit,
     voiceId,
     scenesSpec,
     workflowSteps,
@@ -438,6 +442,8 @@ export function apply(ctx) {
         width: { type: 'number', description: 'Optional custom width (even integer >= 320).' },
         height: { type: 'number', description: 'Optional custom height (even integer >= 320).' },
         aiBadge: { type: 'boolean', description: 'Whether to show an optional AI badge corner watermark.' },
+        endNotice: { type: 'boolean', description: '片尾声明: show a one-line AI-content disclosure during the last ~2 s of the film. Default false (the AI corner badge already labels the film). Omit to keep the project\'s saved choice.' },
+        endNoticeCredit: { type: 'boolean', description: '片尾署名: with endNotice on, the line also credits the plugin ("由 DSH Video Workbench (by Merziller) 创作"). Default false; only on when the user asks for it.' },
         fps: { type: 'number', description: 'Target frame rate (e.g. 30 or 60).' },
         voiceId: { type: 'string', description: 'Voice ID or "auto" for AI voice matching.' },
       },
@@ -470,6 +476,8 @@ export function apply(ctx) {
         width: { type: 'number', description: 'Optional custom width.' },
         height: { type: 'number', description: 'Optional custom height.' },
         aiBadge: { type: 'boolean', description: 'Optional corner AI badge.' },
+        endNotice: { type: 'boolean', description: '片尾声明: one-line AI-content disclosure at the end of the film. Default false.' },
+        endNoticeCredit: { type: 'boolean', description: '片尾署名: with endNotice on, also credit the plugin in that line. Default false; only when the user asks.' },
         fps: { type: 'number', description: 'Target frame rate (e.g. 30 or 60).' },
         voiceId: { type: 'string', description: 'Voice ID or "auto".' },
       },
@@ -599,7 +607,7 @@ export function apply(ctx) {
   registerTool(ctx, {
     name: 'ai_create_video',
     description:
-      'Use the configured LLM coding model + local IndexTTS-2.5 voices + AI post-TTS voice mastering to author bespoke Remotion TSX or HyperFrames HTML code, custom DSP BGM/SFX, run TypeScript & lint auto-repair (up to 3 rounds), and render + QA the final MP4.',
+      'Use the configured LLM coding model + local IndexTTS-2.5 voices + AI post-TTS voice mastering to author bespoke Remotion TSX or HTML5 motion-engine code, custom DSP BGM/SFX, run TypeScript & lint auto-repair (up to 3 rounds), and render + QA the final MP4.',
     parameters: {
       type: 'object',
       properties: {
@@ -610,6 +618,7 @@ export function apply(ctx) {
         engine: { type: 'string', enum: ['remotion', 'html'], description: 'Output engine (remotion strongly recommended for AI coding).' },
         creationMode: { type: 'string', enum: ['ai-coded', 'schema-plan'], description: 'ai-coded for max creative ceiling or schema-plan for 4-tier degradation reliability.' },
         bgmMode: { type: 'string', enum: ['llm-coded', 'uploaded', 'tts-engine'], description: 'BGM synthesis mode: llm-coded (LLM writes JS DSP synth code), uploaded (user track), or tts-engine (IndexTTS-2.5 atmospheric).' },
+        bgmStartFrom: { type: 'string', enum: ['auto', 'head'], description: "配乐从精彩处开始 for an uploaded song: 'auto' (default) starts a song clearly longer than the film at a well-chosen bar line (skips a long intro, the climax lands about 2/3 into the film); 'head' always plays it from the start. Used with bgmMode 'uploaded' and saved as script.bgm.startFrom; omit to keep the project's choice." },
         narrationMode: { type: 'string', enum: ['tts', 'tts-beat-sync', 'subtitle-mv'], description: 'Narration rhythm mode: tts (standard spoken narration), tts-beat-sync (spoken TTS + cut snapped to BGM downbeats), or subtitle-mv (pure beat-locked music/animation with bold subtitles & SFX, no voiceover).' },
         targetDurationSec: { type: 'number', description: 'Optional target total duration in seconds when generating a beat-synced MV.' },
         targetPlatform: { type: 'string', enum: ['universal', 'douyin', 'kuaishou', 'xiaohongshu', 'bilibili'], description: 'Target publishing platform safe zone preset.' },
@@ -623,8 +632,11 @@ export function apply(ctx) {
         aiBadgeEnabled: { type: 'boolean', description: 'Explicit toggle to enable/disable AI attribution corner badge.' },
         aiBadgePosition: { type: 'string', enum: ['top-right', 'top-left', 'bottom-right', 'bottom-left'], description: 'Corner placement for the AI attribution badge.' },
         aiBadgeText: { type: 'string', description: 'Custom text inside the AI attribution badge.' },
+        endNotice: { type: 'boolean', description: '片尾声明: show a one-line AI-content disclosure during the last ~2 s of the film. Default false (the AI corner badge already labels the film). Omit to keep the project\'s saved choice.' },
+        endNoticeCredit: { type: 'boolean', description: '片尾署名: with endNotice on, the line also credits the plugin ("由 DSH Video Workbench (by Merziller) 创作"). Default false; only on when the user asks for it.' },
         pacingMode: { type: 'string', enum: ['auto', 'calm', 'balanced', 'dynamic'], description: 'Narrative pacing preset: auto (smart topic fit), calm, balanced, or dynamic.' },
         useDraftReference: { type: 'boolean', description: 'Read existing local draft script/WAVs as pacing baseline.' },
+        narrationCheck: { type: 'boolean', description: '配音回听校验: true (default) = after TTS the local speech recognition (when installed) listens to every new take, re-dubs a take that skipped / repeated words or misread a number once, and reports what still fails (output/narration-check.json, QA hint; never fails the run). false = off (also DSH_NARRATION_CHECK=0).' },
         render: { type: 'boolean', description: 'Whether to immediately render MP4 and run FFmpeg QA.' },
         figureStyle: { type: 'string', enum: ['auto', 'silhouette', 'papercut', 'puppet', 'ink', 'flat', 'stick', 'custom'], description: "人物画风 for people and animals in the film: 'auto' (default) lets the AI choose per film (history films default to silhouette); silhouette / papercut / puppet / ink / flat / stick use the built-in side-view figure library in that look; 'custom' makes the AI design its own characters in the look named by figureStyleNote (e.g. Q版萌系, 日系动漫, 绘本手绘). Beats style words in the brief. Omit to keep the project's saved choice." },
         figureStyleNote: { type: 'string', maxLength: 40, description: "With figureStyle 'custom': the character look in a few words (e.g. Q版萌系，圆脸大眼)." },
@@ -1000,6 +1012,7 @@ export function apply(ctx) {
         style: { type: 'string', pattern: '^(auto|tech|cinematic|documentary|energetic|warm|emerald|user:[A-Za-z0-9_-]{1,40})$', description: "Visual style: 'auto' = AI 自由匹配 (the AI picks the best of the 6 presets for the topic, or designs a new style when none fits; local drafts pick a preset by keyword rules), one of the presets tech (科技锋芒) / cinematic (电影大片) / documentary (极简纪实) / energetic (活力潮牌) / warm (温暖故事) / emerald (墨翠轻奢), or 'user:<id>' for a saved 我的风格预设. Omit to keep the project's current style (new projects: auto)." },
         quality: { type: 'string', description: '720p, 1080p, 2k, 4k.' },
         bgmMode: { type: 'string', enum: ['uploaded', 'llm-coded', 'tts-engine'], description: 'BGM source mode.' },
+        bgmStartFrom: { type: 'string', enum: ['auto', 'head'], description: "配乐从精彩处开始 for an uploaded song: 'auto' (default) starts a song clearly longer than the film at a well-chosen bar line (skips a long intro, the climax lands about 2/3 into the film); 'head' always plays it from the start. Used with bgmMode 'uploaded' and saved as script.bgm.startFrom; omit to keep the project's choice." },
         narrationMode: { type: 'string', enum: ['tts', 'tts-beat-sync', 'subtitle-mv'], description: 'Voice vs beat-locked subtitle MV mode.' },
         aiAuthorCode: { type: 'boolean', description: 'When true (default in ai-coded mode), LLM authors per-scene bespoke Remotion TSX batch files with tsc verification.' },
         durationMode: { type: 'string', enum: ['auto', 'custom'], description: 'Duration mode: auto (AI free matching) or custom (strictly target targetDurationSec).' },
@@ -1015,7 +1028,10 @@ export function apply(ctx) {
         figureStyleNote: { type: 'string', maxLength: 40, description: "With figureStyle 'custom': the character look in a few words (e.g. Q版萌系，圆脸大眼)." },
         productionType: { type: 'string', enum: ['ai-film', 'talk-edit'], description: "作品类型: 'ai-film' (default) = the AI writes, voices and animates the film; 'talk-edit' = 口播剪辑 of the user's own talking-head recording in the project (the 真人出镜 video, else the longest video with sound): local speech recognition, automatic rough cut (long pauses, fillers, stutters, retakes — the last take stays), real captions from what was said, the person's own voice, light music. Fully local, no LLM, needs the local speech engine (speech_engine install)." },
         talkSource: { type: 'string', description: "talk-edit: the recording to edit (asset id or project-relative path); default the 真人出镜 video." },
+        endNotice: { type: 'boolean', description: '片尾声明: one-line AI-content disclosure during the last ~2 s of the film. Default false. Omit to keep the project\'s saved choice.' },
+        endNoticeCredit: { type: 'boolean', description: '片尾署名: with endNotice on, the line also credits the plugin. Default false; only when the user asks.' },
         useDraftReference: { type: 'boolean', description: "出片时参考现有草稿: true (default) = the project's existing storyboard (local draft included) is the pacing reference for the AI director; false = plan from scratch." },
+        narrationCheck: { type: 'boolean', description: '配音回听校验: true (default) = after TTS the local speech recognition (when installed) listens to every new take, re-dubs a take that skipped / repeated words or misread a number once, and warns about what still fails (output/narration-check.json, QA hint; never fails the run). false = off (also DSH_NARRATION_CHECK=0).' },
       },
       required: ['projectDir'],
       additionalProperties: false,
@@ -1038,8 +1054,9 @@ export function apply(ctx) {
   registerTool(ctx, {
     name: 'speech_engine',
     description:
-      'Optional local speech recognition engine (SenseVoice-Small int8 via sherpa-onnx, free and offline after a one-time ~260 MB download; Mandarin, Cantonese, English, Japanese, Korean). '
-      + "action 'status' (default) reports whether it is installed and what is missing; 'install' downloads the pinned, hash-verified runtime + models into installDir (default: the recommended folder, never the system drive when another drive exists). Needed by transcribe_media, rough_cut_talking_head and run_agent_pipeline productionType 'talk-edit'. Install only when the user agreed (it downloads ~260 MB).",
+      'Local speech recognition engine (SenseVoice-Small int8 via sherpa-onnx, free and offline after a one-time ~260 MB download; Mandarin, Cantonese, English, Japanese, Korean). '
+      + 'It installs itself automatically the first time a feature needs it (pinned, hash-verified runtime + models into the recommended folder, never the system drive when another drive exists): transcribe_media, rough_cut_talking_head and make_short_clips wait for that install; DSH_ASR_AUTO_INSTALL=0 turns the automatic install off. '
+      + "action 'status' (default) reports whether it is ready, what is missing and the shared install (install.state idle / running / done / failed / disabled, progress, error); 'install' starts it now or joins the install already running — only needed to retry at once after a failure, to choose installDir / mirror, or when the automatic install is off.",
     parameters: {
       type: 'object',
       properties: {
@@ -1055,17 +1072,18 @@ export function apply(ctx) {
     isConcurrencySafe: () => false,
     async execute(args = {}) {
       if (args.action === 'install') {
-        const catalog = getAsrInstallerCatalog()
-        return await installAsrEngine({ installDir: args.installDir || catalog.recommendedHome, mirror: args.mirror || 'cn' })
+        // the shared install (speech-recognition.js): joins the one already running instead of downloading twice
+        const res = await startAsrInstall({ installDir: args.installDir || '', mirror: args.mirror || 'cn', trigger: 'manual' }).promise
+        return { ...res, install: getAsrInstallState() }
       }
-      return { ok: true, status: await getAsrStatus({ deep: Boolean(args.deep), force: Boolean(args.deep) }), installer: getAsrInstallerCatalog() }
+      return { ok: true, status: await getAsrStatus({ deep: Boolean(args.deep), force: Boolean(args.deep) }), installer: getAsrInstallerCatalog(), install: getAsrInstallState() }
     },
   })
 
   registerTool(ctx, {
     name: 'transcribe_media',
     description:
-      'Transcribe a video or audio file with the local speech engine (no upload, no cost): returns the plain text, language, per-segment timing and writes an SRT next to the project transcripts. Results are cached per file.',
+      'Transcribe a video or audio file with the local speech engine (no upload, no cost): returns the plain text, language, per-segment timing and writes an SRT next to the project transcripts. Results are cached per file. The engine installs itself automatically on first use (one-time ~260 MB download; this call waits for it).',
     parameters: {
       type: 'object',
       properties: {
@@ -1104,7 +1122,7 @@ export function apply(ctx) {
   registerTool(ctx, {
     name: 'rough_cut_talking_head',
     description:
-      "口播粗剪: cut a talking-head recording automatically with the local speech engine — long pauses shortened, fillers (嗯/呃/um/uh), stutters, false starts and retakes removed (the LAST take stays), head / tail silence trimmed — then (buildProject, default true) turn it into a 口播剪辑 project: the cut recording as the picture, the person's own voice, real captions from what was said (word-by-word highlight), light music under the voice; render=true also renders output/final.mp4. options switch each rule; overrides.restore brings back removals by id (from the previous result), overrides.cutWords removes extra word ranges. Fully local, no LLM.",
+      "口播粗剪: cut a talking-head recording automatically with the local speech engine — long pauses shortened, fillers (嗯/呃/um/uh), stutters, false starts and retakes removed (the LAST take stays), head / tail silence trimmed — then (buildProject, default true) turn it into a 口播剪辑 project: the cut recording as the picture, the person's own voice, real captions from what was said (word-by-word highlight), light music under the voice; render=true also renders output/final.mp4. options switch each rule; overrides.restore brings back removals by id (from the previous result), overrides.cutWords removes extra word ranges. Fully local, no LLM. The local speech engine installs itself automatically on first use (one-time ~260 MB download; the call waits for it).",
     parameters: {
       type: 'object',
       properties: {
@@ -1286,6 +1304,88 @@ export function apply(ctx) {
       const { executeVideoRender } = await import('../dsh-tool-video-suite/index.js')
       const rendered = await executeVideoRender({ projectDir, engine: 'remotion' })
       return { ...summary, cuts, outputPath: rendered?.outputPath || '', qa: rendered?.qaReport || rendered?.qa || null }
+    },
+  })
+
+  registerTool(ctx, {
+    name: 'make_short_clips',
+    description:
+      '长视频拆条: turn a long recording of the user\'s own (interview, podcast, live-stream replay, lesson, talk) in the project library into stand-alone short clips for 抖音 / 视频号 / 小红书 / 快手 / B站. action "find": local speech recognition (cached) → whole sentences → ONE model call per ~60 min of speech picks complete, self-contained passages (title ≤ 20 chars, reason, score, tags); code checks every pick (ids, lengths, overlaps, a trailing next-topic question, a start that leans on what came before) → saved plan. action "update": edits [{ index, title?, enabled?, startDelta?, endDelta? }] (deltas in whole sentences). action "render" (local FFmpeg, free): inside each clip pauses / fillers / stutters / retakes are removed, layout for the platform (fit = whole picture on a blurred backdrop, window = 访谈小窗, crop = fill from the centre), title + captions (keyword highlighted) + progress line, −14 LUFS → output/clips/<recording>/NN-标题.mp4 + .jpg cover + .srt + clips.json + 发布文案.md. Captions already burned into the recording are detected and not doubled. find with render=true does both. action "state" shows the saved plan. Only recordings already imported are used; nothing is downloaded or published — except, once, the local speech engine, which installs itself automatically on first use (~260 MB; find waits for it).',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectDir: { type: 'string', description: 'Video project directory (the recording must be imported into it).' },
+        action: { type: 'string', enum: ['find', 'update', 'render', 'state'], description: 'Default "find".' },
+        sourcePath: { type: 'string', description: 'Recording (asset id or project-relative path); default the longest recording with sound.' },
+        platform: { type: 'string', enum: ['douyin', 'shipinhao', 'xiaohongshu', 'kuaishou', 'bilibili', 'original'], description: 'Where the clips go: canvas (9:16 / 3:4 / 16:9 / source) and clip lengths (short-video apps 15–180 s, best 30–90 s; B站 30–300 s). Default douyin.' },
+        count: { type: 'number', description: 'Exactly this many clips (1..30); 0 / omitted = automatic by the recording length.' },
+        focus: { type: 'string', description: 'Optional wish for the picks, e.g. "只要讲方法的部分" (≤ 300 chars).' },
+        edits: {
+          type: 'array',
+          description: 'update: changes per clip index.',
+          items: {
+            type: 'object',
+            properties: {
+              index: { type: 'number' },
+              title: { type: 'string' },
+              enabled: { type: 'boolean' },
+              startDelta: { type: 'number', description: 'Move the start by whole sentences (−5..5; negative = earlier).' },
+              endDelta: { type: 'number', description: 'Move the end by whole sentences (−5..5; positive = later).' },
+            },
+            required: ['index'],
+            additionalProperties: false,
+          },
+        },
+        indexes: { type: 'array', items: { type: 'number' }, description: 'render: only these clips (default every enabled clip).' },
+        settings: {
+          type: 'object',
+          description: 'render: look of the clips (saved for next time).',
+          properties: {
+            layout: { type: 'string', enum: ['auto', 'fit', 'window', 'crop'] },
+            captions: { type: 'string', enum: ['auto', 'on', 'off'], description: 'auto = off when the recording already has captions burned in.' },
+            title: { type: 'boolean' },
+            progressBar: { type: 'boolean' },
+            accent: { type: 'string', description: 'Accent colour #RRGGBB (title line 2, keywords, progress line).' },
+          },
+          additionalProperties: false,
+        },
+        render: { type: 'boolean', description: 'find: also render every clip right away (default false).' },
+        force: { type: 'boolean', description: 'find: recognise the speech again; render: render unchanged clips again.' },
+      },
+      required: ['projectDir'],
+      additionalProperties: false,
+    },
+    output: { schema: { type: 'object', additionalProperties: true } },
+    timeoutMs: 3_600_000,
+    isConcurrencySafe: () => false,
+    async execute(args) {
+      const projectDir = resolve(args.projectDir)
+      const sc = await import('./short-clips.js')
+      const action = args.action || 'find'
+      const sourcePath = String(args.sourcePath || '')
+      const lean = (plan) => ({
+        source: plan.source,
+        platform: plan.platform,
+        clips: plan.clips.map((c) => ({ index: c.index, title: c.title, reason: c.reason, score: c.score, tags: c.tags, enabled: c.enabled, from: c.sourceStart, to: c.sourceEnd, seconds: c.spanSec, text: Array.from(c.text || '').slice(0, 120).join('') })),
+        found: plan.found,
+      })
+      if (action === 'state') {
+        const st = await sc.readShortClipsState(projectDir, { sourcePath })
+        return { ok: true, engine: st.engine, llm: st.llm, sources: st.sources, plan: st.plan ? lean(st.plan) : null, rendered: st.rendered, estimate: st.estimate }
+      }
+      if (action === 'update') {
+        const res = await sc.updateShortClips({ projectDir, sourcePath, edits: args.edits || [], render: args.settings })
+        return { ok: true, ...lean(res.plan) }
+      }
+      const doRender = async () => {
+        const out = await sc.renderShortClips({ projectDir, sourcePath, indexes: args.indexes, settings: args.settings, force: action === 'render' && Boolean(args.force) })
+        return { folder: out.folder, layout: out.layout, captions: out.captions, burnedCaptionsInSource: out.burned, clips: out.clips.map(({ key, ...c }) => c) }
+      }
+      if (action === 'render') return { ok: true, ...(await doRender()) }
+      return await runWritingTool('make_short_clips', async () => {
+        const res = await sc.findShortClips({ projectDir, sourcePath, platform: args.platform, count: Number(args.count) || 0, focus: String(args.focus || ''), force: Boolean(args.force) })
+        return { ok: true, ...lean(res.plan), ...(args.render ? { rendered: await doRender() } : {}) }
+      })
     },
   })
 

@@ -12,6 +12,7 @@
 import assert from 'node:assert/strict'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+if (process.env.DSH_ASR_AUTO_INSTALL === undefined) process.env.DSH_ASR_AUTO_INSTALL = '0' // never download the speech engine in tests
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const mg = await import(pathToFileURL(join(REPO, 'packages', 'shared', 'meta-guard.js')).href)

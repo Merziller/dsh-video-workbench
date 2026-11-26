@@ -16,6 +16,8 @@ import { isHistoricalContent } from './genre-router.js'
  * attack offset, tempo-octave correction, drift-smoothed grid). Output shape is backward compatible:
  * { bpm, beatSec, phaseSec, barOffset, beats[{time,strong,isDrop,index,barIndex,beatInBar,energy}], downbeats,
  *   drops, energyCurve } plus { onsets, tempoStable, gridSupport, barConfidence, analyzer }.
+ * A fresh analysis is in song time and carries `startSec: 0` + `songDurationSec`: spreading it into `script.bgm`
+ * resets a music start chosen earlier (see chooseMusicWindow / shiftBeatMeta below).
  */
 export async function analyzeAudioBeatStructure(audioPath, opts = {}) {
   const absAudio = resolve(audioPath)
@@ -57,6 +59,8 @@ export async function analyzeAudioBeatStructure(audioPath, opts = {}) {
       analyzer: 'spectral-flux-v2',
       audioPath: absAudio,
       durationSec: totalDurSec,
+      songDurationSec: totalDurSec,
+      startSec: 0,
       bpm: 112,
       beatSec: Number((60 / 112).toFixed(4)),
       phaseSec: 0,
@@ -76,6 +80,8 @@ export async function analyzeAudioBeatStructure(audioPath, opts = {}) {
     analyzer: 'spectral-flux-v2',
     audioPath: absAudio,
     durationSec: totalDurSec,
+    songDurationSec: totalDurSec,
+    startSec: 0,
     bpm: analyzed.bpm,
     beatSec: Number(analyzed.beatSec.toFixed(4)),
     phaseSec: analyzed.phaseSec,
@@ -1800,4 +1806,301 @@ export function choreographBeatSfxCues(scenes = [], beatMeta = {}, opts = {}) {
     })
   }
   return out
+}
+
+// ===========================================================================
+// 配乐从精彩处开始 — WHERE AN UPLOADED SONG STARTS IN THE FILM
+// ---------------------------------------------------------------------------
+// A song much longer than the film used to play from 0:00, so a 60 s film made from a 4-minute song was mostly the
+// song's intro. chooseMusicWindow() picks a bar line to start from (the whole film fits inside the song: never a loop),
+// shiftBeatMeta() moves the analysis into film time, cutToMusicWindow() does both around a scene cut and falls back to
+// the song start when the cut film would run past the end of the song.
+//
+//   script.bgm.startSec         song second the film's music starts at (0 = the song start); applied by the mixer
+//   script.bgm.startFor         the song file the start was chosen for (the mixer ignores the start for any other file)
+//   script.bgm.songDurationSec  length of the whole song (script.bgm.durationSec = what is left after startSec)
+//   script.bgm.startFrom        'auto' (default) | 'head' — the user's 「从头开始」 pin (survives re-analysis)
+//   script.bgm.startNote        plain-Chinese reason for the run log and the studio
+// Every time list in script.bgm (beats, downbeats, drops, onsets, energyCurve) stays in FILM time. A fresh analysis
+// carries startSec 0, so binding or re-analysing a song resets an old start.
+// ===========================================================================
+
+/** The song must be at least this much longer than the film before its start moves. */
+export const MUSIC_START_MIN_RATIO = 1.1
+/** Keep the song start unless another start scores clearly better. */
+const MUSIC_START_MARGIN = 0.12
+const MUSIC_START_EPS = 0.002
+const round3 = (x) => Number(Number(x).toFixed(3))
+
+const musicTimeOf = (x) => Number(x !== null && typeof x === 'object' ? (x.time ?? x.sec ?? x.t) : x)
+
+/** 72.4 → "1:12" */
+export function formatMusicClock(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** Length of the whole song behind a beat analysis (also for an analysis already moved to film time). */
+function songLengthOf(meta = {}) {
+  const song = Number(meta?.songDurationSec)
+  if (song > 0) return song
+  const left = Number(meta?.durationSec) || 0
+  return left > 0 ? left + (Number(meta?.startSec) > 0 ? Number(meta.startSec) : 0) : 0
+}
+
+/**
+ * Loudness over time from the analysis: the 2 s RMS curve (energyCurve), else the per-beat energies.
+ * `at(a, b)` = time-weighted mean level in [a, b]; `ref` = the song's loud level (85th percentile).
+ */
+function musicLevelSampler(meta, songSec) {
+  let segs = []
+  const curve = (Array.isArray(meta?.energyCurve) ? meta.energyCurve : [])
+    .map((b) => ({ sec: Number(b?.sec), rms: Number(b?.rms) }))
+    .filter((b) => Number.isFinite(b.sec) && Number.isFinite(b.rms) && b.rms >= 0)
+    .sort((a, b) => a.sec - b.sec)
+  if (curve.length >= 3) {
+    const diffs = curve
+      .slice(1)
+      .map((b, i) => b.sec - curve[i].sec)
+      .filter((d) => d > 0)
+      .sort((a, b) => a - b)
+    const width = diffs.length ? diffs[Math.floor(diffs.length / 2)] : 2
+    segs = curve.map((b, i) => ({ a: b.sec, b: Math.min(i + 1 < curve.length ? curve[i + 1].sec : b.sec + width, songSec > b.sec ? songSec : b.sec + width), v: b.rms }))
+  } else {
+    const beats = normalizeBeatList(meta).filter((b) => Number.isFinite(Number(b.energy)))
+    if (beats.length < 8) return null
+    const step = Number(meta?.beatSec) > 0.2 ? Number(meta.beatSec) : 0.5
+    segs = beats.map((b, i) => ({ a: b.time, b: i + 1 < beats.length ? beats[i + 1].time : b.time + step, v: Math.max(0, Number(b.energy)) }))
+  }
+  segs = segs.filter((s) => s.b > s.a)
+  if (segs.length < 3) return null
+  const vals = segs.map((s) => s.v).sort((a, b) => a - b)
+  const ref = vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.85))]
+  if (!(ref > 1e-6)) return null
+  const at = (a, b) => {
+    let sum = 0
+    let wSum = 0
+    for (const s of segs) {
+      if (s.b <= a) continue
+      if (s.a >= b) break
+      const w = Math.min(b, s.b) - Math.max(a, s.a)
+      if (w > 0) {
+        sum += w * s.v
+        wSum += w
+      }
+    }
+    return wSum > 0 ? sum / wSum : 0
+  }
+  return { at, ref }
+}
+
+/** Bar lines (the "1" of every bar) of an analysis, in time order. */
+function musicBarLines(meta) {
+  const beats = normalizeBeatList(meta)
+  const withBar = beats.filter((b) => Number.isFinite(Number(b.beatInBar)))
+  let bars
+  if (withBar.length >= Math.max(4, beats.length * 0.5)) bars = withBar.filter((b) => Number(b.beatInBar) === 0).map((b) => b.time)
+  else if (Array.isArray(meta?.downbeats) && meta.downbeats.length) bars = meta.downbeats.map(musicTimeOf)
+  else bars = beats.filter((b) => b.strong).map((b) => b.time)
+  return [...new Set(bars.filter((t) => Number.isFinite(t) && t >= 0).map((t) => round4(t)))].sort((a, b) => a - b)
+}
+
+/**
+ * Where a song clearly longer than the film should start: `{ startSec, reason, note, ... }` (song seconds).
+ * The start is always a bar line (preferably a phrase start: every 4th bar from the first downbeat) and the window
+ * [start, start + fitSec] lies inside the song. Score of a start: loudness of the window (energyCurve), a drop about
+ * 2/3 into the film (films > 20 s) or within its first ~25 % (shorter films: the hook comes early), a penalty when its
+ * first ~2 s are quiet. The song start is kept unless another start scores clearly better.
+ * reason: 'moved' | 'start-fits' | 'song-short' | 'no-analysis' | 'already-shifted'.
+ * Options: musicOnly (no voice: loudness and a quiet opening weigh more), fitSec (length that must fit, ≥ filmSec;
+ * pass a margin when the cut film may still grow a little).
+ */
+export function chooseMusicWindow(beatMeta, filmSec, { musicOnly = false, fitSec = 0 } = {}) {
+  const film = Number(filmSec) > 0 ? Number(filmSec) : 0
+  const base = { startSec: 0, reason: 'no-analysis', note: '', filmSec: round2(film), songSec: 0, phraseStart: false, barIndex: null, dropAtSec: null, score: null, scoreAtStart: null }
+  if (!beatMeta || typeof beatMeta !== 'object' || !(film > 0)) return base
+  // already in film time (an earlier choice): never shifted twice
+  if (Number(beatMeta.startSec) > 0) return { ...base, startSec: round4(beatMeta.startSec), reason: 'already-shifted' }
+  const song = songLengthOf(beatMeta)
+  base.songSec = round2(song)
+  if (!(song > 0) || beatMeta.analyzed === false) return base
+  const fit = Math.max(film, Number(fitSec) || 0)
+  if (song < film * MUSIC_START_MIN_RATIO || song - fit < 1) return { ...base, reason: 'song-short', note: '配乐从头开始（歌曲没有比成片长出很多，整首都要用上）' }
+  const level = musicLevelSampler(beatMeta, song)
+  const bars = musicBarLines(beatMeta)
+  if (!level || bars.length < 2) return base
+  const maxStart = song - fit
+  const drops = (Array.isArray(beatMeta.drops) ? beatMeta.drops : [])
+    .map(musicTimeOf)
+    .filter((d) => Number.isFinite(d))
+    .sort((a, b) => a - b)
+  const w = musicOnly ? { loud: 1, drop: 0.6, quiet: 0.6, phrase: 0.08 } : { loud: 0.7, drop: 0.5, quiet: 0.4, phrase: 0.08 }
+  const longFilm = film > 20
+  const headSec = Math.min(2, film)
+  const scoreAt = (s, phrase) => {
+    const loud = Math.min(1.25, level.at(s, s + film) / level.ref)
+    const head = level.at(s, s + headSec) / level.ref
+    const quiet = head < 0.5 ? (0.5 - head) / 0.5 : 0
+    let drop = 0
+    let dropAt = null
+    for (const d of drops) {
+      const rel = (d - s) / film
+      if (rel < -1e-6 || rel > 1) continue
+      // long films: the climax about 2/3 in; short films: the hook within the first quarter
+      const g = longFilm ? Math.exp(-0.5 * ((rel - 2 / 3) / 0.12) ** 2) : rel <= 0.25 ? 1 : rel < 0.45 ? (0.45 - rel) / 0.2 : 0
+      if (g > drop) {
+        drop = g
+        dropAt = round2(Math.max(0, d - s))
+      }
+    }
+    return { score: w.loud * loud + w.drop * drop - w.quiet * quiet + (phrase ? w.phrase : 0), drop, dropAt }
+  }
+  // the song start counts as a phrase start (it is where the song itself begins)
+  const atStart = scoreAt(0, true)
+  let best = { s: 0, ...atStart, bar: null, phrase: true }
+  bars.forEach((t, k) => {
+    if (t <= 0.05 || t > maxStart + 1e-6) return
+    const r = scoreAt(t, k % 4 === 0)
+    if (r.score > best.score + 1e-9) best = { s: t, ...r, bar: k, phrase: k % 4 === 0 }
+  })
+  const common = { ...base, scoreAtStart: round3(atStart.score) }
+  if (best.s === 0 || best.score < atStart.score + MUSIC_START_MARGIN) {
+    return { ...common, reason: 'start-fits', note: '配乐从头开始（歌曲开头已经很合适）', phraseStart: true, dropAtSec: atStart.dropAt, score: round3(atStart.score) }
+  }
+  const why = []
+  if (level.at(0, Math.min(best.s, 10)) / level.ref < 0.5) why.push('避开前奏')
+  if (best.drop >= 0.5) why.push(longFilm ? '高潮落在全片约 2/3 处' : '开头几秒就进入高潮')
+  if (!why.length) why.push('选用整首最饱满的一段')
+  return {
+    ...common,
+    startSec: round4(best.s),
+    reason: 'moved',
+    note: `配乐从 ${formatMusicClock(best.s)} 开始（${why.join('，')}）`,
+    phraseStart: best.phrase,
+    barIndex: best.bar,
+    dropAtSec: best.dropAt,
+    score: round3(best.score),
+  }
+}
+
+/**
+ * The same analysis in FILM time for a song that starts at `startSec` (song seconds): every time list shifted by
+ * −startSec and kept from 0 on (beats, downbeats, drops, onsets, energyCurve), beat index / barOffset / barIndex /
+ * beatInBar renumbered consistently from the first kept beat, durationSec = what is left of the song, plus startSec
+ * (cumulative when the input was already shifted) and songDurationSec.
+ */
+export function shiftBeatMeta(beatMeta, startSec) {
+  const meta = beatMeta && typeof beatMeta === 'object' ? beatMeta : {}
+  const prevStart = Number(meta.startSec) > 0 ? Number(meta.startSec) : 0
+  const song = songLengthOf(meta)
+  const x = Number(startSec) > 0 ? Number(startSec) : 0
+  if (!(x > 0)) return { ...meta, startSec: round4(prevStart), songDurationSec: round4(song) }
+  const shiftT = (t) => Math.max(0, round4(t - x))
+  const keep = (t) => Number.isFinite(t) && t >= x - MUSIC_START_EPS
+  const raw = Array.isArray(meta.beats) ? meta.beats : []
+  const sorted = raw
+    .map((b) => (typeof b === 'number' ? { time: b, plain: true } : { b, time: Number(b?.time), plain: false }))
+    .filter((e) => Number.isFinite(e.time))
+    .sort((p, q) => p.time - q.time)
+  const k0 = sorted.findIndex((e) => keep(e.time))
+  const kept = k0 < 0 ? [] : sorted.slice(k0)
+  // (index − barOffset) mod 4 is unchanged: every kept beat keeps its place in the bar
+  const barOffset = ((((Number(meta.barOffset) || 0) - Math.max(0, k0)) % 4) + 4) % 4
+  const beats = kept.map((e, j) => {
+    if (e.plain) return shiftT(e.time)
+    const out = { ...e.b, time: shiftT(e.time), index: j }
+    if (e.b.beatInBar !== undefined) out.beatInBar = (j - barOffset + 4000) % 4
+    if (e.b.barIndex !== undefined) out.barIndex = Math.max(0, Math.floor((j - barOffset + 4) / 4))
+    return out
+  })
+  const shiftTimes = (list) => (Array.isArray(list) ? list.map(musicTimeOf).filter(keep).map(shiftT) : [])
+  const shiftObjs = (list, key) =>
+    Array.isArray(list) ? list.filter((o) => o && keep(Number(o[key]))).map((o) => ({ ...o, [key]: shiftT(Number(o[key])) })) : []
+  const left = Number(meta.durationSec) > 0 ? Number(meta.durationSec) : Math.max(0, song - prevStart)
+  return {
+    ...meta,
+    beats,
+    downbeats: shiftTimes(meta.downbeats),
+    drops: shiftTimes(meta.drops),
+    onsets: shiftObjs(meta.onsets, 'time'),
+    energyCurve: shiftObjs(meta.energyCurve, 'sec').map((o) => ({ ...o, sec: round2(o.sec) })),
+    barOffset,
+    phaseSec: beats.length ? musicTimeOf(beats[0]) : 0,
+    durationSec: round4(Math.max(0, left - x)),
+    startSec: round4(prevStart + x),
+    songDurationSec: round4(song),
+  }
+}
+
+/** The fields a music start changes in script.bgm (film-time lists + where the song starts). */
+export const MUSIC_TIMING_KEYS = Object.freeze(['beats', 'downbeats', 'drops', 'onsets', 'energyCurve', 'barOffset', 'phaseSec', 'durationSec', 'startSec', 'songDurationSec', 'startNote', 'startFor'])
+
+/**
+ * Only the timing fields of a cutToMusicWindow / shiftBeatMeta result, for `script.bgm = { ...script.bgm, ...these }`:
+ * the result carries every other field of its input (an older script.bgm: path, mode, source, the user's pin…), and
+ * those must never overwrite what the caller has just set.
+ */
+export function musicTimingFields(meta) {
+  const out = {}
+  if (!meta || typeof meta !== 'object') return out
+  for (const k of MUSIC_TIMING_KEYS) if (meta[k] !== undefined) out[k] = meta[k]
+  return out
+}
+
+/** End of the last scene in seconds (frames when present, else the scene durations). */
+function filmLengthOfScenes(scenes, fps = 30) {
+  const list = Array.isArray(scenes) ? scenes : []
+  const f = Number(fps) > 0 ? Number(fps) : 30
+  let end = 0
+  for (const sc of list) {
+    const sf = Number(sc?.startFrame)
+    const df = Number(sc?.durationInFrames)
+    if (Number.isFinite(sf) && Number.isFinite(df) && df > 0) end = Math.max(end, (sf + df) / f)
+    else if (Number(sc?.endSec) > 0) end = Math.max(end, Number(sc.endSec))
+  }
+  return end > 0 ? end : list.reduce((a, sc) => a + (Number(sc?.durationSec) || 0), 0)
+}
+
+/**
+ * 配乐从精彩处开始 around a scene cut: choose the start (chooseMusicWindow, or the song start when
+ * startFrom === 'head'), cut the scenes on the film-time grid through `cut(meta)` and check the cut film still fits
+ * inside the song after the start — else choose again for the real length, else start the song at 0 (the music must
+ * not loop in the middle of the film). Returns { meta (film time; spread it into script.bgm), scenes (cut's result or
+ * null), window ({ startSec, reason, note, ... }) }. `exactLength`: the cut meets filmSec exactly (no margin needed);
+ * `fitSec`: explicit length that must fit inside the song (e.g. a voiced film whose length is only known later);
+ * `songPath`: the song file (project-relative as in script.bgm.uploadedPath), recorded as meta.startFor.
+ */
+export function cutToMusicWindow(beatMeta, { filmSec = 0, exactLength = false, fitSec = 0, musicOnly = false, startFrom = 'auto', fps = 30, cut = null, songPath = '' } = {}) {
+  const meta = beatMeta && typeof beatMeta === 'object' ? beatMeta : {}
+  const film = Number(filmSec) > 0 ? Number(filmSec) : 0
+  const run = typeof cut === 'function' ? cut : null
+  if (Number(meta.startSec) > 0) {
+    // already in film time (an analysis reused from an earlier run): kept as it is
+    return { meta, scenes: run ? run(meta) : null, window: { ...chooseMusicWindow(meta, film), note: '' } }
+  }
+  const metaFor = (win) => ({ ...shiftBeatMeta(meta, win.startSec), startNote: win.startSec > 0 ? win.note : '', ...(songPath ? { startFor: String(songPath) } : {}) })
+  let window = String(startFrom || '') === 'head'
+    ? { startSec: 0, reason: 'head', note: '配乐从头开始（按你的设置从歌曲开头播放）', filmSec: round2(film), songSec: round2(songLengthOf(meta)) }
+    : chooseMusicWindow(meta, film, { musicOnly, fitSec: Number(fitSec) > 0 ? Number(fitSec) : exactLength ? film : film * 1.12 + 2 })
+  let out = metaFor(window)
+  let scenes = run ? run(out) : null
+  if (run && window.startSec > 0) {
+    const len = filmLengthOfScenes(scenes, fps)
+    if (len > out.durationSec + 0.05) {
+      // choose again for the length the cut really has (the song start is then a regular choice with its own reason)
+      const retry = chooseMusicWindow(meta, len, { musicOnly, fitSec: len + 1 })
+      const retryMeta = metaFor(retry)
+      const retryScenes = run(retryMeta)
+      if (retry.startSec === 0 || filmLengthOfScenes(retryScenes, fps) <= retryMeta.durationSec + 0.05) {
+        window = retry
+        out = retryMeta
+        scenes = retryScenes
+      } else {
+        window = { ...retry, startSec: 0, reason: 'film-longer', note: '配乐从头开始（成片比选中的段落还长，从头播放以免音乐中途重来）' }
+        out = metaFor(window)
+        scenes = run(out)
+      }
+    }
+  }
+  return { meta: out, scenes, window }
 }

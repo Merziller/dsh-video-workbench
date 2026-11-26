@@ -15,6 +15,7 @@ import { execFile } from 'node:child_process'
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+if (process.env.DSH_ASR_AUTO_INSTALL === undefined) process.env.DSH_ASR_AUTO_INSTALL = '0' // never download the speech engine in tests
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const imp = (rel) => import(pathToFileURL(join(REPO, rel)).href)

@@ -35,6 +35,7 @@ import {
   segmentHeldPictures,
 } from './qa-detectors.js'
 import { buildDeterminismCheck, runDeterminismCheck } from './determinism-check.js'
+import { buildNarrationQaCheck } from '../dsh-tool-media/narration-check.js'
 
 function parseFrameRate(rate, fallback = 30) {
   const m = /^(\d+(?:\.\d+)?)(?:\/(\d+(?:\.\d+)?))?$/.exec(String(rate || '').trim())
@@ -137,7 +138,7 @@ export async function runHeldPictureAnalysis({ mp4Path, script, durationSec, wid
 }
 
 /**
- * Scan LLM-generated TSX/HTML files for unsafe APIs, external links, hardcoded Windows paths, or Remotion/HyperFrames violations.
+ * Scan LLM-generated TSX/HTML files for unsafe APIs, external links, hardcoded Windows paths, or Remotion / HTML5 engine violations.
  */
 export function scanAiGeneratedCodeSandbox(filesMap = {}, { engine = 'remotion', hasMasterAudio = true } = {}) {
   const errors = []
@@ -186,10 +187,10 @@ export function scanAiGeneratedCodeSandbox(filesMap = {}, { engine = 'remotion',
 
     if (engine === 'html' && /\.html?$/i.test(relPath)) {
       if (!/window\.__seekToFrame/.test(code)) {
-        errors.push(`${relPath}: HyperFrames HTML 必须定义 window.__seekToFrame(frame) 供 Chromium CDP 逐帧渲染`)
+        errors.push(`${relPath}: HTML5 动效页面必须定义 window.__seekToFrame(frame) 供 Chromium CDP 逐帧渲染`)
       }
       if (!/window\.__totalFrames/.test(code)) {
-        errors.push(`${relPath}: HyperFrames HTML 必须定义 window.__totalFrames`)
+        errors.push(`${relPath}: HTML5 动效页面必须定义 window.__totalFrames`)
       }
       if (!/<script\s+id=["']dsh-script-data["']/i.test(code)) {
         errors.push(`${relPath}: 必须保留 <script id="dsh-script-data" type="application/json"> 标签占位符`)
@@ -218,7 +219,7 @@ export function scanAiGeneratedCodeSandbox(filesMap = {}, { engine = 'remotion',
         errors.push(`src/VideoComposition.tsx 必须通过 <Audio src={staticFile('master-audio.wav')} /> 挂载同步主音轨`)
       }
       if (!/AIBadge/.test(vc)) {
-        warnings.push('建议在 src/VideoComposition.tsx 最外层保留 <AIBadge /> 合规角标与 <EndNotice />')
+        warnings.push('建议在 src/VideoComposition.tsx 最外层保留 <AIBadge /> 合规角标')
       }
     }
   }
@@ -529,6 +530,10 @@ export async function runPostRenderQa({
   // Exposure: the render's exposure guard measured every shot (and lifted unreadably dark ones)
   const expCheck = buildExposureCheck(exposure)
   if (expCheck) checks.push(expCheck)
+
+  // 配音回听校验 (narration-check.js): the takes the local speech recognition listened to — a hint, never a failure
+  const narrationCheck = buildNarrationQaCheck({ projectDir: absDir, script })
+  if (narrationCheck) checks.push(narrationCheck)
 
   // Generate compact 3x3 verification contact sheet directly from final MP4
   const contactSheetOut = join(absDir, 'output', 'snapshot-3x3.png')

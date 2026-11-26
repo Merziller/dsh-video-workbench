@@ -4,6 +4,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, w
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  BRAND,
   loadEnv,
   PACKAGE_ROOT,
   REPO_ROOT,
@@ -161,7 +162,8 @@ export function standaloneShellHtml(profileName = 'video') {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DeepSeek Harness — 双引擎视频工作台 (Profile: ${profileName})</title>
+  <title>${BRAND.productName}</title>
+  <meta name="dsh-profile" content="${profileName}" />
   <style>
     html, body, #root { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background: #090d18; color: #f8fafc; font-family: 'Noto Sans SC', 'Microsoft YaHei', Consolas, sans-serif; }
     .dsh-boot-fallback { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 28px; text-align: center; box-sizing: border-box; }
@@ -172,7 +174,7 @@ export function standaloneShellHtml(profileName = 'video') {
   <div id="root">
     <div class="dsh-boot-fallback" id="boot-splash">
       <div class="dsh-boot-card">
-        <div style="font-size: 20px; font-weight: 800; margin-bottom: 8px;">🎬 正在加载 AI 视频工坊...</div>
+        <div style="font-size: 20px; font-weight: 800; margin-bottom: 8px;">🎬 正在加载${BRAND.productName}...</div>
         <div style="font-size: 13px; color: #94a3b8;" id="boot-status">正在初始化 React 运行时与工作台模块</div>
       </div>
     </div>
@@ -265,7 +267,7 @@ export function standaloneShellHtml(profileName = 'video') {
       s.onerror = () => showBootError('加载 /client.js 失败', '无法从独立预览服务读取前端脚本');
       document.body.appendChild(s);
     } catch (err) {
-      showBootError('独立浏览器预览运行时加载失败', (err?.stack || err) + '\\n\\n提示：你也可以直接在 DeepSeek Harness 客户端内点击「AI 视频工坊」使用，无需外网 CDN。');
+      showBootError('独立浏览器预览运行时加载失败', (err?.stack || err) + '\\n\\n提示：你也可以直接在 DeepSeek Harness 客户端内点击「${BRAND.productName}」使用，无需外网 CDN。');
     }
   </script>
 </body>

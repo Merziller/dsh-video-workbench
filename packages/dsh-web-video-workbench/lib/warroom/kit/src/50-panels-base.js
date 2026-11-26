@@ -137,7 +137,9 @@
     order: 99,
     desc: '三步出片、快捷键与常见问题',
     render(ctx) {
-      ctx.foot([ui.spacer(), ui.btn('知道了', () => ctx.close(), { kind: 'primary' })])
+      // footer: 「禾杨视频工坊 · 禾杨智绘出品」; the full credits are in the 关于 section at the end
+      const B = PK.BRAND || {}
+      ctx.foot([B.footerLine ? ui.hint(B.footerLine) : null, ui.spacer(), ui.btn('知道了', () => ctx.close(), { kind: 'primary' })].filter(Boolean))
       const keys = (PK.cfg.shortcuts || [
         ['R', '一键出片 / 继续'],
         ['空格', '播放 / 暂停预览'],
@@ -162,9 +164,25 @@
             ui.item({ icon: 'cpu', title: '电脑比较卡', sub: '打开「算力体检」开启低配保护：自动降帧、关闭重特效。', onClick: () => PK.open('hardware') }),
           ]),
         ),
-      ]
+        B.productName ? aboutSection(B) : null,
+      ].filter(Boolean)
     },
   })
+
+  /** 关于: product, studio, original author, licence and the dual copyright (from PK.BRAND, packages/shared/brand.js) */
+  function aboutSection(B) {
+    return ui.section(
+      { title: '关于', en: 'ABOUT', icon: 'info' },
+      ui.kv([
+        ['产品', `${B.productName}（${B.productNameEn}）`],
+        ['出品', `${B.studioName} · ${B.studioFullName}`],
+        ['原创作者', `${B.authorDisplay} · ${B.contactLine}`],
+        ['开源协议', `${B.license}（开源免费）· ${B.repoUrl}`],
+        ['版权', B.copyright],
+      ]),
+      B.origin ? ui.hint(B.origin) : null,
+    )
+  }
 
   /* ---------------------------------------------------------------- 组件样板 (for skin authors; hidden) */
   PK.panel('kitchen', {

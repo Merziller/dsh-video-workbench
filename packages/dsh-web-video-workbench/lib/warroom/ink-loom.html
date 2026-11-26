@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>墨韵织机 · INK LOOM — DSH 视频工坊 · AI Agent 作战大屏（皮肤 B）</title>
+<title>禾杨视频工坊</title>
 <link rel="stylesheet" href="kit.css">
 <style>
 /* ═════════════════════════════════════════════════════════════
@@ -571,7 +571,7 @@ body.compact .h-big b{font-size:36px}
 body.compact .capsule span{max-width:380px}
 body.tiny{--top-h:44px}
 body.tiny #topbar{gap:8px;padding:0 8px}
-body.tiny .brand-txt,body.tiny .hc-t,body.tiny .lamp b,body.tiny .seg button span,body.tiny .dd-btn em{display:none}
+body.tiny .brand-txt,body.tiny #hostBack .hc-t,body.tiny .lamp b,body.tiny .seg button span,body.tiny .dd-btn em{display:none}
 body.tiny .hc{padding:0 8px}
 body.tiny .dd-btn{max-width:150px}
 body.tiny .dd-btn b{font-size:13px}
@@ -655,8 +655,9 @@ body.soft #scroll.pulse{animation:none}
 #topbar{min-width:0}
 #topbar>*{flex:none}
 #topbar>.tb-fill{flex:1 1 0;min-width:0}
-#projDD{flex:0 1 auto;min-width:96px}
-#projDD .dd-btn{max-width:300px;min-width:0}
+/* 工程选择器的上限加在外层槽位上（按钮填满槽位、不留空白，也不越界压住页签） */
+#projDD{flex:0 1 auto;min-width:96px;max-width:300px}
+#projDD .dd-btn{max-width:100%;min-width:0}
 #projDD .dd-btn b{min-width:0}
 .hostcap.solo .hc-div{display:none}
 .hc[hidden]{display:none}
@@ -687,11 +688,19 @@ span.hc{cursor:default}
 #topbar.tb-3 .seg button span,#topbar.tb-3 .slip sup,#topbar.tb-3 #projDD .dd-btn em{display:none}
 #topbar.tb-4 .lamp b{display:none}
 #topbar.tb-4 .lamp{padding:0 5px}
-#topbar.tb-5 .hc-t{display:none}
-#topbar.tb-5 #projDD .dd-btn{max-width:170px}
+#topbar.tb-5 #hostBack .hc-t{display:none}
+#topbar.tb-5 #projDD{max-width:170px}
 #topbar.tb-6 .slip{padding:0 7px;letter-spacing:.02em}
-#topbar.tb-6 #projDD .dd-btn{max-width:130px}
+#topbar.tb-6 #projDD{max-width:130px}
 #topbar.tb-6 .busy{max-width:150px}
+#topbar.tb-7 .busy{min-width:0;padding:0 8px}
+#topbar.tb-7 .busy span{display:none}
+#topbar.tb-7 .slip{padding:0 6px}
+#topbar.tb-7 #projDD{max-width:120px}
+#topbar.tb-8 .hc-t{display:none}
+/* 产品名「禾杨视频工坊」只出现一次：放得下时在印章旁（.brand-txt），否则在宿主胶囊里（收拢到最后一步才隐藏） */
+body:not(.tiny) #topbar:not(.tb-2) .hostcap.solo{display:none}
+body:not(.tiny) #topbar:not(.tb-2) .hc.on .hc-t{display:none}
 /* 无工程引导 / 等待宿主 */
 #onboard{position:fixed;z-index:13;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:10px;padding:22px 26px;border-radius:var(--r2);border:1px solid var(--gl);background:var(--fiber),linear-gradient(180deg,rgba(var(--paper-rgb),.96),rgba(var(--paper-rgb),.9));box-shadow:var(--shadow);text-align:center;overflow:auto}
 #onboard[hidden],#waiting[hidden]{display:none}
@@ -1302,12 +1311,12 @@ body.low #pk-root .pk-panel--voices .pk-frame-b>.pk-list--dense>.pk-item::before
 <header id="topbar">
   <div class="brand">
     <span class="brand-seal" aria-hidden="true">影</span>
-    <span class="brand-txt"><b>DSH 视频工坊</b><i>INK LOOM · 墨韵织机</i></span>
+    <span class="brand-txt" title="禾杨视频工坊 · 墨韵织机 INK LOOM"><b>禾杨视频工坊</b><i>INK LOOM · 墨韵织机</i></span>
   </div>
   <div class="hostcap" id="hostCap" role="group" aria-label="宿主切换">
     <button class="hc" id="hostBack" hidden title="返回 DSH 对话" aria-label="返回 DSH 对话"><svg><use href="#i-back"/></svg><span class="hc-t">返回对话</span></button>
     <i class="hc-div"></i>
-    <span class="hc on" aria-current="page"><svg><use href="#i-clap"/></svg><span class="hc-t">AI 视频工坊</span></span>
+    <span class="hc on" aria-current="page"><svg><use href="#i-clap"/></svg><span class="hc-t">禾杨视频工坊</span></span>
   </div>
   <div class="dd" id="projDD">
     <button class="dd-btn" id="projBtn" title="切换工程" aria-haspopup="menu" aria-expanded="false"><em>工程</em><b id="projName">未打开工程</b><svg class="cr"><use href="#i-caret"/></svg></button>
@@ -4827,7 +4836,7 @@ function relTime(iso) {
 }
 function syncChrome(S) {
   const dsh = S.host === 'dsh';
-  const back = $('#hostBack'); if (back.hidden === dsh) { back.hidden = !dsh; $('#hostCap').classList.toggle('solo', !dsh); fitTopbar(); }
+  const back = $('#hostBack'); if (back.hidden === dsh) { back.hidden = !dsh; $('#hostCap').classList.toggle('solo', !dsh); }
   /* 工程选择器 */
   const p = S.project, title = p ? String(p.title || '未命名工程') : '未打开工程';
   setTxt('projName', title); setTitle('projBtn', p ? `当前工程：${title}（点击切换）` : '新建或打开一个工程');
@@ -4841,8 +4850,8 @@ function syncChrome(S) {
   }
   /* 忙碌 */
   const busy = String(S.busy || '').trim(), bp = $('#busyPill');
-  if (bp.hidden === !!busy) { bp.hidden = !busy; fitTopbar(); }
   setTxt('busyTxt', busy); setTitle('busyPill', busy ? busy + '（点击打开任务中心）' : '');
+  if (bp.hidden === !!busy) bp.hidden = !busy;
   bp.setAttribute('aria-label', busy ? '宿主忙碌：' + busy : '');
   /* 状态灯 */
   const s = S.status || {};
@@ -4864,11 +4873,14 @@ function syncChrome(S) {
   const ob = $('#onboard'); const show = !p;
   if (ob.hidden === show) ob.hidden = !show;
   document.body.classList.toggle('noproj', !p);
+  /* 顶栏内容（返回按钮、工程名、忙碌文字、状态灯、计数）一变就按新宽度重新收拢：先填好文字再量，永不重叠 */
+  const fit = `${dsh}|${!!busy}|${$('#topbar').textContent}`;
+  if (fit !== CHROME.fit) { CHROME.fit = fit; fitTopbar(); }
 }
-/* 顶栏宽度不足时依次收起：状态灯文字 → 品牌字 → 页签英文/计数 → 镜头文字 → 状态灯 → 工程名缩短（永不重叠） */
+/* 顶栏宽度不足时依次收起：状态灯文字 → 品牌字 → 页签英文/计数 → 镜头文字 → 状态灯 → 工程名缩短 → 忙碌只留转圈（文字在悬停提示和任务中心里） → 最后才收起产品名（永不重叠） */
 function fitTopbar() {
   const tb = $('#topbar'); if (!tb) return;
-  const steps = ['tb-1', 'tb-2', 'tb-3', 'tb-4', 'tb-5', 'tb-6'];
+  const steps = ['tb-1', 'tb-2', 'tb-3', 'tb-4', 'tb-5', 'tb-6', 'tb-7', 'tb-8'];
   /* 量尺寸时关掉过渡：body.tiny / compact 刚切换时页签、按钮的字号与内边距还在过渡动画里，半途量会误判「放得下」 */
   tb.classList.add('tb-measure');
   steps.forEach((s) => tb.classList.remove(s));

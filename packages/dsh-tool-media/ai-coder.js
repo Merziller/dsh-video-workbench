@@ -38,10 +38,12 @@ import {
   mixVideoAudio,
   quantizeScenesToBeatGrid,
 } from './audio-synth.js'
+import { cutToMusicWindow, musicTimingFields } from './beat-analyzer.js'
 import { generateAiCodedBgmTrack, synthesizeTtsEngineAudioCue } from './audio-coder.js'
 import { normalizeTransitionKind, runSchemaDirectorWithDegradation } from './plan-schema.js'
 import * as planSchemaApi from './plan-schema.js'
 import { masterVoiceTracks } from './voice-master.js'
+import { runNarrationCheck } from './narration-check.js'
 import { buildRichHtmlVideo, resolvePalette } from './html-generator.js'
 import { callLlmChat, extractJsonFromLlmText, formatLlmWait, getLlmTimeoutMs, resolveLlmConfig } from './llm-client.js'
 import { applyFigureStyleChoice, buildFigureStylePlanDirective, inferFigureStyle, resolveFigureStyleNote, writeFigureKitRemotionLib } from './figure-kit.js'
@@ -334,7 +336,7 @@ export async function runCodeAutoRepairLoop({
 
     const repairPrompt = JSON.stringify(
       {
-        task: `请修复以下 ${engine === 'remotion' ? 'Remotion TSX' : 'HyperFrames HTML'} 代码编译与规范错误`,
+        task: `请修复以下 ${engine === 'remotion' ? 'Remotion TSX' : 'HTML5 动效'} 代码编译与规范错误`,
         errors: allErrors,
         currentFiles: cleanMap,
         strictReminder:
@@ -1495,6 +1497,8 @@ export async function runAiStudioPipeline(options = {}) {
     aiBadgeEnabled,
     aiBadgePosition = 'top-right',
     aiBadgeText = '',
+    endNotice,
+    endNoticeCredit,
     pacingMode = 'auto',
     visual3dMode = 'auto',
     useDraftReference = true,
@@ -1617,7 +1621,7 @@ export async function runAiStudioPipeline(options = {}) {
     text: stripPlazaTemplateGuidance(`${coreTopic} ${directorNotes || ''} ${userPrompt || ''} ${existingScript?.goal || ''}`),
     narrationMode: resolvedNarrationMode,
     hasVisualAssets: visuals.length > 0,
-    bgmDurationSec: Number(analyzedBgmMeta?.durationSec || importedMusic[0]?.durationSec) || 0,
+    bgmDurationSec: Number(analyzedBgmMeta?.songDurationSec || analyzedBgmMeta?.durationSec || importedMusic[0]?.durationSec) || 0,
   })
   const effectiveCoderTargetSec = coderDurationPolicy.enforced ? coderDurationPolicy.targetSec : 0
 
@@ -1959,6 +1963,8 @@ export async function runAiStudioPipeline(options = {}) {
     aiBadgeEnabled: aiBadgeEnabled !== undefined ? Boolean(aiBadgeEnabled) : aiBadge !== false,
     aiBadgePosition: ['top-right', 'top-left', 'bottom-right', 'bottom-left'].includes(aiBadgePosition) ? aiBadgePosition : (existingScript?.aiBadgePosition || 'top-right'),
     aiBadgeText: String(aiBadgeText || existingScript?.aiBadgeText || 'AI 辅助创作').trim(),
+    endNotice: endNotice !== undefined ? endNotice === true : existingScript?.endNotice === true,
+    endNoticeCredit: endNoticeCredit !== undefined ? endNoticeCredit === true : existingScript?.endNoticeCredit === true,
     pacingMode: String(pacingMode || existingScript?.pacingMode || 'auto').trim(),
     visual3dMode: String(visual3dMode || existingScript?.visual3dMode || 'auto').trim(),
     durationMode: coderDurationPolicy.durationMode === 'custom' ? 'custom' : String(durationMode || existingScript?.durationMode || 'auto'),
@@ -1991,6 +1997,7 @@ export async function runAiStudioPipeline(options = {}) {
   if (editMerge.report) emit('architect', 22, `人工修改保护：${summarizeEditMerge(editMerge.report)}`)
   writeScriptJson(absDir, editMerge.script)
   let masteringReport = null
+  let narrationCheckRes = null
   if (resolvedNarrationMode === 'subtitle-mv') {
     emit('tts', 36, '3-4/7 纯音乐卡点 MV 模式：跳过 TTS 朗读，正在对齐分镜与字幕至音乐真实节拍...')
   } else {
@@ -2018,6 +2025,7 @@ export async function runAiStudioPipeline(options = {}) {
     let midScript = readScriptJson(absDir).data
 
     emit('tts', 28, '3/7 正在通过本地 IndexTTS-2.5 音色库合成真人情感配音...')
+    const dubbedTakes = []
     for (let i = 0; i < (midScript.scenes || []).length; i++) {
       const s = midScript.scenes[i]
       // audioFile is only kept at plan time when the WAV is reusable (or the scene is locked)
@@ -2029,7 +2037,7 @@ export async function runAiStudioPipeline(options = {}) {
         continue
       }
       const spokenTtsText = s.ttsText || toTtsText(s.narration || s.title || '')
-      await executeGenerateSpeech({
+      const ttsArgs = {
         text: s.narration,
         ttsText: spokenTtsText,
         emotion: s.voiceEmotion || s.emotion || '自信明快',
@@ -2041,6 +2049,23 @@ export async function runAiStudioPipeline(options = {}) {
         scriptPath: absDir,
         sceneId: s.id,
         allowPlaceholder,
+      }
+      await executeGenerateSpeech(ttsArgs)
+      dubbedTakes.push({ sceneId: s.id, ttsArgs })
+    }
+
+    // 配音回听校验 (narration-check.js): listen to the new takes with the local speech recognition, re-dub a failing
+    // take once; what still fails is reported — advisory only
+    if (dubbedTakes.length) {
+      narrationCheckRes = await runNarrationCheck({
+        projectDir: absDir,
+        takes: dubbedTakes,
+        resynthesize: (take) => executeGenerateSpeech(take.ttsArgs),
+        enabled: options.narrationCheck !== false,
+        narrationMode: resolvedNarrationMode,
+        onLog: (msg) => emit('tts', 37, msg),
+        onWarn: (msg) => emit('tts', 37, msg),
+        onProgress: (msg) => emit('tts', 36, `3/7 ${msg}`),
       })
     }
 
@@ -2061,7 +2086,7 @@ export async function runAiStudioPipeline(options = {}) {
   let lockedScript = readScriptJson(absDir).data
   // Human edit protection: remember locked scenes' sfxCues (and the old beat grid) before quantization
   const lockedAudioSnap = snapshotLockedSceneAudio(lockedScript)
-  const activeBeatMeta = analyzedBgmMeta?.analyzed
+  let activeBeatMeta = analyzedBgmMeta?.analyzed
     ? analyzedBgmMeta
     : buildBeatGrid(lockedScript.totalDurationSec || 12, bpm)
   lockedScript.bgm = {
@@ -2070,6 +2095,24 @@ export async function runAiStudioPipeline(options = {}) {
     beats: analyzedBgmMeta?.analyzed ? activeBeatMeta.beats : activeBeatMeta.beats.map((b) => b.time),
     bpm: activeBeatMeta.bpm || bpm,
     mode: resolvedBgmMode,
+  }
+  // 配乐从精彩处开始: an uploaded song clearly longer than the film starts at a well-chosen bar line — around the scene
+  // cut below, or (without beat sync) just the music start. 'head' pins the song start; MCP bgmStartFrom wins.
+  const coderSongStart = resolvedBgmMode === 'uploaded' && Boolean(analyzedBgmMeta?.analyzed)
+  const coderStartFrom = ['auto', 'head'].includes(options.bgmStartFrom)
+    ? options.bgmStartFrom
+    : (existingScript?.bgm?.startFrom || lockedScript.bgm?.startFrom) === 'head' ? 'head' : 'auto'
+  // the pin is the user's (kept even while another music source is used this time)
+  if (resolvedBgmMode === 'uploaded' || options.bgmStartFrom || existingScript?.bgm?.startFrom) lockedScript.bgm.startFrom = coderStartFrom
+  const coderFilmSec = Math.max(
+    Number(lockedScript.totalDurationSec) || (lockedScript.scenes || []).reduce((a, s) => a + (Number(s.durationSec) || 0), 0),
+    effectiveCoderTargetSec || 0,
+  )
+  const applyCoderMusicCut = (musicCut) => {
+    activeBeatMeta = musicCut.meta
+    lockedScript.bgm = { ...lockedScript.bgm, ...musicTimingFields(musicCut.meta) }
+    if (musicCut.window.note) emit('audio', 42, musicCut.window.note)
+    return musicCut.scenes
   }
 
   if (enableBeatSync || resolvedNarrationMode === 'subtitle-mv' || resolvedNarrationMode === 'tts-beat-sync') {
@@ -2086,12 +2129,21 @@ export async function runAiStudioPipeline(options = {}) {
       referenceStyle: lockedScript.referenceStyle,
       style: lockedScript.style,
     }
-    lockedScript.scenes = quantizeScenesToBeatGrid(lockedScript.scenes || [], activeBeatMeta, {
-      ...adaptiveOpts,
-      mode: qMode,
-      fps,
-      targetDurationSec: effectiveCoderTargetSec,
-    })
+    const sceneInput = lockedScript.scenes || []
+    const cutScenes = (meta) => quantizeScenesToBeatGrid(sceneInput, meta, { ...adaptiveOpts, mode: qMode, fps, targetDurationSec: effectiveCoderTargetSec })
+    lockedScript.scenes = coderSongStart
+      ? applyCoderMusicCut(
+          cutToMusicWindow(activeBeatMeta, {
+            filmSec: qMode === 'subtitle-mv' && effectiveCoderTargetSec > 0 ? effectiveCoderTargetSec : coderFilmSec,
+            exactLength: qMode === 'subtitle-mv' && effectiveCoderTargetSec > 0,
+            musicOnly: qMode === 'subtitle-mv',
+            startFrom: coderStartFrom,
+            fps,
+            songPath: pickedUploadBgm,
+            cut: cutScenes,
+          }),
+        )
+      : cutScenes(activeBeatMeta)
     lockedScript.scenes = choreographBeatSfxCues(lockedScript.scenes, activeBeatMeta, { ...adaptiveOpts, fps })
     // Locked scenes keep their sfxCues (scene-relative, clamped if the grid moved); user overrides win again
     restoreLockedSceneSfx(lockedScript, lockedAudioSnap)
@@ -2101,6 +2153,8 @@ export async function runAiStudioPipeline(options = {}) {
     lockedScript.totalDurationInFrames = lastSc ? Number(lastSc.startFrame || 0) + Number(lastSc.durationInFrames || 0) : lockedScript.totalDurationInFrames
     lockedScript.totalDurationSec = Number(((lockedScript.totalDurationInFrames || 30) / fps).toFixed(4))
   } else {
+    // no beat sync: only where the uploaded song starts moves (the film keeps its TTS timing)
+    if (coderSongStart) applyCoderMusicCut(cutToMusicWindow(activeBeatMeta, { filmSec: coderFilmSec, startFrom: coderStartFrom, fps, songPath: pickedUploadBgm }))
     // TTS re-measured durations: user overrides (e.g. a pinned durationSec / subtitleText) win again
     applyUserOverrides(lockedScript)
   }
@@ -2182,6 +2236,8 @@ export async function runAiStudioPipeline(options = {}) {
     aiBadgeEnabled: Boolean(lockedScript.aiBadgeEnabled ?? lockedScript.aiBadge),
     aiBadgePosition: lockedScript.aiBadgePosition || 'top-right',
     aiBadgeText: lockedScript.aiBadgeText || 'AI 辅助创作',
+    endNotice: lockedScript.endNotice === true,
+    endNoticeCredit: lockedScript.endNoticeCredit === true,
     pacingMode: lockedScript.pacingMode || 'auto',
     narrationMode: lockedScript.narrationMode || resolvedNarrationMode,
     subtitleStyle: lockedScript.subtitleStyle || 'pill',
@@ -2253,7 +2309,7 @@ export async function runAiStudioPipeline(options = {}) {
       } catch {}
     }
   } else {
-    emit('coder', 56, `6/7 正在让大模型 (${llmCfg.model}) 编写定制 HyperFrames HTML 视频源码...`)
+    emit('coder', 56, `6/7 正在让大模型 (${llmCfg.model}) 编写定制 HTML5 动效视频源码...`)
     const coderPkg = withStyleGuide(
       buildHtmlCoderSkillsPrompt({
         plan,
@@ -2374,6 +2430,19 @@ export async function runAiStudioPipeline(options = {}) {
     script: readScriptJson(absDir).data,
     buildLog,
     render: renderResult,
+    // 配音回听校验 summary (details: output/narration-check.json)
+    narrationCheck: narrationCheckRes
+      ? {
+          ran: narrationCheckRes.ran,
+          skipped: narrationCheckRes.skipped || '',
+          checked: narrationCheckRes.checked,
+          flagged: narrationCheckRes.flagged,
+          retried: narrationCheckRes.retried,
+          fixed: narrationCheckRes.fixed,
+          elapsedMs: narrationCheckRes.elapsedMs,
+          warnings: narrationCheckRes.warnings,
+        }
+      : null,
   }
 }
 
@@ -2481,7 +2550,7 @@ export async function refineAiScene({
   const llmTimeoutMs = getLlmTimeoutMs()
   const refineLabel = `大模型正在按您的要求精修 (${prep.mode === 'global' ? '全局' : prep.affectedSceneIds.join(', ')})`
   emit('coder', 35, `${refineLabel}...（最长等待 ${formatLlmWait(llmTimeoutMs)}）`)
-  const system = `你是资深 ${engine === 'remotion' ? 'Remotion TSX + 原生 Three.js 3D + 动态 SVG' : 'HyperFrames HTML'} 视频创意工程师。
+  const system = `你是资深 ${engine === 'remotion' ? 'Remotion TSX + 原生 Three.js 3D + 动态 SVG' : 'HTML5 动效'} 视频创意工程师。
 用户正在微调一个已有视频工程。请完全根据用户的自然语言需求自由编写/修改对应的 3D 场景与 2D 动态 SVG 视觉（不受任何固定预设限制！在 Remotion 中可从 './lib/shotcraft' 或 '../lib/shotcraft' 导入 FreeformThreeStage, FreeformThreeApi, buildSmoothSvgPath, describeSvgArc, ThreeCyberStage, SvgArchitectureDiagram, HudDataDashboard, computeBeatSpring, BeatSpringPhysicsRig 等自由造景原语），输出严格 JSON：
 {
   "files": { "相对路径": "完整更新后的源码" },

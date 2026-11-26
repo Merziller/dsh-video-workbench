@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NOVA DECK · 星舰剪辑甲板 — DSH Video Workbench · AI Agent 作战大屏</title>
+<title>禾杨视频工坊</title>
 <link rel="stylesheet" href="kit.css">
 <style>
 /* ---- 10-tokens-base.css ---- */
@@ -147,7 +147,7 @@ kbd{display:inline-flex;align-items:center;justify-content:center;min-width:18px
 #topbar>*{flex:none}
 .tb-brand{display:flex;align-items:center;gap:9px}
 .tb-logo{width:30px;height:30px;filter:drop-shadow(0 0 6px rgba(var(--acc-rgb),.55))}
-.tb-bt b{display:block;font:700 15px/1 var(--f-hud);letter-spacing:.26em;color:var(--ink)}
+.tb-bt b{display:block;font:700 15px/1 var(--f-hud);letter-spacing:.1em;color:var(--ink);white-space:nowrap}
 .tb-bt span{display:block;margin-top:4px;font:500 8.5px/1 var(--f-hud);letter-spacing:.3em;color:var(--ink3)}
 .tb-back{border-radius:999px}
 .proj{display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:8px;border:1px solid var(--hair);background:rgba(var(--acc-rgb),.04);max-width:240px;min-width:0;flex:0 1 auto!important;transition:all var(--d1) var(--ez)}
@@ -185,8 +185,10 @@ kbd{display:inline-flex;align-items:center;justify-content:center;min-width:18px
 .tb-ic{display:flex;gap:6px}
 @media (max-width:1760px){.sl .v{display:none}}
 @media (max-width:1500px){.tb-bt span{display:none}.sls{display:none}.sl-all{display:flex}.modes button{padding:0 10px}.proj{max-width:190px}.skinbtn .sn{display:none}.cam-seg .cl{display:none}.cam-seg>button{padding:0 8px}}
-@media (max-width:1340px){.tb-bt{display:none}.proj{max-width:150px}.modes button{padding:0 8px;font-size:12px}#topbar{gap:7px;padding:0 10px}.modes button em{display:none}}
+@media (max-width:1340px){.tb-bt b{letter-spacing:.04em}.proj{max-width:150px}.modes button{padding:0 8px;font-size:12px}#topbar{gap:7px;padding:0 10px}.modes button em{display:none}}
 @media (max-width:1180px){.proj{max-width:128px}.tb-busy{max-width:220px}}
+/* the product name 禾杨视频工坊 stays down to the smallest supported window (1100 px wide); below that only the logo */
+@media (max-width:1060px){.tb-bt{display:none}}
 .skin-pop .pi b{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font:800 11px var(--f-hud);color:#021118;flex:none}
 .skin-pop .pi .sd{width:10px;height:10px;border-radius:3px;flex:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
 .status-pop .pi .led{margin-right:2px}
@@ -1548,9 +1550,9 @@ body.lite #pk-root .pk-ops-cover-src{box-shadow:none}
 
 <!-- ============ TOP BAR ============ -->
 <header id="topbar">
- <div class="tb-brand" title="DSH Video Workbench">
+ <div class="tb-brand" title="禾杨视频工坊 · 星舰剪辑甲板 NOVA DECK">
   <svg class="tb-logo" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M16 2l5 9 9 5-9 5-5 9-5-9-9-5 9-5z" stroke="var(--acc)" stroke-width="1.4"/><path d="M16 9l2.4 4.6L23 16l-4.6 2.4L16 23l-2.4-4.6L9 16l4.6-2.4z" fill="var(--acc)" opacity=".9"/><circle cx="16" cy="16" r="1.6" fill="#fff"/></svg>
-  <div class="tb-bt"><b>DSH</b><span>VIDEO WORKBENCH</span></div>
+  <div class="tb-bt"><b>禾杨视频工坊</b><span>VIDEO WORKBENCH</span></div>
  </div>
  <button class="btn ico tb-back" id="tb-back" hidden aria-label="返回 DSH 对话" title="返回 DSH 对话"><i data-ico="back" data-s="15"></i></button>
  <button class="proj" id="proj-btn" aria-label="切换工程" title="切换工程"><i class="pd"></i><span class="pn" id="proj-name">未打开工程</span><span class="caret">▼</span></button>

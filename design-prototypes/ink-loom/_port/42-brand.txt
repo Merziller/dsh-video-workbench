@@ -1,0 +1,15 @@
+@@@ REPLACE
+<title>墨韵织机 · INK LOOM — DSH 视频工坊 · AI Agent 作战大屏（皮肤 B）</title>
+@@@ WITH
+<title>禾杨视频工坊</title>
+@@@ END
+@@@ REPLACE
+    <span class="brand-txt"><b>DSH 视频工坊</b><i>INK LOOM · 墨韵织机</i></span>
+@@@ WITH
+    <span class="brand-txt" title="禾杨视频工坊 · 墨韵织机 INK LOOM"><b>禾杨视频工坊</b><i>INK LOOM · 墨韵织机</i></span>
+@@@ END
+@@@ REPLACE
+    <span class="hc on" aria-current="page"><svg><use href="#i-clap"/></svg><span class="hc-t">AI 视频工坊</span></span>
+@@@ WITH
+    <span class="hc on" aria-current="page"><svg><use href="#i-clap"/></svg><span class="hc-t">禾杨视频工坊</span></span>
+@@@ END

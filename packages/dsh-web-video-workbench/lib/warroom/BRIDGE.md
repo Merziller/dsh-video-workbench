@@ -168,6 +168,8 @@ interface WarRoomState {
     displayTitle: string; genre: string; genreLabel: string; directorNotes: string; contentOutline: string[]
     bgmTtsPrompt: string; targetPlatform: string; customWidth: number; customHeight: number
     aiBadgeEnabled: boolean; aiBadgePosition: string; aiBadgeText: string; visual3dMode: 'auto' | 'on' | 'off'
+    endNotice: boolean                // 片尾声明 (default false): one-line AI disclosure during the last ~2 s of the film
+    endNoticeCredit: boolean          // 片尾署名 (default false; only counts with endNotice): that line credits the plugin
     useDraftReference: boolean
     visualReview: boolean             // 画面自检 (AI-coded runs: keyframes are reviewed by the model, flagged shots rewritten once)
     visualReviewFine: boolean         // 逐个机位看图 (default true): one still per sub-shot / ~4 s, cropped 机位 loosened locally, rewritten shots re-checked

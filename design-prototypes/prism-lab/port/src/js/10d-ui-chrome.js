@@ -9,7 +9,8 @@ function renderChrome() { const W = M; if (!W) return; const p = W.project;
   document.body.classList.toggle('is-busy', !!bt);
   // status chips → openPanel
   const s = W.status, ag = id => agentOf(W, id).status === 'running', live = S.run.live;
-  chip('#stLlm', s.llm.configured ? (live && (ag('director') || ag('motion')) ? 'busy' : 'ok') : 'warn', s.llm.configured ? (s.llm.label || '已连接') : '未配置', '大模型 · ' + (s.llm.configured ? (s.llm.label || '已连接') : '未配置 · 点击设置'));
+  { const pend = Number(s.llm.pending) || 0; // 智能体代写: writing tasks waiting for the agent turn the chip amber
+    chip('#stLlm', s.llm.configured ? (pend > 0 ? 'warn' : live && (ag('director') || ag('motion')) ? 'busy' : 'ok') : 'warn', s.llm.configured ? (pend > 0 ? '待处理 ' + pend : (s.llm.label || '已连接')) : '未配置', '大模型 · ' + (s.llm.configured ? (pend > 0 ? '有 ' + pend + ' 个写作任务在等智能体处理' : (s.llm.label || '已连接')) : '未配置 · 点击设置')); }
   chip('#stTts', s.tts.ready ? (live && ag('audio') ? 'busy' : 'ok') : 'idle', s.tts.label || (s.tts.ready ? '就绪' : '未就绪'), '配音引擎 · ' + (s.tts.label || '') + (s.tts.ready ? ' · 就绪' : ' · 未就绪'));
   chip('#stGpu', W.lowSpec ? 'warn' : live && (ag('qa') || ag('motion')) ? 'busy' : 'ok', W.lowSpec ? '低配保护' : (s.gpu.label || 'CPU'), '算力 · ' + (s.gpu.label || 'CPU 模式') + (W.lowSpec ? ' · 低配保护已开启' : '') + (s.gpu.lowSpecMode ? ' · 模式 ' + s.gpu.lowSpecMode : ''));
   chip('#stLip', s.lipsync.ready ? (live && ag('avatar') ? 'busy' : 'ok') : 'idle', s.lipsync.label || (s.lipsync.ready ? '就绪' : '未启用'), '口型引擎 · ' + (s.lipsync.label || '未启用'));
@@ -17,8 +18,8 @@ function renderChrome() { const W = M; if (!W) return; const p = W.project;
   fitTopbar(); }
 function chip(sel, st, val, title) { const el = $(sel); if (!el) return; const d = qs(el, '.dot'), v = qs(el, 'b'); const cls = 'dot ' + st; if (d.className !== cls) d.className = cls; if (v.textContent !== val) v.textContent = val;
   el.title = title + ' · 点击打开'; el.setAttribute('aria-label', title); }
-// progressive collapse of the top bar so nothing ever overflows (labels → values → chips)
-function fitTopbar() { const tb = $('#topbar'), cls = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6']; cls.forEach(c => tb.classList.remove(c));
+// progressive collapse of the top bar so nothing ever overflows (labels → values → chips; the product name last)
+function fitTopbar() { const tb = $('#topbar'), cls = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7']; cls.forEach(c => tb.classList.remove(c));
   const over = () => tb.scrollWidth > tb.clientWidth + 1 || [...tb.children].some(el => !el.hidden && el.offsetParent && el.getBoundingClientRect().right > tb.getBoundingClientRect().right + .5);
   for (const c of cls) { if (!over()) break; tb.classList.add(c); } }
 // status chips → native panels: 模型 / 配音 → 设置 · 模型与密钥 (tab), 算力 → 算力体检, 口型 → 数字人

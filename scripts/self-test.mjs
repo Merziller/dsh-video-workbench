@@ -38,6 +38,9 @@ import { scaffoldVideoProject } from '../packages/dsh-preset-video/index.js'
 import { handleWorkbenchApiRequest, polishTopicPrompt } from '../packages/dsh-web-video-workbench/lib/index.js'
 import { verifyCordisPluginMounting } from './dsh-runner.mjs'
 
+// tests never download the local speech engine (its automatic install starts from the studio state / talk routes)
+if (process.env.DSH_ASR_AUTO_INSTALL === undefined) process.env.DSH_ASR_AUTO_INSTALL = '0'
+
 /**
  * Scan repository files to ensure ZERO hardcoded personal paths or API keys exist in open-source files.
  */

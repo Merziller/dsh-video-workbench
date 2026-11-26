@@ -2051,18 +2051,23 @@
     ]
   }
   function authorNote(a) {
+    const B = PK.BRAND || {}
+    const studio = a.studioFullName || B.studioFullName || ''
+    const copyright = a.copyright || B.copyright || ''
     return ui.note(
       h(
         'div.pk-stack',
         { style: { gap: '4px' } },
-        ui.text(`作者：${a.name || '—'}${a.qq ? ` · QQ：${a.qq}` : ''}${a.wechat ? ` · 微信：${a.wechat}` : ''}${a.email ? ` · 邮箱：${a.email}` : ''}`),
+        studio ? ui.text(`出品：${a.studio || B.studioName || ''} · ${studio}`) : null,
+        ui.text(`原创作者：${a.name || '—'}${a.nameZh ? ` (${a.nameZh})` : ''}${a.qq ? ` · QQ：${a.qq}` : ''}${a.wechat ? ` · 微信：${a.wechat}` : ''}${a.email ? ` · 邮箱：${a.email}` : ''}`),
+        copyright ? ui.text(copyright, { tone: 'muted' }) : null,
         a.github ? ui.row([ui.text(`官方仓库：${a.github}`, { mono: true, tone: 'muted' }), ui.iconBtn('copy', async () => {
           const ok = await U.copyText(a.github)
           PK.toast(ok ? '仓库地址已复制' : '复制失败', ok ? 'success' : 'warn')
         }, { title: '复制仓库地址' })], { wrap: true }) : null,
         a.notice ? ui.text(a.notice, { tone: 'dim' }) : null,
       ),
-      { level: 'info', title: `原创作者署名与开源版权声明${a.license ? `（${a.license}）` : ''}` },
+      { level: 'info', title: `${(PK.BRAND && PK.BRAND.productName) || '版权声明'} · 出品与原创作者署名${a.license ? `（${a.license} 开源）` : ''}` },
     )
   }
 

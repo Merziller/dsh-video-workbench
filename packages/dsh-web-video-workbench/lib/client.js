@@ -1,7 +1,7 @@
 /* eslint-disable no-undef */
 /**
- * DSH Video Workbench Frontend Client (v0.4.0 — Universal Multi-Agent & Reference Remake Studio)
- * Copyright (c) 2026 Merziller
+ * 禾杨视频工坊 · DSH Video Workbench Frontend Client (Universal Multi-Agent & Reference Remake Studio) · 禾杨智绘出品
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)
  * Author: Merziller | QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com
  * Official Repo: https://github.com/Merziller/dsh-video-workbench (MIT License)
  * Pure ES Module loaded dynamically inside DSH Web UI or Standalone Browser Studio via window.__ModuleLoader__.
@@ -13,6 +13,9 @@ window.__ModuleLoader__?.load({
     const React = ReactMod?.default || ReactMod
     const { useState, useEffect, useRef, useMemo, useCallback } = React
     const h = React.createElement
+    // 中文产品短名 (DSH 侧边栏 / 主视图 / 欢迎文字): keep equal to BRAND.productName in packages/shared/brand.js
+    // (this file runs in the browser and cannot import it; scripts/tests/brand.test.mjs checks the two match)
+    const BRAND_NAME = '禾杨视频工坊'
 
     // =========================================================================
     // 1. UNIFIED VISUAL TOKENS, THEMES & STATIC CATALOGS
@@ -123,7 +126,7 @@ window.__ModuleLoader__?.load({
       'tts/install-options', 'brand-kit', 'cloud-media', 'cloud-media/staging', 'plaza/templates', 'plaza/template', 'color-lut',
       'project/history', 'project/scene-edits', 'project/characters', 'project/cloud-jobs',
       'publish-pack/cover', 'plaza/submissions', 'style-presets',
-      'asr/status', 'talk/state', 'footage/state', 'highlight/state', 'plaza/slots',
+      'asr/status', 'talk/state', 'footage/state', 'highlight/state', 'plaza/slots', 'clips/state',
       'anime/characters', 'anime/character', 'anime/estimate', 'anime/local', 'anime/cloud',
     ])
     const KIT_API_POST = new Set([
@@ -141,6 +144,7 @@ window.__ModuleLoader__?.load({
       'style-presets/save', 'style-presets/rename', 'style-presets/delete',
       'asr/install', 'talk/roughcut', 'talk/build', 'talk/transcribe', 'talk/pack', 'footage/index', 'highlight/build',
       'plaza/fill', 'plaza/fill-suggest',
+      'clips/find', 'clips/update', 'clips/render', 'clips/reveal',
       'delivery/save-as',
       'cloud-media/test', 'connection-test',
       'anime/create', 'anime/update', 'anime/rebuild', 'anime/delete', 'anime/local/install', 'anime/cloud', 'anime/cloud/test',
@@ -154,6 +158,7 @@ window.__ModuleLoader__?.load({
       'cloud-media/test', 'connection-test',
       'plaza/fill-suggest',
       'anime/cloud/test',
+      'clips/update', 'clips/reveal',
     ])
     // Raw binary uploads (body = file bytes, metadata in the query string)
     const KIT_UPLOAD_PATHS = new Set(['assets/upload', 'bgm/upload', 'reference/upload', 'skin/upload', 'anime/upload'])
@@ -631,7 +636,7 @@ window.__ModuleLoader__?.load({
           return h(
             'div',
             { style: { padding: '32px', color: '#FB7185', background: '#07090F', minHeight: '220px', fontFamily: 'Microsoft YaHei, sans-serif' } },
-            h('h3', { style: { margin: '0 0 10px', fontSize: '18px' } }, '电影视频工坊面板渲染异常'),
+            h('h3', { style: { margin: '0 0 10px', fontSize: '18px' } }, `${BRAND_NAME}面板渲染异常`),
             h('pre', { style: { fontSize: '13px', whiteSpace: 'pre-wrap', opacity: 0.9 } }, String(this.state.error?.message || this.state.error)),
             h(
               'button',
@@ -1083,6 +1088,8 @@ window.__ModuleLoader__?.load({
         aiBadgeEnabled: true,
         aiBadgePosition: 'top-right',
         aiBadgeText: '',
+        endNotice: false,
+        endNoticeCredit: false,
         visual3dMode: 'auto',
         visualReview: true,
         visualReviewFine: true,
@@ -1105,7 +1112,7 @@ window.__ModuleLoader__?.load({
       const [assetFilter, setAssetFilter] = useState('all')
       const [showTeleprompter, setShowTeleprompter] = useState(false)
       const [teleLinesText, setTeleLinesText] = useState(
-        '欢迎来到 DSH 电影视频工坊。\n只要在这里导入素材或现场录制一段口播，\n四位 AI 智能体就会协同完成分镜、剪辑、配音混音与 1080P 成片渲染。',
+        `欢迎来到${BRAND_NAME}。\n只要在这里导入素材或现场录制一段口播，\n四位 AI 智能体就会协同完成分镜、剪辑、配音混音与 1080P 成片渲染。`,
       )
       const [teleScrollSpeed, setTeleScrollSpeed] = useState(1.1)
       const [teleFontSize, setTeleFontSize] = useState(26)
@@ -1653,6 +1660,7 @@ window.__ModuleLoader__?.load({
                   engine: normEngine,
                   creationMode: ap.script?.creationMode || 'ai-coded',
                   bgmMode: ap.script?.bgmMode || ap.script?.audioSpec?.bgmMode || ((ap.assets?.items || []).some((a) => a.role === 'music') ? 'uploaded' : 'llm-coded'),
+                  bgmStartFrom: ap.script?.bgm?.startFrom === 'head' ? 'head' : 'auto',
                   narrationMode: ap.script?.narrationMode || 'tts',
                   pacingMode: ap.script?.pacingMode || 'auto',
                   durationMode: ap.script?.durationMode === 'custom' || Number(ap.script?.targetDurationSec) >= 10 ? 'custom' : 'auto',
@@ -1672,6 +1680,8 @@ window.__ModuleLoader__?.load({
                   aiBadgeEnabled: ap.script?.aiBadgeEnabled !== undefined ? Boolean(ap.script.aiBadgeEnabled) : (ap.script?.aiBadge !== false),
                   aiBadgePosition: ap.script?.aiBadgePosition || 'top-right',
                   aiBadgeText: ap.script?.aiBadgeText || '',
+                  endNotice: ap.script?.endNotice === true,
+                  endNoticeCredit: ap.script?.endNoticeCredit === true,
                   fps: Number(ap.script?.fps) || 30,
                   voiceId: ap.script?.defaultVoiceId || 'auto',
                 }))
@@ -1699,7 +1709,10 @@ window.__ModuleLoader__?.load({
           const scriptPatch = { ...patch }
           const styleChange = 'style' in scriptPatch
           if (styleChange && !isPresetStyle(scriptPatch.style)) delete scriptPatch.style
-          setScript((prev) => (prev ? { ...prev, ...scriptPatch } : prev))
+          // 配乐从精彩处开始 lives in script.bgm.startFrom (a whole-script save must not bring the old value back)
+          const bgmStartFrom = scriptPatch.bgmStartFrom
+          delete scriptPatch.bgmStartFrom
+          setScript((prev) => (prev ? { ...prev, ...scriptPatch, ...(bgmStartFrom ? { bgm: { ...(prev.bgm || {}), startFrom: bgmStartFrom } } : {}) } : prev))
           if (activeProjectDir) {
             connFetch('/api/video-workbench/action', {
               method: 'POST',
@@ -2068,6 +2081,8 @@ window.__ModuleLoader__?.load({
               aiBadgeEnabled: directorForm.aiBadgeEnabled,
               aiBadgePosition: directorForm.aiBadgePosition || 'top-right',
               aiBadgeText: directorForm.aiBadgeText || '',
+              endNotice: directorForm.endNotice === true,
+              endNoticeCredit: directorForm.endNoticeCredit === true,
               pacingMode: directorForm.pacingMode || 'auto',
               durationMode: directorForm.durationMode || 'auto',
               targetDurationSec: directorForm.durationMode === 'custom' ? Math.max(15, Math.min(600, Math.round(Number(directorForm.targetDurationSec) || 120))) : 0,
@@ -2547,6 +2562,8 @@ window.__ModuleLoader__?.load({
               aiBadgeEnabled: Boolean(directorForm.aiBadgeEnabled),
               aiBadgePosition: directorForm.aiBadgePosition || 'top-right',
               aiBadgeText: directorForm.aiBadgeText || '',
+              endNotice: directorForm.endNotice === true,
+              endNoticeCredit: directorForm.endNoticeCredit === true,
               avatarEnabled: Boolean(avatarCfg.enabled),
               avatarMode: avatarCfg.mode,
               avatarLayout: avatarCfg.layout,
@@ -3039,7 +3056,7 @@ window.__ModuleLoader__?.load({
             ts: new Date().toISOString(),
             agentId: 'system',
             level: 'info',
-            text: dir ? '工作台就绪 · 8 位 AI Agent 待命，写下创意后点击「一键出片」' : '欢迎使用 DSH AI 视频工坊 · 请先新建或打开一个工程',
+            text: dir ? '工作台就绪 · 8 位 AI Agent 待命，写下创意后点击「一键出片」' : `欢迎使用${BRAND_NAME} · 请先新建或打开一个工程`,
           })
         }
         const lastLog = runLogs[runLogs.length - 1]
@@ -3152,6 +3169,8 @@ window.__ModuleLoader__?.load({
             targetDurationSec: num(directorForm.targetDurationSec, 120) || 120,
             narrationMode: String(directorForm.narrationMode || 'tts'),
             bgmMode: String(directorForm.bgmMode || 'llm-coded'),
+            // 配乐从精彩处开始 ('auto') or 「从头开始」 ('head') — saved as script.bgm.startFrom
+            bgmStartFrom: directorForm.bgmStartFrom === 'head' ? 'head' : 'auto',
             pacingMode: String(directorForm.pacingMode || 'auto'),
             style: String(directorForm.style || 'auto'),
             voiceId: String(directorForm.voiceId || 'auto'),
@@ -3169,6 +3188,8 @@ window.__ModuleLoader__?.load({
             aiBadgeEnabled: Boolean(directorForm.aiBadgeEnabled),
             aiBadgePosition: String(directorForm.aiBadgePosition || 'top-right'),
             aiBadgeText: String(directorForm.aiBadgeText || ''),
+            endNotice: directorForm.endNotice === true,
+            endNoticeCredit: directorForm.endNoticeCredit === true,
             visual3dMode: String(directorForm.visual3dMode || 'auto'),
             visualReview: directorForm.visualReview !== false,
             visualReviewFine: directorForm.visualReviewFine !== false,
@@ -3411,6 +3432,7 @@ window.__ModuleLoader__?.load({
             }
           } else if (k === 'narrationMode' && has(warStaticOptions.narrationModes, v)) sync.narrationMode = v
           else if (k === 'bgmMode' && has(warStaticOptions.bgmModes, v)) sync.bgmMode = v
+          else if (k === 'bgmStartFrom' && (v === 'auto' || v === 'head')) sync.bgmStartFrom = v
           else if (k === 'pacingMode' && has(warStaticOptions.pacingModes, v)) sync.pacingMode = v
           else if (k === 'style' && isStyleValue(v)) sync.style = v
           else if (k === 'voiceId' && (v === 'auto' || (Array.isArray(voiceCatalog) && voiceCatalog.some((x) => x.id === v)))) sync.voiceId = v
@@ -3434,6 +3456,8 @@ window.__ModuleLoader__?.load({
             sync.aiBadge = Boolean(v)
           } else if (k === 'aiBadgePosition' && ['top-right', 'top-left', 'bottom-right', 'bottom-left'].includes(v)) sync.aiBadgePosition = v
           else if (k === 'aiBadgeText') sync.aiBadgeText = String(v ?? '').slice(0, 40)
+          else if (k === 'endNotice') sync.endNotice = v === true
+          else if (k === 'endNoticeCredit') sync.endNoticeCredit = v === true
           else if (k === 'visual3dMode' && ['auto', 'on', 'off'].includes(v)) sync.visual3dMode = v
           else if (k === 'visualReview') sync.visualReview = Boolean(v)
           else if (k === 'visualReviewFine') sync.visualReviewFine = Boolean(v)
@@ -3758,7 +3782,7 @@ window.__ModuleLoader__?.load({
               style: { ...goldBtnStyle, padding: '7px 16px', fontSize: '13px', borderRadius: '999px' },
             },
             h(Icon, { name: 'film', size: 15 }),
-            ' 打开电影视频工坊',
+            ` 打开${BRAND_NAME}`,
           ),
         )
       }
@@ -4057,7 +4081,7 @@ window.__ModuleLoader__?.load({
 
     // DSH Tool Call Inline Progress / Preview Card
     function VideoToolCallCard(props) {
-      const name = props?.toolName || props?.name || props?.toolCall?.name || '视频工坊工具'
+      const name = props?.toolName || props?.name || props?.toolCall?.name || `${BRAND_NAME}工具`
       const status = props?.status || props?.toolCall?.status || 'completed'
       const rawOut = props?.output || props?.result || props?.toolCall?.output
       let summary = ''
@@ -4134,13 +4158,13 @@ window.__ModuleLoader__?.load({
         if (typeof ctx?.slots?.inject === 'function') {
           ctx.slots.inject('main', () =>
             ctx.slots.register(
-              { name: 'main', key: 'video-workbench', label: 'AI 视频工坊' },
+              { name: 'main', key: 'video-workbench', label: BRAND_NAME },
               MainVideoWorkbenchPanel,
             ),
           )
           ctx.slots.inject('sidebar.panellist', () =>
             ctx.slots.register(
-              { name: 'sidebar.panellist', id: 'video-workbench', label: 'AI 视频工坊', order: 65 },
+              { name: 'sidebar.panellist', id: 'video-workbench', label: BRAND_NAME, order: 65 },
               SidebarVideoIcon,
             ),
           )
@@ -4165,7 +4189,7 @@ window.__ModuleLoader__?.load({
         } else {
           ctx.slots.register('sidebar.panellist', {
             id: 'video-workbench',
-            label: 'AI 视频工坊',
+            label: BRAND_NAME,
             order: 65,
             render: () => h(SidebarVideoIcon),
           })

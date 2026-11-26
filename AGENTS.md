@@ -1,5 +1,6 @@
-# AGENTS.md — DSH Video Workbench (Universal Multi-Agent Guide)
+# AGENTS.md — 禾杨视频工坊 · DSH Video Workbench (Universal Multi-Agent Guide)
 
+> **Copyright**: `Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)` · **Studio (出品)**: 禾杨智绘（绍兴市柯桥区禾杨智绘软件开发工作室）  
 > **Original Author**: Merziller · **QQ**: `1411574209` · **WeChat**: `Merziller` · **Email**: `k26789228@gmail.com`  
 > **Repository**: https://github.com/Merziller/dsh-video-workbench (MIT License)
 
@@ -7,7 +8,7 @@ This repository is a **universal, agent-agnostic Dual-Engine AI Video Studio** c
 
 ## Quick Start for Any Local Agent
 1. Install Node dependencies once: `npm install` (or `pnpm install`).
-2. Expose all **48 video production tools** over standard MCP stdio:
+2. Expose all **49 video production tools** over standard MCP stdio:
    ```bash
    node ./bin/dsh-video-mcp.mjs
    ```
@@ -30,7 +31,11 @@ This repository is a **universal, agent-agnostic Dual-Engine AI Video Studio** c
 - The plugin never reads or reuses any agent login, token or credential file; do not offer to either.
 
 ## Newer features agents can drive
+- **Local speech recognition installs itself**: the first time the War Room opens (or a tool needs it) the engine (~260 MB, once, domestic mirrors) is downloaded and installed in the background; `transcribe_media`, `rough_cut_talking_head`, `make_short_clips` and `index_footage` with `transcribe: 'on'` wait for it — never ask the user to install it first. `speech_engine({ action: 'status' })` shows the progress (`install`), `action: 'install'` retries at once after a failure; `DSH_ASR_AUTO_INSTALL=0` turns the automatic install off.
 - **AI 剪辑 (local, free)**: `speech_engine`, `transcribe_media`, `rough_cut_talking_head` (talking-head rough cut + real captions + packaging, incl. `screen` for screen recordings and the cartoon presenter `mascot`), `index_footage`, `make_highlight_reel`.
+- **长视频拆条 (`make_short_clips`)**: `find` (one model call per ~60 min of speech; host-agent mode runs in the background) → `update` (titles, on / off, one sentence earlier / later) → `render` (local FFmpeg, free) → `output/clips/<recording>/` with MP4, cover, SRT and 发布文案.md. Only recordings the user imported; never download or publish.
+- **Music start and narration check**: `bgmStartFrom` ('auto' default = an uploaded song longer than the film starts at its best bar line; 'head' = from the top) and `narrationCheck` (default on: local speech recognition listens to each TTS take, one automatic re-dub, advisory warnings) on `run_agent_pipeline` / `ai_create_video`.
+- **End notice off by default**: `endNotice` / `endNoticeCredit` (the last line of a film and the plugin credit in it) are opt-in; turn them on only when the user asks. The LICENSE / NOTICE attribution is unchanged.
 - **「我的动漫形象」 talking anime presenter**: `manage_anime_presenter` (`list` / `create` / `update` / `delete` / `engines` / `estimate`). A character is made once (photo → anime likeness via the user's cloud image service = paid per picture, or the optional local model; or a cartoon picture as it is) and used in any cut via `rough_cut_talking_head` `pack.mascot { characterId, engine }`: `sprite` (free, local mouth shapes + blinks + nods, default), `tha3` (free optional local model), `vidu` / `volc` / `runway` (the user's own key, entered by the user in the studio panel 「云端动漫数字人 · 密钥」 — never ask for it in chat; billed per second, ≈ 1.9 / 18 / 1.5 元 per minute; optional `mode`: volc `loopy` | `normal` | `loopyb`, vidu `540p` | `720p`). **Never pay without the user's consent**: show `estimate` first, then pass `confirmedCost: true` (likeness) / `confirmedRmb` (clip); without it the free tier is used.
 - **Fine visual self-review**: `visualReviewFine` (default on) reviews every re-framed sub-shot; each run writes `output/llm-usage.json` (model calls, tokens, pictures per stage).
 - **模板填空**: `manage_template_plaza` actions `slots` and `fill` (see `SKILL.md` → 「Fill a template」).
@@ -55,7 +60,8 @@ This repository is a **universal, agent-agnostic Dual-Engine AI Video Studio** c
    ```
 
 ## Core Engineering Rules
-- **Attribution**: Retain original author credit (`Merziller`, `QQ: 1411574209`, `WeChat: Merziller`, `Email: k26789228@gmail.com`) per `LICENSE` and `NOTICE`.
+- **Attribution**: Retain the dual credit — the studio `绍兴市柯桥区禾杨智绘软件开发工作室` and the original author (`Merziller`, `QQ: 1411574209`, `WeChat: Merziller`, `Email: k26789228@gmail.com`) — per `LICENSE` and `NOTICE`.
+- **Brand names**: the UI product name is 「禾杨视频工坊」; every product name / credit text comes from `packages/shared/brand.js` (`BRAND`). Never rename identifiers: the package name `dsh-video-workbench`, the repository URL, `bin/dsh-video-cli.mjs` / `bin/dsh-video-mcp.mjs`, MCP tool names, `/api/video-workbench/*` routes, `DSH_*` environment variables, or the titles of users' projects.
 - **Zero Hardcoded Secrets/Paths**: Keep API keys and personal directories in `.env` (never tracked in git).
 - **Commercial-Safe Fonts**: Generated videos must use bundled SIL OFL fonts (`Noto Sans SC`, `Source Han Serif SC Heavy`, `JetBrains Mono`) — never `Microsoft YaHei` / `SimSun` / `SimHei`.
 - **Verification**: Run `npm test` (full automated self-test suite) and `npm run pack:bundle` before releasing.

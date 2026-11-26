@@ -6,6 +6,7 @@ import { buildGenreGuidance, detectGenre, isEpicCombatContext, isHistoricalConte
 import { buildVibeToolkitCoderGuide, buildVisualFxPreferenceGuide, getVibeToolkitStatus, selectVibeTools, writeVibeToolkitRemotionLib } from './vibe-toolkit-lib.js'
 import { buildFigureKitCoderGuide, inferFigureStyle, resolveFigureStyleNote } from './figure-kit.js'
 import { planSceneTools } from './scene-tool-plan.js'
+import { buildComplianceNoticeText } from '../shared/compliance.js'
 
 /**
  * Distilled Shotcraft Primitives & LLM Skills Prompt Builder
@@ -14,7 +15,7 @@ import { planSceneTools } from './scene-tool-plan.js'
  * permissive licenses from:
  * - Vincentwei1021/video-shotcraft (Apache-2.0): PageCam, ClipCard, DigitRoll, FlashCut, ShotCaption
  * - remotion-dev/skills (MIT/Apache-2.0): Frame-deterministic Remotion animation & TypeScript best practices
- * - heygen-com/hyperframes (Apache-2.0): Deterministic seekable HTML5/GSAP composition standards
+ * - Deterministic seekable HTML5 composition practice (frame-seek contract; general ideas, no code copied)
  */
 
 export const SHOTCRAFT_TSX_SOURCE = `/**
@@ -1142,7 +1143,7 @@ export interface EndNoticeProps {
 }
 
 export const EndNotice: React.FC<EndNoticeProps> = ({
-  text = '本片画面与配乐由 DeepSeek Harness AI 编程辅助生成 · 语音由 IndexTTS-2.5 合成',
+  text = '本视频含 AI 生成内容',
   accentColor = '#38BDF8',
   tailSeconds = 2.2,
 }) => {
@@ -3591,7 +3592,7 @@ export function buildRemotionCoderSkillsPrompt({
      不要受限于固定预设！请针对每个分镜的题旨与 \`motionNotes\` / \`visualBlueprint\`，使用 \`<FreeformThreeStage buildScene={(api) => { ... }} />\` 自由构建贴合主题的定制 3D 场景（利用 \`api.THREE\` 创建球体/地球/行星、柱状矩阵、芯片拆解层、圆环轨道、多面体、圆锥/圆柱机械结构，配合 \`api.addMesh\`、\`api.addLine3D\`、\`api.addParticle3D\`、\`api.addLabel3D\`、\`api.orbitPoint\`、\`api.arc3D\`、\`api.setCamera\`），并在前景手写多层次动态 \`<svg>\`（可配合 \`buildSmoothSvgPath\`、\`describeSvgArc\`、\`computeBeatSpring\` 绘制任意定制图表、K线、公式推导、思维导图、拓扑或矢量插画）！内置预设仅作辅助或兜底。
    还可从 './lib/narrative-diorama'（或 '../lib/narrative-diorama'）导入无素材纯叙事 SVG 动画舞台组件：
    - NarrativeDioramaStage, HeroWarriorFigure, StrategicMapStage, SlashBurstOverlay, CalligraphyColumnPanel, MOOD_PRESETS, computeBeatSignal（当场景没有截图素材 publicAssetFiles 为空或 layout === 'narrative-diorama' 时，优先用自定义内联 &lt;svg&gt; 动画与舞台原语联动演绎，严禁臆造假 staticFile('assets/...') 路径！同时严禁把 Sequence 的 durationInFrames 硬钳到 >=30，必须使用 Math.max(8, Number(s.durationInFrames)) 支持急速踩拍切镜！）。
-7. 合规与数字人叠层铁律：src/VideoComposition.tsx 必须在合成器最外层强制挂载 <AIBadge visible={true} /> 与末尾 <EndNotice />；当 script.json 中存在 avatarClip.path 且 avatarLayout !== 'off' 时，必须渲染 <AvatarOverlay clipPath={scriptData.avatarClip.path} layout={scriptData.avatarLayout || 'pip-br'} />（使用 transparent 透明通道合成）；横屏 pip-br / pip-bl 画中画占据右下/左下角约 22% 宽 × 1.125 倍高（距边 42px、距底 96px），字幕条与标题/数据等关键内容必须水平避让该角落（字幕容器在 PiP 一侧留出 PiP 宽度 + 70px 内边距、过长时允许平衡换成 2 行），严禁把文字放到画中画下面；字幕 <ShotCaption bottomPx={...} /> 必须遵循目标平台安全区留白（竖屏底部至少留白 22%）。
+7. 合规与数字人叠层铁律：src/VideoComposition.tsx 必须在合成器最外层强制挂载 <AIBadge visible={true} />（片尾声明由系统按用户的开关添加，不要自己写 <EndNotice />）；当 script.json 中存在 avatarClip.path 且 avatarLayout !== 'off' 时，必须渲染 <AvatarOverlay clipPath={scriptData.avatarClip.path} layout={scriptData.avatarLayout || 'pip-br'} />（使用 transparent 透明通道合成）；横屏 pip-br / pip-bl 画中画占据右下/左下角约 22% 宽 × 1.125 倍高（距边 42px、距底 96px），字幕条与标题/数据等关键内容必须水平避让该角落（字幕容器在 PiP 一侧留出 PiP 宽度 + 70px 内边距、过长时允许平衡换成 2 行），严禁把文字放到画中画下面；字幕 <ShotCaption bottomPx={...} /> 必须遵循目标平台安全区留白（竖屏底部至少留白 22%）。
 8. 如需使用本地素材图片/视频（如 public/...），必须使用 staticFile('相对路径')（去掉前导 public/），使用 <Img src={staticFile(...)} />。
 9. 音轨对齐铁律：src/VideoComposition.tsx 必须导出命名组件 VideoComposition，并在最外层挂载：
    <Audio src={staticFile('master-audio.wav')} />
@@ -3893,7 +3894,12 @@ export function buildHtmlCoderSkillsPrompt({
   const genreGuide = buildGenreGuidance(resolvedGenre, resolvedGenreLabel)
   const directorNotes = plan?.directorNotes || timingContract?.directorNotes || ''
   const fxPreference = buildVisualFxPreferenceGuide(plan?.visual3dMode || timingContract?.visual3dMode || 'auto')
-  const system = `你是精通 HyperFrames HTML5/Canvas 2D+3D 透视矩阵与动态 SVG 创意编程专家（Opus 5.5 Vibecoding 水准）。
+  // 片尾声明: only when the user switched it on, and then with exactly this text (the switch also works after coding)
+  const endNoticeInfo = buildComplianceNoticeText({ ...(plan || {}), ...(timingContract || {}) })
+  const endNoticeRule = endNoticeInfo.endNoticeVisible
+    ? `片尾最后 2 秒展示 #end-notice（文字固定为「${endNoticeInfo.endNoticeBody}」，不得改写）`
+    : '不要添加任何片尾声明文字（不要写 #end-notice）'
+  const system = `你是精通 HTML5/Canvas 2D+3D 透视矩阵与动态 SVG 创意编程专家（Opus 5.5 Vibecoding 水准）。
 你需要生成一个完全自包含、纯离线零外链、支持 Chromium CDP 逐帧精确 seek 的单个 HTML 文件，**彻底解除模板束缚，按题材自由手写 Canvas + SVG + 3D 透视画面**！
 
 ${genreGuide}
@@ -3910,7 +3916,7 @@ ${directorNotes ? `\n【导演备注（仅供视觉写码参考，严禁把指�
    - 按题材定制视觉：历史题材手写水墨 SVG 疆域与行军箭头/火星粒子；火柴人题材用 Canvas/SVG 骨骼关节关键帧；实操教程用高对比亮色画布 + **1.8x–2.5x 局部镜头推近放大** + SVG 鼠标指针滑动与点击波纹；代码/科普用实时数学图表/树图/代码流 + 欠阻尼弹簧函数 \`springVal = 1 - Math.exp(-7 * x) * Math.cos(8.5 * x)\`；
    - 右下/底部保留简洁字幕安全区（${isPortrait ? '竖屏底部 ≥ 22% 高度' : '横屏底部 ≥ 13% 高度'}），数字用阿拉伯数字（206年、3000人），字幕无双引号。
 6. 必须内嵌 <script id="dsh-script-data" type="application/json">PLACEHOLDER</script>（保留该 script 标签占位符或完整嵌入数据，系统会自动写回最新脚本）。
-7. 必须保留合成器级强制合规叠层：右上/左上 #ai-badge（「AI 辅助创作」）及片尾最后 2 秒展示 #end-notice，且字幕条 bottom 必须避让目标平台安全区；若 script.json 包含 avatarClip.path，需保留 <video id="avatar-overlay-video" muted playsinline> 透明通道画中画/全屏叠层（横屏角落画中画时，字幕条与关键文字必须水平避让 PiP 所在角落，不得被遮挡）并在 window.__seekToFrame 内按 frame / fps 精确同步 currentTime。
+7. 必须保留合成器级强制合规叠层：右上/左上 #ai-badge（「AI 辅助创作」）；${endNoticeRule}；字幕条 bottom 必须避让目标平台安全区；若 script.json 包含 avatarClip.path，需保留 <video id="avatar-overlay-video" muted playsinline> 透明通道画中画/全屏叠层（横屏角落画中画时，字幕条与关键文字必须水平避让 PiP 所在角落，不得被遮挡）并在 window.__seekToFrame 内按 frame / fps 精确同步 currentTime。
 8. 必须向全局暴露确定性 seek 接口：
    window.__totalFrames = <totalDurationInFrames>;
    window.__seekToFrame = function(frameIndex) { ... };
@@ -3920,7 +3926,7 @@ ${directorNotes ? `\n【导演备注（仅供视觉写码参考，严禁把指�
 
   const user = JSON.stringify(
     {
-      task: '请突破预设限制，为全部镜头自由手写专属 HyperFrames 3D + SVG + Canvas 骨骼/水墨/交互动画 index.html (严格 JSON { "files": { "index.html": "..." } })',
+      task: '请突破预设限制，为全部镜头自由手写专属 HTML5 3D + SVG + Canvas 骨骼/水墨/交互动画 index.html (严格 JSON { "files": { "index.html": "..." } })',
       topic: plan?.topic || plan?.title || timingContract?.topic || '',
       genre: resolvedGenre,
       genreLabel: resolvedGenreLabel,

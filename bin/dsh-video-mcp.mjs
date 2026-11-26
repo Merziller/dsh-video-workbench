@@ -4,7 +4,7 @@
  * Works natively with Claude Code, OpenAI Codex CLI, WorkBuddy, Cursor, Windsurf, Cline,
  * OpenCode, Antigravity, Gemini CLI, and DeepSeek Harness (DSH).
  *
- * Copyright (c) 2026 Merziller
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)
  * Author: Merziller | QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com
  * Official Repo: https://github.com/Merziller/dsh-video-workbench (MIT License)
  */
@@ -12,7 +12,7 @@ import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PACKAGE_ROOT, REPO_ROOT, loadEnv } from '../packages/shared/index.js'
+import { BRAND, PACKAGE_ROOT, REPO_ROOT, loadEnv } from '../packages/shared/index.js'
 import PresetVideoPlugin, { VIDEO_MAKER_SYSTEM_PROMPT } from '../packages/dsh-preset-video/index.js'
 import WebVideoWorkbenchPlugin from '../packages/dsh-web-video-workbench/lib/index.js'
 import { getTtsInstallerCatalog, installTtsEngine } from '../packages/dsh-tool-local-tts/index.js'
@@ -183,10 +183,10 @@ export function startMcpStdioServer() {
           serverInfo: {
             name: 'dsh-video-workbench',
             version: pkg.version,
-            title: 'DSH Video Workbench Universal MCP Server (by Merziller)',
+            title: `${BRAND.productName} · ${BRAND.productNameEn} Universal MCP Server (${BRAND.producedBy} · by ${BRAND.author})`,
           },
           instructions:
-            'Universal Dual-Engine AI Video Studio (Remotion 4.x + Three.js 3D & HyperFrames HTML5) by Merziller (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com | https://github.com/Merziller/dsh-video-workbench). Call open_video_studio for the visual Web UI, analyze_reference_video to reverse-engineer and remake any reference video, or run_agent_pipeline / ai_create_video for end-to-end MP4 production.',
+            `${BRAND.productName} (${BRAND.productNameEn}) — Universal Dual-Engine AI Video Studio (Remotion 4.x + Three.js 3D & HTML5 motion engine) by ${BRAND.studioName} (${BRAND.studioFullName}) & ${BRAND.author} (QQ: ${BRAND.qq} | WeChat: ${BRAND.wechat} | Email: ${BRAND.email} | ${BRAND.repoUrl}). Call open_video_studio for the visual Web UI, analyze_reference_video to reverse-engineer and remake any reference video, or run_agent_pipeline / ai_create_video for end-to-end MP4 production.`,
         })
       }
 
@@ -230,7 +230,7 @@ export function startMcpStdioServer() {
           prompts: [
             {
               name: 'video-maker',
-              description: 'DSH Video Workbench 首席动态视觉导演与全链路出片系统提示词 (by Merziller)',
+              description: `${BRAND.productName} 首席动态视觉导演与全链路出片系统提示词（${BRAND.producedBy} · by ${BRAND.author}）`,
               arguments: [],
             },
           ],
@@ -240,7 +240,7 @@ export function startMcpStdioServer() {
       if (method === 'prompts/get') {
         if (params.name === 'video-maker') {
           return reply({
-            description: 'DSH Video Workbench Video Director Prompt (by Merziller)',
+            description: `${BRAND.productName} (${BRAND.productNameEn}) Video Director Prompt (by ${BRAND.author})`,
             messages: [
               {
                 role: 'user',

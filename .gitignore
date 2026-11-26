@@ -121,5 +121,7 @@ Desktop.ini
 
 # Optional local AI engines installed by the plugin's one-click installers (speech recognition, lip-sync): never committed
 ai-engines/
+# A speech recognition engine pre-placed for offline bundles (used read-only by speech-recognition.js): never committed
+vendor/asr/
 # 宿主智能体代写 queue (writing tasks for the agent hosting the plugin; may contain prompts and screenshots)
 .host-llm/

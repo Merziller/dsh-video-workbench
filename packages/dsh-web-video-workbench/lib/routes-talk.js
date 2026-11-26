@@ -1,10 +1,16 @@
 /**
  * 本地语音识别 + 口播剪辑 REST routes (all local: no model provider, no cost):
  *   GET  /api/video-workbench/asr/status       ?deep=1 → engine status (deep: loads the models in a child process),
- *                                               installer catalog (size, languages, recommended folder, licences)
- *   POST /api/video-workbench/asr/install      { installDir?, mirror: 'cn'|'global' } → { jobId } (one install at a time)
+ *                                               installer catalog (size, languages, recommended folder, licences) and
+ *                                               the shared install (`install`: state / progress / error)
+ *   POST /api/video-workbench/asr/install      { installDir?, mirror: 'cn'|'global' } → { jobId, joined, install }
+ *                                               (「一键安装」 / 「重试」: joins the install already running; another
+ *                                               folder while one runs → 409 BUSY; retries at once after a failure)
  *   GET  /api/video-workbench/talk/state       ?projectDir=…&source=… → engine readiness, the project's recordings, the
  *                                               chosen recording's last rough cut (plan + captions), defaults
+ * asr/status, talk/state and clips/state also start the automatic install of the local speech recognition in the
+ * background when it is missing (speech-recognition.js maybeStartAsrAutoInstall; DSH_ASR_AUTO_INSTALL=0 turns it off)
+ * and return its state as `install`.
  *   POST /api/video-workbench/talk/roughcut    { projectDir, sourcePath?, options?, overrides?, render?, force? }
  *                                               → { jobId } (recognise + plan; render the cut when render=true)
  *   POST /api/video-workbench/talk/build       { projectDir, sourcePath?, options?, overrides?, sceneTargetSec? }
@@ -21,12 +27,29 @@
  *                                               (the template's look + shots with the fills; local, no model call)
  *   POST /api/video-workbench/plaza/fill-suggest { projectDir, templateId, topic, notes? } → { jobId } (the configured
  *                                               model writes the text blanks for a topic; nothing is written)
+ *   GET  /api/video-workbench/clips/state      ?projectDir=…&source=… → 长视频拆条: recordings, engine / model readiness,
+ *                                               the recording's clip plan and rendered clips, model work estimate
+ *   POST /api/video-workbench/clips/find       { projectDir, sourcePath?, platform?, count?, focus?, cut?, language?,
+ *                                               force? } → { jobId } (recognise + the model picks the clips)
+ *   POST /api/video-workbench/clips/update     { projectDir, sourcePath?, edits[{ index, title?, enabled?, startDelta?,
+ *                                               endDelta? }], render? } → the updated plan (no job)
+ *   POST /api/video-workbench/clips/render     { projectDir, sourcePath?, indexes?, settings?, force? } → { jobId }
+ *                                               (FFmpeg, local, free: output/clips/<recording>/NN-标题.mp4 …)
+ *   POST /api/video-workbench/clips/reveal     { projectDir, sourcePath? } → open the clips folder in Explorer / Finder
  * One recognition / build / analysis job per project at a time. Registered in index.js; allow-listed for the panel
  * kit (client.js KIT_API_GET / KIT_API_POST).
  */
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
-import { getAsrInstallerCatalog, getAsrStatus, installAsrEngine, transcribeMedia, transcriptPlainText } from '../../dsh-tool-media/speech-recognition.js'
+import {
+  getAsrInstallerCatalog,
+  getAsrInstallState,
+  getAsrStatus,
+  maybeStartAsrAutoInstall,
+  startAsrInstall,
+  transcribeMedia,
+  transcriptPlainText,
+} from '../../dsh-tool-media/speech-recognition.js'
 import { buildCaptions, captionsToSrt, planRoughCut } from '../../dsh-tool-media/rough-cut.js'
 import { buildTalkEditProject, cleanTalkPackSettings, readTalkEditState, runTalkRoughCut, saveTalkPackSettings } from '../../dsh-tool-media/talk-edit.js'
 import { indexFootage } from '../../dsh-tool-media/footage-index.js'
@@ -34,6 +57,7 @@ import { readAssets } from '../../dsh-tool-media/asset-manager.js'
 import { buildHighlightProject } from '../../dsh-tool-media/highlight-reel.js'
 import { describeTemplateSlots, fillTemplateIntoProject, suggestTemplateTexts, templateFillLibrary } from '../../dsh-tool-media/template-fill.js'
 import { isValidPlazaTemplateId } from '../../dsh-tool-media/template-plaza.js'
+import { findShortClips, readShortClipsState, renderShortClips, revealClipsFolder, updateShortClips } from '../../dsh-tool-media/short-clips.js'
 import { readScriptJson } from '../../shared/index.js'
 
 export const TALK_ROUTES = Object.freeze([
@@ -51,6 +75,11 @@ export const TALK_ROUTES = Object.freeze([
   { path: '/api/video-workbench/plaza/fill', methods: ['POST'] },
   { path: '/api/video-workbench/plaza/fill-suggest', methods: ['POST'] },
   { path: '/api/video-workbench/highlight/build', methods: ['POST'] },
+  { path: '/api/video-workbench/clips/state', methods: ['GET'] },
+  { path: '/api/video-workbench/clips/find', methods: ['POST'] },
+  { path: '/api/video-workbench/clips/update', methods: ['POST'] },
+  { path: '/api/video-workbench/clips/render', methods: ['POST'] },
+  { path: '/api/video-workbench/clips/reveal', methods: ['POST'] },
 ])
 
 /** Vlog 高光 panel state: the clips and music of the library, the last highlight settings of this project. */
@@ -171,11 +200,15 @@ function cleanOverrides(o) {
   if (o === undefined) return undefined
   if (!o || typeof o !== 'object') return { restore: [], cutWords: [] }
   const restore = (Array.isArray(o.restore) ? o.restore : []).map((x) => String(x || '').slice(0, 64)).filter(Boolean).slice(0, 5000)
-  const cutWords = (Array.isArray(o.cutWords) ? o.cutWords : [])
-    .filter((r) => Array.isArray(r) && r.length >= 1)
-    .map((r) => [Math.max(0, Math.floor(Number(r[0]) || 0)), Math.max(0, Math.floor(Number(r[1] ?? r[0]) || 0))])
-    .slice(0, 5000)
-  return { restore, cutWords }
+  const ranges = (list) =>
+    (Array.isArray(list) ? list : [])
+      .filter((r) => Array.isArray(r) && r.length >= 1)
+      .map((r) => [Math.max(0, Math.floor(Number(r[0]) || 0)), Math.max(0, Math.floor(Number(r[1] ?? r[0]) || 0))])
+      .slice(0, 5000)
+  const cutWords = ranges(o.cutWords)
+  // 选段剪辑: only these passages are kept (an empty list = the whole recording)
+  const keepOnly = ranges(o.keepOnly)
+  return keepOnly.length ? { restore, cutWords, keepOnly } : { restore, cutWords }
 }
 
 function errorStatus(err) {
@@ -184,7 +217,6 @@ function errorStatus(err) {
 }
 
 const PROJECT_JOBS = new Map() // project dir (lower-case) → { jobId, kind, startedAt }
-let installJob = null
 
 function startProjectJob(createBackgroundJob, projectDir, kind, message, runner) {
   const key = projectDir.toLowerCase()
@@ -198,6 +230,8 @@ function startProjectJob(createBackgroundJob, projectDir, kind, message, runner)
     pack: '更新口播包装',
     'template-fill': '套用模板',
     'template-suggest': '用 AI 写模板文字',
+    'clips-find': '找精彩片段',
+    'clips-render': '出拆条短视频',
   }
   const label = JOB_LABELS[kind] || '识别和粗剪'
   PROJECT_JOBS.set(key, { kind, label, startedAt: Date.now() })
@@ -259,31 +293,39 @@ export async function handleTalkApiRequest(req, url = new URL(req.url, 'http://l
   try {
     if (pathname === '/api/video-workbench/asr/status') {
       const deep = bool(url.searchParams.get('deep'))
+      await maybeStartAsrAutoInstall()
       const asr = await getAsrStatus({ deep, force: deep })
-      return json({ ok: true, asr, installer: getAsrInstallerCatalog(), installing: installJob ? { jobId: installJob.id } : null })
+      const install = getAsrInstallState()
+      return json({ ok: true, asr, installer: getAsrInstallerCatalog(), install, installing: install.state === 'running' ? { home: install.home, progress: install.progress } : null })
     }
     if (pathname === '/api/video-workbench/asr/install') {
-      if (installJob) throw new TalkRouteError('本地语音识别正在安装中，请等它完成', 409, 'BUSY')
       const body = await readBody(req)
       const installDir = typeof body.installDir === 'string' ? body.installDir.trim().slice(0, 400) : ''
       if (installDir && !isAbsolute(installDir)) throw new TalkRouteError('安装目录要写完整路径，例如 D:/dsh-ai/asr')
       const mirror = body.mirror === 'global' ? 'global' : 'cn'
-      const job = createBackgroundJob('📦 正在安装本地语音识别（SenseVoice，约 260 MB）...', async (onProgress) => {
-        try {
-          return await installAsrEngine({ installDir, mirror, writeEnv: body.writeEnv !== false, onProgress })
-        } finally {
-          installJob = null
-        }
+      // the shared install: joins the one running (automatic or not); an explicit request never waits for the
+      // automatic retry pause after a failure
+      let forward = null
+      let started
+      try {
+        started = startAsrInstall({ installDir, mirror, writeEnv: body.writeEnv !== false, trigger: 'manual', onProgress: (p) => forward?.(p) })
+      } catch (err) {
+        if (err?.code === 'BUSY') throw new TalkRouteError(err.message, 409, 'BUSY')
+        throw err
+      }
+      const job = createBackgroundJob(started.joined ? '📦 本地语音识别正在安装，已接上它的进度...' : '📦 正在安装本地语音识别（SenseVoice，约 260 MB）...', async (onProgress) => {
+        forward = (p) => onProgress?.({ progress: p.progress, message: p.message })
+        return await started.promise
       })
-      installJob = job
-      return json({ ok: true, async: true, jobId: job.id, job })
+      return json({ ok: true, async: true, jobId: job.id, job, joined: started.joined, install: getAsrInstallState() })
     }
     if (pathname === '/api/video-workbench/talk/state') {
       const projectDir = resolveProjectDir(url.searchParams.get('projectDir'))
       const source = url.searchParams.get('source') ? resolveMediaInProject(projectDir, url.searchParams.get('source')) : ''
+      await maybeStartAsrAutoInstall()
       const state = await readTalkEditState(projectDir, { sourcePath: source })
       const job = PROJECT_JOBS.get(projectDir.toLowerCase()) || null
-      return json({ ...state, job })
+      return json({ ...state, install: getAsrInstallState(), job })
     }
     if (pathname === '/api/video-workbench/footage/state') {
       const projectDir = resolveProjectDir(url.searchParams.get('projectDir'))
@@ -294,6 +336,13 @@ export async function handleTalkApiRequest(req, url = new URL(req.url, 'http://l
       const projectDir = resolveProjectDir(url.searchParams.get('projectDir'))
       const job = PROJECT_JOBS.get(projectDir.toLowerCase()) || null
       return json({ ...highlightState(projectDir), job })
+    }
+    if (pathname === '/api/video-workbench/clips/state') {
+      const projectDir = resolveProjectDir(url.searchParams.get('projectDir'))
+      const source = url.searchParams.get('source') ? resolveMediaInProject(projectDir, url.searchParams.get('source')) : ''
+      await maybeStartAsrAutoInstall()
+      const job = PROJECT_JOBS.get(projectDir.toLowerCase()) || null
+      return json({ ...(await readShortClipsState(projectDir, { sourcePath: source })), install: getAsrInstallState(), job })
     }
     if (pathname === '/api/video-workbench/plaza/slots') {
       const templateId = templateIdOf(url.searchParams.get('id'))
@@ -369,6 +418,55 @@ export async function handleTalkApiRequest(req, url = new URL(req.url, 'http://l
         return { ...rest, ...(rendered ? { outputPath: rendered.outputPath || '', qaPassed: rendered.qaReport ? rendered.qaReport.passed !== false : null } : {}), state: highlightState(projectDir) }
       })
       return json({ ok: true, async: true, jobId: job.id, job })
+    }
+    if (pathname.startsWith('/api/video-workbench/clips/')) {
+      const clipSource = body.sourcePath ? resolveMediaInProject(projectDir, body.sourcePath) : ''
+      if (pathname === '/api/video-workbench/clips/find') {
+        const platform = typeof body.platform === 'string' ? body.platform.slice(0, 20) : undefined
+        const count = Number.isFinite(Number(body.count)) ? Math.max(0, Math.min(30, Math.round(Number(body.count)))) : 0
+        const focus = typeof body.focus === 'string' ? body.focus.trim().slice(0, 300) : ''
+        const language = ['auto', 'zh', 'en', 'ja', 'ko', 'yue'].includes(body.language) ? body.language : 'auto'
+        const cut = cleanOptions(body.cut) || {}
+        const job = startProjectJob(createBackgroundJob, projectDir, 'clips-find', '✂️ 正在找精彩片段（本地识别说话内容，再请 AI 挑选）...', async (onProgress) => {
+          const res = await findShortClips({
+            projectDir,
+            sourcePath: clipSource,
+            platform,
+            count,
+            focus,
+            cut,
+            language,
+            force: bool(body.force),
+            onProgress,
+            onWait: (w) => onProgress?.({ message: w?.hostAgent ? '正在等当前智能体挑片段…' : `AI 正在挑精彩片段…（已等 ${Math.round((Number(w?.elapsedMs) || 0) / 1000)} 秒）` }),
+          })
+          return { ok: true, clips: res.plan.clips.length, found: res.plan.found, source: res.plan.source }
+        })
+        return json({ ok: true, async: true, jobId: job.id, job })
+      }
+      if (pathname === '/api/video-workbench/clips/update') {
+        const key = projectDir.toLowerCase()
+        if (PROJECT_JOBS.get(key)) throw new TalkRouteError(`这个工程正在${PROJECT_JOBS.get(key).label}，请等它完成`, 409, 'BUSY')
+        const edits = (Array.isArray(body.edits) ? body.edits : []).slice(0, 200).map((e) => ({
+          index: Math.round(Number(e?.index) || 0),
+          ...(typeof e?.title === 'string' ? { title: e.title.slice(0, 60) } : {}),
+          ...(typeof e?.enabled === 'boolean' ? { enabled: e.enabled } : {}),
+          ...(Number.isFinite(Number(e?.startDelta)) ? { startDelta: Math.max(-5, Math.min(5, Math.round(Number(e.startDelta)))) } : {}),
+          ...(Number.isFinite(Number(e?.endDelta)) ? { endDelta: Math.max(-5, Math.min(5, Math.round(Number(e.endDelta)))) } : {}),
+        }))
+        const res = await updateShortClips({ projectDir, sourcePath: clipSource, edits, render: body.render && typeof body.render === 'object' ? body.render : undefined })
+        return json({ ok: true, plan: res.plan })
+      }
+      if (pathname === '/api/video-workbench/clips/render') {
+        const indexes = Array.isArray(body.indexes) ? body.indexes.map((x) => Math.round(Number(x) || 0)).filter((x) => x > 0).slice(0, 100) : null
+        const settings = body.settings && typeof body.settings === 'object' ? body.settings : undefined
+        const job = startProjectJob(createBackgroundJob, projectDir, 'clips-render', '🎬 正在出拆条短视频（本机剪辑，不花钱）...', async (onProgress) => {
+          const res = await renderShortClips({ projectDir, sourcePath: clipSource, indexes, settings, force: bool(body.force), onProgress })
+          return { ok: true, folder: res.folder, layout: res.layout, captions: res.captions, burned: res.burned, clips: res.clips.map(({ key, ...c }) => c) }
+        })
+        return json({ ok: true, async: true, jobId: job.id, job })
+      }
+      if (pathname === '/api/video-workbench/clips/reveal') return json(revealClipsFolder(projectDir, { sourcePath: clipSource }))
     }
     if (pathname === '/api/video-workbench/footage/index') {
       const assetIds = Array.isArray(body.assetIds) ? body.assetIds.map((x) => String(x || '').slice(0, 120)).filter(Boolean).slice(0, 500) : null

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * DSH Video Workbench — Optional Local TTS Engine One-Click Installer CLI
- * Copyright (c) 2026 Merziller (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨) (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
  *
  * Usage:
  *   node scripts/install-tts-engine.mjs --list

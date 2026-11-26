@@ -1,6 +1,6 @@
 /**
  * @dsh-video/tool-media — 影核广场 · CinePulse Hub (Built-in & Community MOTION.md Template Plaza)
- * Copyright (c) 2026 Merziller (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨) (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
  *
  * Official Community Name: 影核广场 · CinePulse Hub
  *   - Built-in curated templates live in `<PACKAGE_ROOT>/templates/cinepulse-hub/<templateId>/`

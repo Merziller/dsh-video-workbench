@@ -43,6 +43,8 @@ Object.assign(process.env, {
   DSH_HOME: dirs.dshClient,
   DSH_VIDEO_SKIP_PROFILE_MOUNT: '1',
 })
+// tests never download the local speech engine (transcription would otherwise wait for its automatic install)
+if (process.env.DSH_ASR_AUTO_INSTALL === undefined) process.env.DSH_ASR_AUTO_INSTALL = '0'
 globalThis.fetch = async (input) => {
   throw new Error(`network blocked in tests: ${typeof input === 'string' ? input : input?.url || input}`)
 }
@@ -278,6 +280,30 @@ await section('rough-cut planning', async () => {
   check('cutting words by hand removes them as 手动删除', !rc.planTexts(pM).keptText.includes('谢谢大家') && pM.removals.some((r) => r.kind === 'manual' && r.applied))
   const pOff = rc.planRoughCut(tA, { fps: 30, cutFillers: false, cutStutters: false, cutRetakes: false })
   check('switches: with fillers / stutters / retakes off only pauses are cut', rc.planTexts(pOff).keptText.includes('嗯') && rc.planTexts(pOff).keptText.includes('我我我') && rc.planTexts(pOff).keptText.includes('第一步我们要第一步'))
+
+  // 选段剪辑 (keepOnly): only the chosen passages stay; the rules still clean up inside them
+  check('keepOnly normaliser: sorted, merged, clamped, invalid dropped', JSON.stringify(rc.normalizeKeepOnly([[9, 7], [2, 3], [4, 5], ['x', 1], [50, 99], { from: 0, to: 0 }], 20)) === '[[0,0],[2,5],[7,9],[19,19]]' && rc.normalizeKeepOnly(null, 5).length === 0 && rc.normalizeKeepOnly([[1, 2]], 0).length === 0)
+  // word index range of one recogniser segment (by time, independent of how the words are segmented)
+  const segWords = (text) => {
+    const seg = tA.segments.find((s) => s.text === text)
+    const idx = pA.words.filter((w) => !w.punct && w.onset >= seg.start - 0.05 && w.onset < seg.end - 0.01).map((w) => w.i)
+    return [idx[0], idx[idx.length - 1]]
+  }
+  const [sA] = segWords('第一步我们要先把素材整理好。')
+  const [, sB] = segWords('我我我觉得这一步最重要。')
+  const pK = rc.planRoughCut(tA, { fps: 30 }, { keepOnly: [[sA, sB]] })
+  const keptK = rc.planTexts(pK).keptText
+  check('keepOnly: only the chosen passage stays, its false start / stutter are still removed', keptK === '第一步我们要先把素材整理好。我觉得这一步最重要。', keptK)
+  const outside = pK.removals.filter((r) => r.kind === 'outside')
+  check('keepOnly: everything else is reported as 选段以外 (one item per stretch, short preview text)', outside.length === 2 && outside.every((r) => r.applied && r.label === '选段以外' && Array.from(r.text).length <= 31) && pK.outputDurationSec < pA.outputDurationSec / 1.5, JSON.stringify(outside.map((r) => r.text)))
+  const [sC, sC2] = segWords('谢谢大家。')
+  const pK2 = rc.planRoughCut(tA, { fps: 30 }, { keepOnly: [[sA, sB], [sC, sC2]] })
+  check('keepOnly: two passages are joined in source order with one cut between them', rc.planTexts(pK2).keptText === '第一步我们要先把素材整理好。我觉得这一步最重要。谢谢大家。' && pK2.keep.length >= 2, rc.planTexts(pK2).keptText)
+  const outId = outside[0].id
+  const pK3 = rc.planRoughCut(tA, { fps: 30 }, { keepOnly: [[sA, sB]], restore: [outId] })
+  check('keepOnly: restoring a 选段以外 stretch brings it back', rc.planTexts(pK3).keptText.startsWith('大家好') && pK3.removals.find((r) => r.id === outId)?.applied === false, rc.planTexts(pK3).keptText)
+  check('keepOnly: keep ranges still on the frame grid', pK2.keep.every((r) => Math.abs(r.start * 30 - Math.round(r.start * 30)) < 0.05 && Math.abs(r.end * 30 - Math.round(r.end * 30)) < 0.05))
+  check('keepOnly: an empty selection means the whole recording', rc.planTexts(rc.planRoughCut(tA, { fps: 30 }, { keepOnly: [] })).keptText === kept)
 
   // time mapping + captions
   const m = rc.makeTimeMapper(pA.keep, 30)

@@ -7,8 +7,18 @@
  *   - SenseVoice-Small int8 (FunAudioLLM, FunASR Model License v1.1: commercial use allowed, keep the attribution) —
  *     Mandarin, Cantonese, English, Japanese, Korean; punctuation + inverse text normalisation; per-token timestamps;
  *   - silero VAD (MIT) to cut long recordings into speech segments.
- * Every download is pinned (version + SHA-256 / sha512) and lands in one folder the user picks (default
- * `$DSH_ASR_HOME` or `<workspace>/ai-engines/asr`), never in a system cache.
+ * Every download is pinned (version + SHA-256 / sha512) and lands in one folder (default `$DSH_ASR_HOME`, an existing
+ * install, or the recommended folder — see recommendAsrHome), never in a system cache. The model is never bundled
+ * with the plugin.
+ *
+ * Automatic install (nobody has to click 「一键安装」): one shared install state machine (single flight per process, a
+ * lock file per engine folder across processes) is used by the studio's 「一键安装」 / 「重试」 route, the MCP
+ * speech_engine tool, the automatic install and the features waiting for the engine:
+ *   - maybeStartAsrAutoInstall(): the War Room asks for state → the install starts in the background (cn mirror first);
+ *   - ensureAsrEngine() (transcribeMedia): a feature that needs the engine waits for that install;
+ *   - `DSH_ASR_AUTO_INSTALL=0` turns the automatic install off (installing by hand still works); after a failure the
+ *     automatic path waits 10 minutes before trying again (a click / an install call retries at once).
+ * An engine pre-placed in the plugin package (`vendor/asr`, offline bundles) is used where it is, read-only.
  *
  * Transcription runs `asr-worker.cjs` in a child Node process (the native addon never loads into the studio
  * process; a crash or an abort only ends that child). Results are cached next to the project's media.
@@ -33,7 +43,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
-import { createAbortError, loadEnv, REPO_ROOT, resolveBinaries, runCommandRedirected } from '../shared/index.js'
+import { createAbortError, loadEnv, PACKAGE_ROOT, REPO_ROOT, resolveBinaries, runCommandRedirected } from '../shared/index.js'
 import { upsertDotEnvKeys } from '../dsh-tool-avatar/lipsync-installer.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -118,11 +128,104 @@ export function asrPlatformKey(platform = osPlatform(), arch = osArch()) {
   return `${platform}-${arch}`
 }
 
-/** Install folder: explicit dir > `DSH_ASR_HOME` > `<workspace>/ai-engines/asr`. */
+/* ------------------------------------------------------------------------------------------------ folders */
+
+// the folder probe may look at every drive: cached briefly (reset when an install ends)
+const FOLDER_PROBE_TTL_MS = 30_000
+let pathOverrides = null // tests only (setAsrInstallerForTests)
+let freshHomeCache = { at: 0, home: '' }
+let discoveryCache = { at: 0, list: null }
+
+/** An engine pre-placed in the plugin package (offline bundles): used where it is, never installed into. */
+const vendorAsrHome = () => resolve(pathOverrides?.vendor || join(PACKAGE_ROOT, 'vendor', 'asr'))
+const defaultAsrHome = () => resolve(pathOverrides?.defaultHome || join(REPO_ROOT, 'ai-engines', 'asr'))
+const isAsciiPath = (p) => !/[^\x20-\x7e]/.test(String(p))
+const samePath = (a, b) => {
+  const x = resolve(String(a))
+  const y = resolve(String(b))
+  return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y
+}
+
+/**
+ * Where a fresh install goes when nothing is configured or installed yet: next to the other local AI engines
+ * (`AVATAR_LIPSYNC_HOME` → `<parent>/asr`); else, on Windows when the default folder sits on the system drive (or has
+ * non-ASCII characters), the first other local drive with room (`<X>:/dsh-ai/asr`); else the default. Always ASCII.
+ */
+function recommendFreshHome() {
+  if (pathOverrides?.recommended) return resolve(pathOverrides.recommended)
+  const now = Date.now()
+  if (freshHomeCache.home && now - freshHomeCache.at < FOLDER_PROBE_TTL_MS) return freshHomeCache.home
+  const def = defaultAsrHome()
+  let pick = ''
+  const lip = String(process.env.AVATAR_LIPSYNC_HOME || '').trim()
+  if (lip && isAsciiPath(lip)) pick = resolve(dirname(resolve(lip)), 'asr')
+  else if (process.platform === 'win32') {
+    const sysDrive = String(process.env.SystemDrive || 'C:').toUpperCase()
+    if (def.slice(0, 2).toUpperCase() === sysDrive || !isAsciiPath(def)) {
+      for (const letter of 'DEFGHIJKLMNOPQRSTUVWXYZ') {
+        const root = `${letter}:\\`
+        if (`${letter}:` === sysDrive || !existsSync(root)) continue
+        if (freeBytesOf(root) >= 2 * 1024 ** 3) {
+          pick = `${letter}:\\dsh-ai\\asr`
+          break
+        }
+      }
+    }
+  }
+  if (!pick) pick = isAsciiPath(def) ? def : resolve(dirname(REPO_ROOT), 'dsh-ai-asr')
+  freshHomeCache = { at: now, home: pick }
+  return pick
+}
+
+/** `<X>:\dsh-ai\asr` of the other local drives (Windows, when the default folder sits on the system drive). */
+function otherDriveHomes() {
+  if (process.platform !== 'win32' || pathOverrides) return []
+  const def = defaultAsrHome()
+  const sysDrive = String(process.env.SystemDrive || 'C:').toUpperCase()
+  if (def.slice(0, 2).toUpperCase() !== sysDrive && isAsciiPath(def)) return []
+  const out = []
+  for (const letter of 'DEFGHIJKLMNOPQRSTUVWXYZ') {
+    if (`${letter}:` !== sysDrive && existsSync(`${letter}:\\`)) out.push(`${letter}:\\dsh-ai\\asr`)
+  }
+  return out
+}
+
+/**
+ * Folders that hold a complete install (their `asr-engine.json`), in this order: the engine pre-placed in the plugin
+ * (`vendor/asr`, read-only), `<workspace>/ai-engines/asr`, the recommended folder (e.g. `X:\dsh-ai\asr` — found again
+ * after `.env` was lost), the same folder on the other drives. Cached briefly.
+ */
+function installedHomes() {
+  const now = Date.now()
+  if (discoveryCache.list && now - discoveryCache.at < FOLDER_PROBE_TTL_MS) return discoveryCache.list
+  const vendor = vendorAsrHome()
+  const seen = new Set()
+  const list = []
+  for (const dir of [vendor, defaultAsrHome(), recommendFreshHome(), ...otherDriveHomes()]) {
+    const key = process.platform === 'win32' ? dir.toLowerCase() : dir
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (existsSync(join(dir, MANIFEST_NAME))) list.push({ dir, vendor: samePath(dir, vendor) })
+  }
+  discoveryCache = { at: now, list }
+  return list
+}
+
+function resetAsrCaches() {
+  statusCache = { key: '', at: 0, value: null }
+  freshHomeCache = { at: 0, home: '' }
+  discoveryCache = { at: 0, list: null }
+}
+
+/**
+ * Engine folder: explicit dir > `DSH_ASR_HOME` > the first folder that already holds a complete install (`vendor/asr`
+ * in the plugin → `<workspace>/ai-engines/asr` → the recommended folder) > `<workspace>/ai-engines/asr`.
+ */
 export function resolveAsrHome(explicit = '') {
   loadEnv()
   const pick = String(explicit || '').trim() || String(process.env.DSH_ASR_HOME || '').trim()
-  return resolve(pick || join(REPO_ROOT, 'ai-engines', 'asr'))
+  if (pick) return resolve(pick)
+  return installedHomes()[0]?.dir || defaultAsrHome()
 }
 
 export function resolveAsrConfig({ home = '' } = {}) {
@@ -207,29 +310,15 @@ export async function getAsrStatus({ deep = false, force = false, home = '' } = 
 }
 
 /**
- * Suggested install folder for a fresh install: the configured / existing one; else next to the other local AI
- * engines (`AVATAR_LIPSYNC_HOME` → `<parent>/asr`); else, on Windows when the workspace sits on the system drive, the
- * first other local drive with room (`<X>:/dsh-ai/asr`); else the default. Always an ASCII path.
+ * Folder for an install / a repair: the configured one (`DSH_ASR_HOME`); else an existing complete install (never the
+ * read-only `vendor/asr`); else the fresh-install folder (next to the other local AI engines, or `<X>:/dsh-ai/asr` on
+ * another drive when the workspace sits on the Windows system drive, or the default). Always ASCII unless configured.
  */
 export function recommendAsrHome() {
   loadEnv()
-  const cfg = resolveAsrConfig()
-  if (String(process.env.DSH_ASR_HOME || '').trim() || existsSync(cfg.manifestPath)) return cfg.home
-  const ascii = (p) => !/[^\x20-\x7e]/.test(p)
-  const lip = String(process.env.AVATAR_LIPSYNC_HOME || '').trim()
-  if (lip && ascii(lip)) return resolve(dirname(resolve(lip)), 'asr')
-  if (process.platform === 'win32') {
-    const sysDrive = String(process.env.SystemDrive || 'C:').toUpperCase()
-    const onSystem = cfg.home.slice(0, 2).toUpperCase() === sysDrive
-    if (onSystem || !ascii(cfg.home)) {
-      for (const letter of 'DEFGHIJKLMNOPQRSTUVWXYZ') {
-        const root = `${letter}:\\`
-        if (`${letter}:` === sysDrive || !existsSync(root)) continue
-        if (freeBytesOf(root) >= 2 * 1024 ** 3) return `${letter}:\\dsh-ai\\asr`
-      }
-    }
-  }
-  return ascii(cfg.home) ? cfg.home : resolve(dirname(REPO_ROOT), 'dsh-ai-asr')
+  const env = String(process.env.DSH_ASR_HOME || '').trim()
+  if (env) return resolve(env)
+  return installedHomes().find((h) => !h.vendor)?.dir || recommendFreshHome()
 }
 
 export function getAsrInstallerCatalog() {
@@ -242,6 +331,7 @@ export function getAsrInstallerCatalog() {
     installed: existsSync(cfg.manifestPath),
     platform: cfg.platformKey,
     supportedPlatform: Boolean(cfg.platformPackage),
+    autoInstall: isAsrAutoInstallEnabled(),
     freeBytes: Number.isFinite(freeBytes) ? freeBytes : null,
     needBytes: MIN_FREE_BYTES,
     package: ASR_INSTALLER_PACKAGE,
@@ -469,14 +559,15 @@ async function fetchNpmTarball(name, version, integrity, { useCn, signal, onByte
 /* ------------------------------------------------------------------------------------------------ installer */
 
 /**
- * One-click install (idempotent: verified files are kept, so a re-run only repairs what is missing).
- * `mirror`: 'cn' (npmmirror + hf-mirror first) | 'global'.
+ * The installer itself (idempotent: verified files are kept, so a re-run only repairs what is missing). Features and
+ * routes go through the shared install (startAsrInstall / ensureAsrEngine) instead of calling it directly.
+ * `installDir` '' = recommendAsrHome(). `mirror`: 'cn' (npmmirror + hf-mirror first) | 'global'.
  */
 export async function installAsrEngine(options = {}) {
   loadEnv()
   const { installDir = '', mirror = 'cn', writeEnv = true, signal, onProgress } = options
   const useCn = String(mirror || 'cn').toLowerCase() !== 'global'
-  const cfg = resolveAsrConfig({ home: installDir })
+  const cfg = resolveAsrConfig({ home: String(installDir || '').trim() || recommendAsrHome() })
   const logs = []
   const emit = (progress, message) => {
     logs.push(message)
@@ -488,6 +579,9 @@ export async function installAsrEngine(options = {}) {
   }
   if (/[^\x20-\x7e]/.test(cfg.home)) {
     throw new Error(`安装目录里不能有中文或特殊字符（识别模型在这类路径下可能加载失败）：${cfg.home}。请换一个纯英文路径，例如 D:/dsh-ai/asr`)
+  }
+  if (samePath(cfg.home, vendorAsrHome())) {
+    throw new Error(`${cfg.home} 是插件自带的语音识别引擎目录（只读，不能往里安装）。请换一个安装位置，例如 D:/dsh-ai/asr`)
   }
   mkdirSync(cfg.home, { recursive: true })
   const free = freeBytesOf(cfg.home)
@@ -602,7 +696,7 @@ export async function installAsrEngine(options = {}) {
   }
   writeFileSync(cfg.manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8')
   let envWrite = { envPath: '', written: [] }
-  if (writeEnv && cfg.home !== resolve(join(REPO_ROOT, 'ai-engines', 'asr'))) {
+  if (writeEnv && !samePath(cfg.home, defaultAsrHome())) {
     envWrite = upsertDotEnvKeys({ DSH_ASR_HOME: cfg.home })
     emit(93, `已记住安装位置（${envWrite.written.join(', ') || '无变化'}）`)
   } else if (writeEnv) {
@@ -616,13 +710,402 @@ export async function installAsrEngine(options = {}) {
   return { ok: Boolean(status.ready), home: cfg.home, manifest, downloaded, env: envWrite, status, logs }
 }
 
+/* ------------------------------------------------------------------------------------------------ shared install */
+
+/** After an install ended (failed, or done while the engine still is not usable) the automatic path waits this long
+ *  before starting another one (a click / an install call retries at once). */
+export const ASR_AUTO_RETRY_MS = 10 * 60 * 1000
+const LOCK_NAME = '.install.lock'
+const LOCK_PROGRESS_NAME = '.install.progress.json'
+// a lock whose owner shows no sign of life for this long is taken over (the owner refreshes it at least every 30 s)
+const LOCK_IDLE_MS = 5 * 60 * 1000
+
+/** `DSH_ASR_AUTO_INSTALL=0` (or false / off / no) turns the automatic install off; installing by hand still works. */
+export function isAsrAutoInstallEnabled() {
+  loadEnv()
+  return !['0', 'false', 'off', 'no'].includes(String(process.env.DSH_ASR_AUTO_INSTALL ?? '').trim().toLowerCase())
+}
+
+const idleInstall = () => ({ state: 'idle', progress: 0, message: '', error: '', home: '', mirror: '', trigger: '', startedAt: '', finishedAt: '', logs: [] })
+let install = idleInstall()
+let installRun = null // the install in flight: { gen, promise, listeners }
+let installGen = 0
+let lastEndAt = 0 // when the last install of this process ended (done or failed)
+let autoRetryMs = ASR_AUTO_RETRY_MS
+let lockPollMs = 2000
+let installerImpl = null // tests only
+let autoTimer = null
+
+// no retry loop: after an install ended — failed, or done while the engine still is not usable — the automatic path
+// waits before starting another one (explicit installs never wait)
+const inAutoBackoff = () => (install.state === 'failed' || install.state === 'done') && Date.now() - lastEndAt < autoRetryMs
+
+/**
+ * The shared install, for status routes and panels: `{ state: 'idle' | 'running' | 'done' | 'failed' | 'disabled',
+ * progress (0–100), message, error, home, mirror, trigger ('auto' | 'manual'), startedAt, finishedAt, logs[], auto (the
+ * automatic install is allowed), supportedPlatform, platform, disabledReason?, autoRetryAt? }`. 'disabled' = nothing
+ * ran in this process and the automatic install is switched off (DSH_ASR_AUTO_INSTALL=0) or impossible on this system.
+ * Whether the engine is ready is getAsrStatus()'s answer, not this.
+ */
+export function getAsrInstallState() {
+  const platform = asrPlatformKey()
+  const supportedPlatform = Boolean(ASR_PLATFORM_PACKAGES[platform])
+  const auto = isAsrAutoInstallEnabled()
+  const s = { ...install, logs: install.logs.slice(-12), auto, supportedPlatform, platform }
+  if (s.state === 'idle' && (!supportedPlatform || !auto)) {
+    s.state = 'disabled'
+    s.disabledReason = supportedPlatform ? 'switched-off' : 'unsupported-platform'
+    s.message = supportedPlatform ? '自动安装已关闭（DSH_ASR_AUTO_INSTALL=0），需要时可以手动安装' : `当前系统（${platform}）用不了本地语音识别`
+  }
+  if (s.state === 'failed' && auto && lastEndAt + autoRetryMs > Date.now()) s.autoRetryAt = new Date(lastEndAt + autoRetryMs).toISOString()
+  return s
+}
+
+/**
+ * Start the install, or join the one already running — the single flight shared by 「一键安装」 / 「重试」, the MCP
+ * speech_engine tool, the automatic install and the features waiting for the engine. `installDir` '' = the folder of
+ * the running install, else recommendAsrHome(). A running install into another folder → error code 'BUSY' (409).
+ * `onProgress({ stage, progress, message })` follows the shared install until it ends. Returns `{ promise, joined,
+ * state }`: the promise resolves with the installer's result (`ok: false` = installed but the self-test failed) and
+ * rejects (code ASR_INSTALL_FAILED, plain-Chinese message) when the install failed. Explicit calls never wait for the
+ * automatic retry pause.
+ */
+export function startAsrInstall({ installDir = '', mirror = 'cn', writeEnv = true, trigger = 'manual', onProgress } = {}) {
+  const wanted = String(installDir || '').trim()
+  if (installRun) {
+    if (wanted && !samePath(wanted, install.home)) {
+      throw Object.assign(new Error(`本地语音识别正在安装到 ${install.home}（已完成 ${Math.round(install.progress)}%），请等它装完再换别的位置`), { code: 'BUSY', status: 409 })
+    }
+    if (typeof onProgress === 'function') installRun.listeners.add(onProgress)
+    return { promise: installRun.promise, joined: true, state: getAsrInstallState() }
+  }
+  const home = wanted ? resolve(wanted) : recommendAsrHome()
+  const useMirror = String(mirror || '').toLowerCase() === 'global' ? 'global' : 'cn'
+  const kind = trigger === 'auto' ? 'auto' : 'manual'
+  install = {
+    ...idleInstall(),
+    state: 'running',
+    message: kind === 'auto' ? '正在自动准备本地语音识别…' : '正在准备安装本地语音识别…',
+    home,
+    mirror: useMirror,
+    trigger: kind,
+    startedAt: new Date().toISOString(),
+  }
+  const run = { gen: ++installGen, listeners: new Set(typeof onProgress === 'function' ? [onProgress] : []), promise: null }
+  run.promise = Promise.resolve().then(() => runSharedInstall(run, { home, mirror: useMirror, writeEnv: writeEnv !== false }))
+  // a background start may have nobody waiting: the failure is kept in the state, never an unhandled rejection
+  run.promise.catch(() => {})
+  installRun = run
+  return { promise: run.promise, joined: false, state: getAsrInstallState() }
+}
+
+async function runSharedInstall(run, { home, mirror, writeEnv }) {
+  const live = () => run.gen === installGen
+  let lock = null
+  const notify = () => {
+    for (const fn of run.listeners) {
+      try {
+        fn({ stage: 'asr-install', progress: install.progress, message: install.message })
+      } catch {}
+    }
+  }
+  const update = (p) => {
+    if (!live()) return
+    const pct = Number(p?.progress)
+    if (p?.progress !== undefined && Number.isFinite(pct)) install.progress = Math.max(0, Math.min(100, pct))
+    if (p?.message) {
+      install.message = String(p.message)
+      install.logs.push(install.message)
+      if (install.logs.length > 40) install.logs.shift()
+    }
+    lock?.touch?.(install)
+    notify()
+  }
+  try {
+    lock = await acquireInstallLock(home, { onWait: update, isLive: live })
+    if (!live()) return { ok: false, home, cancelled: true }
+    // another process (the studio, an MCP server, DSH) installed this folder meanwhile: use it
+    const res = lock?.done ? { ok: true, home, sharedInstall: true } : await (installerImpl || installAsrEngine)({ installDir: home, mirror, writeEnv, onProgress: update })
+    if (live()) {
+      if (res && res.ok === false) finishInstall('failed', `已经装好了，但自检没通过（${res.status?.reason || '原因未知'}）`)
+      else finishInstall('done', '本地语音识别已经准备好了')
+      notify()
+    }
+    return res
+  } catch (err) {
+    const reason = friendlyInstallError(err)
+    if (live()) {
+      finishInstall('failed', reason, err)
+      notify()
+    }
+    throw Object.assign(new Error(reason), { code: 'ASR_INSTALL_FAILED', cause: err })
+  } finally {
+    if (lock && !lock.done) lock.release()
+    if (installRun === run) installRun = null
+    run.listeners.clear()
+  }
+}
+
+function finishInstall(state, message, err = null) {
+  install = {
+    ...install,
+    state,
+    progress: state === 'done' ? 100 : install.progress,
+    message,
+    error: state === 'failed' ? message : '',
+    detail: err ? String(err?.message || err).slice(0, 400) : '',
+    finishedAt: new Date().toISOString(),
+  }
+  lastEndAt = Date.now()
+  resetAsrCaches()
+}
+
+/** A plain-Chinese reason for a failed install (no call to action: the panel shows 「重试」 next to it). */
+function friendlyInstallError(err) {
+  const raw = String(err?.message || err || '').replace(/\s+/g, ' ').trim()
+  const short = raw.length > 120 ? `${raw.slice(0, 120)}…` : raw
+  const code = `${err?.code || ''} ${err?.cause?.code || ''}`
+  if (err?.name === 'AbortError' || /安装已手动停止/.test(raw)) return '下载太久没有完成（网络太慢或连接被中断了）'
+  if (/^磁盘空间不足/.test(raw)) return raw
+  if (/ENOSPC/.test(code) || /ENOSPC|no space left/i.test(raw)) return '磁盘空间不够（安装本地语音识别至少需要 420 MB 可用空间）'
+  if (/EINTEGRITY/.test(code) || /校验失败|校验不一致/.test(raw)) return '下载的文件不完整（校验没通过，已经删掉了）'
+  const net = /ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|UND_ERR/
+  if (net.test(code) || net.test(raw) || /fetch failed|socket hang up|getaddrinfo|network|下载不完整/i.test(raw)) return `网络连不上下载服务器（${short}）`
+  if (/HTTP [45]\d\d/.test(raw)) return `下载服务器暂时不可用（${short}）`
+  if (/EACCES|EPERM|EROFS/.test(`${code} ${raw}`)) return `没有权限写入安装文件夹（${short}）`
+  return /[\u4e00-\u9fff]/.test(raw) ? raw.slice(0, 300) : `安装没有成功（${short || '原因未知'}）`
+}
+
+const readJsonOrNull = (p) => {
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'))
+  } catch {
+    return null
+  }
+}
+const mtimeOf = (p) => {
+  try {
+    return statSync(p).mtimeMs
+  } catch {
+    return 0
+  }
+}
+const pidAlive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return err?.code === 'EPERM'
+  }
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * One install per engine folder across processes (the studio, an MCP server and DSH may all want the engine): a lock
+ * file `<home>/.install.lock` (owner pid) plus `.install.progress.json` (refreshed by the owner). While another live
+ * process holds it, wait and show its progress; when it released the lock and the folder has `asr-engine.json`, its
+ * install is used (`{ done: true }`); a lock whose owner died or went silent for 5 minutes is taken over. Folders the
+ * installer refuses anyway (non-ASCII, the read-only `vendor/asr`) or that cannot be written get no lock (null).
+ */
+async function acquireInstallLock(home, { onWait, isLive }) {
+  if (!isAsciiPath(home) || samePath(home, vendorAsrHome())) return null
+  const lockPath = join(home, LOCK_NAME)
+  const progressPath = join(home, LOCK_PROGRESS_NAME)
+  try {
+    mkdirSync(home, { recursive: true })
+  } catch {
+    return null
+  }
+  const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  for (let takeovers = 0; ; ) {
+    try {
+      writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token, startedAt: new Date().toISOString() }), { flag: 'wx' })
+      return ownInstallLock(lockPath, progressPath, token)
+    } catch (err) {
+      if (err?.code !== 'EEXIST') return null
+    }
+    const owner = readJsonOrNull(lockPath)
+    const lastSign = Math.max(mtimeOf(lockPath), mtimeOf(progressPath))
+    // a lock file that cannot be read yet is being written right now
+    const alive = owner ? Number(owner.pid) !== process.pid && pidAlive(Number(owner.pid)) : Date.now() - mtimeOf(lockPath) < 10_000
+    if (!alive || Date.now() - lastSign > LOCK_IDLE_MS) {
+      if (++takeovers > 3) return null
+      try {
+        rmSync(lockPath, { force: true })
+      } catch {
+        return null
+      }
+      continue
+    }
+    const pct = Number(readJsonOrNull(progressPath)?.progress)
+    const known = Number.isFinite(pct)
+    onWait({ ...(known ? { progress: pct } : {}), message: `另一个窗口正在安装本地语音识别${known ? `（${Math.round(pct)}%）` : ''}，等它装完就能用…` })
+    await sleep(lockPollMs)
+    if (!isLive()) return null
+    if (!existsSync(lockPath) && existsSync(join(home, MANIFEST_NAME))) return { done: true }
+  }
+}
+
+function ownInstallLock(lockPath, progressPath, token) {
+  let lastWrite = 0
+  let latest = { progress: 0, message: '' }
+  const write = () => {
+    lastWrite = Date.now()
+    try {
+      writeFileSync(progressPath, JSON.stringify({ pid: process.pid, at: new Date().toISOString(), progress: latest.progress, message: latest.message }))
+    } catch {}
+  }
+  write()
+  const beat = setInterval(write, 30_000)
+  beat.unref?.()
+  return {
+    touch(s) {
+      latest = { progress: Number(s?.progress) || 0, message: String(s?.message || '') }
+      if (Date.now() - lastWrite >= 1500) write()
+    },
+    release() {
+      clearInterval(beat)
+      if (readJsonOrNull(lockPath)?.token !== token) return
+      for (const p of [progressPath, lockPath]) {
+        try {
+          rmSync(p, { force: true })
+        } catch {}
+      }
+    },
+  }
+}
+
+/** Wait for the install in flight (if any), forwarding 「正在自动准备本地语音识别 45%（首次约 260 MB，只需一次）」. The
+ *  signal only stops this wait: the shared install goes on. */
+function joinAsrInstall({ signal, onProgress } = {}) {
+  const run = installRun
+  if (!run) return Promise.resolve()
+  let lastPct = -1
+  const forward = () => {
+    if (install.state !== 'running') return
+    const pct = Math.round(install.progress || 0)
+    if (pct === lastPct) return
+    lastPct = pct
+    const what = install.trigger === 'auto' ? '正在自动准备本地语音识别' : '正在安装本地语音识别'
+    try {
+      onProgress?.({ progress: 1, message: `${what} ${pct}%（首次约 260 MB，只需一次）` })
+    } catch {}
+  }
+  forward()
+  run.listeners.add(forward)
+  return new Promise((resolveWait, rejectWait) => {
+    const onAbort = () => {
+      cleanup()
+      rejectWait(createAbortError())
+    }
+    const cleanup = () => {
+      run.listeners.delete(forward)
+      signal?.removeEventListener?.('abort', onAbort)
+    }
+    if (signal?.aborted) {
+      onAbort()
+      return
+    }
+    signal?.addEventListener?.('abort', onAbort, { once: true })
+    const settle = () => {
+      cleanup()
+      resolveWait()
+    }
+    run.promise.then(settle, settle)
+  })
+}
+
+/**
+ * Cheap, idempotent, never waits, never throws (status routes, the War Room's state, the narration check): when the
+ * engine is missing and the automatic install is allowed (not switched off, a supported system, no install of this
+ * process ended in the last 10 minutes), start it in the background — recommended folder, domestic mirror first.
+ * `delayMs` schedules the check once instead (an unref'd timer: a short-lived process exits before it fires).
+ * Returns getAsrInstallState().
+ */
+export async function maybeStartAsrAutoInstall({ delayMs = 0 } = {}) {
+  try {
+    if (!installRun && isAsrAutoInstallEnabled() && ASR_PLATFORM_PACKAGES[asrPlatformKey()] && !inAutoBackoff()) {
+      if (Number(delayMs) > 0) {
+        if (!autoTimer) {
+          autoTimer = setTimeout(() => {
+            autoTimer = null
+            maybeStartAsrAutoInstall().catch(() => {})
+          }, Number(delayMs))
+          autoTimer.unref?.()
+        }
+      } else {
+        const st = await getAsrStatus()
+        if (!st.ready && !installRun) startAsrInstall({ trigger: 'auto', mirror: 'cn' })
+      }
+    }
+  } catch {}
+  return getAsrInstallState()
+}
+
+function asrMissingError(status, why) {
+  const missing = (status?.missing || []).join('、') || '识别引擎'
+  const texts = {
+    platform: `当前系统（${status?.platform || asrPlatformKey()}）用不了本地语音识别：只支持 Windows、macOS、Linux 的 x64 和 arm64 电脑。`,
+    'switched-off': `本地语音识别还没有安装（缺少：${missing}）。自动安装已关闭（设置了 DSH_ASR_AUTO_INSTALL=0）：去掉这个设置，下次用到时就会自动安装；也可以在「AI 剪辑 · 口播粗剪」面板点「一键安装」，或让 AI 助手用 speech_engine 工具安装（约 260 MB，只需一次）。`,
+    failed: `本地语音识别自动准备没有成功：${install.error || '原因未知'}。可以在「AI 剪辑 · 口播粗剪」面板点「重试」，或让 AI 助手用 speech_engine 工具重新安装。`,
+    'other-folder': `本地语音识别还没有安装在 ${status?.home || ''}（缺少：${missing}）。可以在「AI 剪辑 · 口播粗剪」面板点「一键安装」，或用 speech_engine 工具安装到这个文件夹（约 260 MB，只需一次）。`,
+    'still-missing': `本地语音识别的安装已经结束，但还是找不到它（缺少：${missing}）。请在「AI 剪辑 · 口播粗剪」面板点「重试」，或换一个安装位置。`,
+  }
+  return Object.assign(new Error(texts[why] || texts['still-missing']), { code: 'ASR_NOT_INSTALLED', status: 412, reason: why })
+}
+
+/**
+ * The engine, ready to use — a feature that needs it waits for the shared install: joins the one running, or starts
+ * the automatic one (unless it is switched off, impossible here, or an install ended less than 10 minutes ago).
+ * `onProgress` receives `{ progress: 1, message: '正在自动准备本地语音识别 45%（首次约 260 MB，只需一次）' }`; `signal`
+ * only stops this wait. Nothing is installed into an explicit `home` from here. Throws code ASR_NOT_INSTALLED (status
+ * 412) with a plain-Chinese reason. Returns getAsrStatus().
+ */
+export async function ensureAsrEngine({ home = '', signal, onProgress } = {}) {
+  if (signal?.aborted) throw createAbortError()
+  let status = await getAsrStatus({ home })
+  if (status.ready) return status
+  if (String(home || '').trim()) throw asrMissingError(status, 'other-folder')
+  if (!status.supportedPlatform) throw asrMissingError(status, 'platform')
+  if (!installRun) {
+    if (!isAsrAutoInstallEnabled()) throw asrMissingError(status, 'switched-off')
+    if (inAutoBackoff()) throw asrMissingError(status, install.state === 'failed' ? 'failed' : 'still-missing')
+    startAsrInstall({ trigger: 'auto', mirror: 'cn' })
+  }
+  await joinAsrInstall({ signal, onProgress })
+  status = await getAsrStatus({ force: true })
+  if (status.ready) return status
+  throw asrMissingError(status, install.state === 'failed' ? 'failed' : 'still-missing')
+}
+
+/**
+ * Tests only (nothing is ever downloaded): `fn(options)` replaces installAsrEngine in the shared install (null = the
+ * real one again). Resets the shared state, the failure time, a scheduled automatic start and the folder caches.
+ * Options: `retryAfterMs` (the automatic retry pause), `lockPollMs` (how often another process's lock is looked at),
+ * `paths` `{ vendor, defaultHome, recommended }` (the folders the engine is looked for in).
+ */
+export function setAsrInstallerForTests(fn, { retryAfterMs = 0, lockPollMs: pollMs = 0, paths = null } = {}) {
+  installerImpl = typeof fn === 'function' ? fn : null
+  autoRetryMs = Number(retryAfterMs) > 0 ? Number(retryAfterMs) : ASR_AUTO_RETRY_MS
+  lockPollMs = Number(pollMs) > 0 ? Number(pollMs) : 2000
+  pathOverrides = paths && typeof paths === 'object' ? { ...paths } : null
+  installGen++
+  installRun = null
+  install = idleInstall()
+  lastEndAt = 0
+  if (autoTimer) clearTimeout(autoTimer)
+  autoTimer = null
+  resetAsrCaches()
+}
+
 /* ------------------------------------------------------------------------------------------------ worker */
 
 let workerSeq = 0
 
 /**
  * Run `asr-worker.cjs` with a job description (JSON file in, JSON file out, progress file polled).
- * `job.mode`: 'selftest' | 'transcribe'.
+ * `job.mode`: 'selftest' | 'transcribe' | 'transcribe-batch' (see transcribeClips).
  */
 export async function runAsrWorker(job, { home = '', timeoutMs = 3_600_000, signal, onChild, onProgress, tmpDir = '' } = {}) {
   const cfg = resolveAsrConfig({ home })
@@ -732,7 +1215,9 @@ export function decodeEnergyEnvelope(transcript) {
 
 /**
  * Transcribe a video / audio file with the local engine. Returns the transcript (also cached on disk; a second call
- * with the same unchanged file is instant). Throws `code: 'ASR_NOT_INSTALLED'` when the engine is missing.
+ * with the same unchanged file is instant). When the engine is missing it waits for the shared install (started
+ * automatically unless switched off; progress 「正在自动准备本地语音识别 45%…」 via onProgress, see ensureAsrEngine);
+ * otherwise throws `code: 'ASR_NOT_INSTALLED'` with a plain-Chinese reason.
  *
  * Transcript: `{ version, engine, source{path,size,mtimeMs}, durationSec, language, sampleRate,
  *   segments[{ start, end, lang, emotion, event, text, tokens[{ t, s }] }], energy{ hopSec, db(base64 Int8) } }`
@@ -749,10 +1234,7 @@ export async function transcribeMedia({ mediaPath, projectDir = '', language = '
       return cached
     }
   }
-  const status = await getAsrStatus({ home })
-  if (!status.ready) {
-    throw Object.assign(new Error(`本地语音识别还没有安装（${status.missing.join('、')}）。请先在「AI 剪辑」面板里一键安装，约 260 MB。`), { code: 'ASR_NOT_INSTALLED', status: 412 })
-  }
+  await ensureAsrEngine({ home, signal, onProgress })
   const cfg = resolveAsrConfig({ home })
   const { ffmpeg } = resolveBinaries()
   const workDir = join(REPO_ROOT, '.tmp', 'asr')
@@ -803,6 +1285,74 @@ export async function transcribeMedia({ mediaPath, projectDir = '', language = '
   } finally {
     try {
       rmSync(wavPath, { force: true })
+    } catch {}
+  }
+}
+
+/**
+ * Recognise many short clips (e.g. every scene's narration take) with ONE model load — no transcript cache, no
+ * timestamps. `clips`: [{ id, path }] (any audio FFmpeg reads; converted to 16 kHz mono PCM first).
+ * Returns `{ items: [{ id, ok, text, language, durationSec, decodeMs } | { id, ok: false, error }], stats }`.
+ * Throws `code: 'ASR_NOT_INSTALLED'` when the engine is missing (never waits for the install: its caller, the
+ * narration check, must not hold up a production).
+ */
+export async function transcribeClips({ clips = [], language = 'auto', signal, onChild, onProgress, home = '', tmpDir = '' } = {}) {
+  const list = (Array.isArray(clips) ? clips : []).filter((c) => c && c.path)
+  if (list.length === 0) return { items: [], stats: { loadMs: 0, decodeMs: 0, items: 0, convertMs: 0 } }
+  const status = await getAsrStatus({ home })
+  if (!status.ready) {
+    throw Object.assign(new Error(`本地语音识别还没有安装（${status.missing.join('、')}）`), { code: 'ASR_NOT_INSTALLED', status: 412 })
+  }
+  const cfg = resolveAsrConfig({ home })
+  const { ffmpeg } = resolveBinaries()
+  const workDir = resolve(tmpDir || join(REPO_ROOT, '.tmp', 'asr'), `clips-${process.pid}-${Date.now()}-${++workerSeq}`)
+  mkdirSync(workDir, { recursive: true })
+  const t0 = Date.now()
+  try {
+    const items = []
+    const failed = []
+    let next = 0
+    const convert = async () => {
+      while (next < list.length) {
+        const k = next++
+        const c = list[k]
+        if (signal?.aborted) throw createAbortError()
+        const wavPath = join(workDir, `c${k}.wav`)
+        let res
+        try {
+          res = await runCommandRedirected(
+            ffmpeg,
+            ['-hide_banner', '-nostats', '-y', '-i', c.path, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'wav', wavPath],
+            { timeoutMs: 120_000, signal, onChild },
+          )
+        } catch (err) {
+          if (signal?.aborted || err?.name === 'AbortError') throw createAbortError()
+          res = { code: -1, stderr: String(err?.message || err) }
+        }
+        if (res.code === 0 && existsSync(wavPath)) items[k] = { id: c.id, wavPath }
+        else failed.push({ id: c.id, ok: false, error: `读取音频失败：${String(res.stderr || '').trim().split(/\r?\n/).slice(-1)[0] || `退出码 ${res.code}`}` })
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(3, list.length) }, convert))
+    const convertMs = Date.now() - t0
+    const jobItems = items.filter(Boolean)
+    onProgress?.({ progress: 5, message: '正在加载识别模型...' })
+    const out = jobItems.length
+      ? await runAsrWorker(
+          { mode: 'transcribe-batch', items: jobItems, language: language || 'auto' },
+          {
+            home: cfg.home,
+            signal,
+            onChild,
+            timeoutMs: 120_000 + jobItems.length * 20_000,
+            onProgress: (p) => onProgress?.({ progress: Math.max(5, Math.min(99, Math.round(Number(p.progress) || 0))), message: p.message || '正在识别...' }),
+          },
+        )
+      : { items: [], stats: { loadMs: 0, decodeMs: 0, items: 0 } }
+    return { items: [...(out.items || []), ...failed], stats: { ...(out.stats || {}), convertMs, wallMs: Date.now() - t0 } }
+  } finally {
+    try {
+      rmSync(workDir, { recursive: true, force: true })
     } catch {}
   }
 }

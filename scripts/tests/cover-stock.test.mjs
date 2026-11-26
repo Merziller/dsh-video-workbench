@@ -41,6 +41,8 @@ Object.assign(process.env, {
   DSH_HOME: dirs.dshClient,
   DSH_VIDEO_CLOUD_MEDIA_CONFIG: join(SCR, 'cloud-media.json'),
 })
+// tests never download the local speech engine (its automatic install starts from the studio state / talk routes)
+if (process.env.DSH_ASR_AUTO_INSTALL === undefined) process.env.DSH_ASR_AUTO_INSTALL = '0'
 
 /* ------------------------------------------------------------------------------------------------ network mock */
 const PEXELS_KEY = 'pexels-test-key-0123456789-abcdefghij-SAVED'

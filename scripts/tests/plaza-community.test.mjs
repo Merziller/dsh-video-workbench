@@ -25,6 +25,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync,
 import { createServer } from 'node:http'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+if (process.env.DSH_ASR_AUTO_INSTALL === undefined) process.env.DSH_ASR_AUTO_INSTALL = '0' // never download the speech engine in tests
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const KEEP = process.argv.includes('--keep')

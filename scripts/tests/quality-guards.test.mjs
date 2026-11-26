@@ -27,6 +27,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+if (process.env.DSH_ASR_AUTO_INSTALL === undefined) process.env.DSH_ASR_AUTO_INSTALL = '0' // never download the speech engine in tests
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const SCR = join(ROOT, '.tmp', 'quality-test', new Date().toISOString().replace(/[:.]/g, '-'))

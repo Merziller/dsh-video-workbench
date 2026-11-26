@@ -1600,7 +1600,8 @@ export async function runSchemaDirectorWithDegradation({
     pacingProfile,
     narrationMode: planNarrationMode,
     hasVisualAssets: mediaCheck.length > 0,
-    bgmDurationSec: Number(planBgm?.durationSec) || 0,
+    // the whole song (durationSec is what is left after a start chosen by 配乐从精彩处开始)
+    bgmDurationSec: Number(planBgm?.songDurationSec || planBgm?.durationSec) || 0,
     referenceShotCount: Number(effectiveRefStyle?.pacingSignature?.targetShotCount || effectiveRefStyle?.shotCount || 0),
     referenceDurationSec: Number(effectiveRefStyle?.durationSec || 0),
   })
@@ -2137,7 +2138,7 @@ ${pacingLabelHint}
         pacingProfile,
         narrationMode: narrationMode || scriptData?.narrationMode || 'tts',
         hasVisualAssets: mediaNamesT2.length > 0,
-        bgmDurationSec: Number(bgmMeta?.durationSec || scriptData?.bgm?.durationSec) || 0,
+        bgmDurationSec: Number(bgmMeta?.songDurationSec || bgmMeta?.durationSec || scriptData?.bgm?.songDurationSec || scriptData?.bgm?.durationSec) || 0,
       })
       const t2CountRange = t2DurationPolicy.enforced
         ? `${t2DurationPolicy.targetShotsMin}~${t2DurationPolicy.targetShotsMax}`

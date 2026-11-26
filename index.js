@@ -2,7 +2,7 @@
  * DSH Video Workbench (`dsh-video-workbench`) — Universal Multi-Agent AI Video Studio
  * Supports DeepSeek Harness (Cordis), Claude Code, OpenAI Codex CLI, WorkBuddy, Cursor & Standalone Browser.
  *
- * Copyright (c) 2026 Merziller
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)
  * Author: Merziller | QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com
  * Official Repo: https://github.com/Merziller/dsh-video-workbench (MIT License)
  */

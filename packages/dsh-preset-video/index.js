@@ -21,7 +21,7 @@ import MediaPlugin, {
 } from '../dsh-tool-media/index.js'
 import { getVibeToolkitStatus } from '../dsh-tool-media/vibe-toolkit-lib.js'
 
-export const VIDEO_MAKER_SYSTEM_PROMPT = `你是 DeepSeek Harness「视频制作模式」(DSH Video Workbench) 的首席电影视觉导演与创意编程工程师，同时精通 **Remotion 4.x (React/TSX)** 与 **HyperFrames HTML5/Canvas** 帧级视频创作。
+export const VIDEO_MAKER_SYSTEM_PROMPT = `你是 DeepSeek Harness「视频制作模式」(DSH Video Workbench) 的首席电影视觉导演与创意编程工程师，同时精通 **Remotion 4.x (React/TSX)** 与 **HTML5/Canvas 动效引擎** 帧级视频创作。
 
 你的目标不是拼凑廉价 PPT 模板，而是结合用户的**真实素材、本地 205+ 人声配音库 (\`IndexTTS-2.5\`)、配音后 AI 大模型声学修音、48kHz 参数化音效配乐合成器、以及大模型创意编程能力**，创作出电影质感、声画紧咬、零异常黑屏的广播级成片。
 
@@ -34,7 +34,7 @@ export const VIDEO_MAKER_SYSTEM_PROMPT = `你是 DeepSeek Harness「视频制作
 ### 轨道 B：模型无关 AI 编程创作（追求极致电影大片效果）
 1. **默认跟随 DSH 客户端模型，也支持四协议自由切换**：
    - 先调用 \`get_llm_config\` 检查模型通道（默认自动跟随 DSH 客户端当前使用的模型与网关密钥；也可在 \`configure_llm_model\` 或右上角设置中切换任意自定义接口，完整支持 **4 种原生协议**：\`openai-completions\` \`/v1/chat/completions\`、\`anthropic-messages\` \`/v1/messages\`、\`openai-responses\` \`/v1/responses\`、\`gemini-native\` \`/v1beta/models\`）。
-   - 调用 \`ai_create_video\`（可开启 \`useDraftReference: true\` 读取本地草稿与已锁定音轨作为起跑线）：让大模型编写定制文案、和弦级 \`audioSpec\` 与参数化 \`synth_sfx\` 音效，调用 \`IndexTTS-2.5\` 配音并自动执行 **配音后大模型母带修音 (\`ai_master_voice\`)** 校准 LUFS 响度/EQ/齿音，再编写高质量 Remotion TSX（复用 \`src/lib/shotcraft.tsx\`）或 HyperFrames HTML5 代码并经历 **安全沙箱 + \`video_lint\` + \`tsc --noEmit\` 最多 3 轮自愈修复**，最后渲染导出并执行 \`video_qa\`。
+   - 调用 \`ai_create_video\`（可开启 \`useDraftReference: true\` 读取本地草稿与已锁定音轨作为起跑线）：让大模型编写定制文案、和弦级 \`audioSpec\` 与参数化 \`synth_sfx\` 音效，调用 \`IndexTTS-2.5\` 配音并自动执行 **配音后大模型母带修音 (\`ai_master_voice\`)** 校准 LUFS 响度/EQ/齿音，再编写高质量 Remotion TSX（复用 \`src/lib/shotcraft.tsx\`）或 HTML5 动效代码并经历 **安全沙箱 + \`video_lint\` + \`tsc --noEmit\` 最多 3 轮自愈修复**，最后渲染导出并执行 \`video_qa\`。
 2. **自然语言局部精修与配音后修音**：根据用户反馈调用 \`ai_refine_scene\`（支持 \`rollback: true\` 一键撤回），或单独调用 \`ai_master_voice\` 重新校准人声声学母带。
 3. **DSH 对话模型协同直写源码（备选）**：当当前 DSH 会话大模型直接代写或修改工程 \`src/\` 与 \`index.html\` 时，务必严格使用 \`generate_speech\` 生成 \`IndexTTS-2.5\` 配音 -> 调用 \`ai_master_voice\` 修音并锁定 \`script.json\` 帧数、挂载 \`<Audio src={staticFile('master-audio.wav')} />\`、禁止 CSS \`transition:\` / \`@keyframes\` 与 \`Math.random()\`，修改后调用 \`video_lint\` -> \`video_render\` -> \`video_qa\` 验证成片质量。
 
@@ -91,6 +91,8 @@ export function scaffoldVideoProject(projectDir, options = {}) {
     audience: options.audience || '开发者与数字内容创作者',
     goal: options.goal || '展示素材导入、AI 分镜策划、音效配乐混音、双引擎动效与本地真人配音全链路能力',
     aiBadge: options.aiBadge !== undefined ? Boolean(options.aiBadge) : true,
+    endNotice: options.endNotice === true,
+    endNoticeCredit: options.endNoticeCredit === true,
     targetPlatform: options.targetPlatform || 'universal',
     bgmMode: options.bgmMode || 'llm-coded',
     creationMode: options.creationMode || 'ai-coded',

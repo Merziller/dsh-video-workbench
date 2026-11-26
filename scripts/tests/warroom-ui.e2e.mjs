@@ -49,6 +49,8 @@ mkdirSync(join(scratch, 'ws'), { recursive: true })
 mkdirSync(join(scratch, 'home'), { recursive: true })
 process.env.DSH_VIDEO_WORKSPACE = join(scratch, 'ws')
 process.env.DSH_VIDEO_HOME = join(scratch, 'home')
+// tests never download the local speech engine (its automatic install starts from the studio state / talk routes)
+if (process.env.DSH_ASR_AUTO_INSTALL === undefined) process.env.DSH_ASR_AUTO_INSTALL = '0'
 const { handleWorkbenchApiRequest } = await import('../../packages/dsh-web-video-workbench/lib/index.js')
 // the studio runner's own guard + forwarding, so this test exercises exactly what the user's studio runs
 const { standaloneShellHtml, apiRequestRejection, forwardApiRequest, sendJson, API_FORBIDDEN_MESSAGE } = await import('../dsh-runner.mjs')
@@ -287,6 +289,42 @@ const TEXT_ISSUES_IN = (sel, avoidSel = '') => `(() => {
   return bad.slice(0, 30) })()`
 // each skin's own 「全屏观看」 entry (棱镜: finder bar 「全屏」, 星舰: monitor ⤢, 墨韵: ⤢ on the monitor corner)
 const FILM_ENTRY = { 'prism-lab': '#vfFull', 'nova-deck': '#mon-exp', 'ink-loom': '#monFull' }
+// the product name in each skin's top bar: shown exactly once, on one line, never cut off, covered or overlapping other
+// top-bar text / controls, and the top bar never overflows. Also checked as DSH shows it (返回对话) while a long task runs
+// (the busy indicator with a long text): each skin's 返回 + busy elements must then be visible.
+const PRODUCT_NAME = '禾杨视频工坊'
+const TOPBAR_HOST_BITS = { 'prism-lab': ['#backBtn', '#busy'], 'nova-deck': ['#tb-back', '#tb-busy'], 'ink-loom': ['#hostBack', '#busyPill'] }
+const TOPBAR_BUSY_TEXT = '正在上传素材 3/12：秋季新品宣传片-咖啡馆外景-第二机位-4K.mp4'
+const TOPBAR_BRAND = (skin) => `(() => {
+  const w = ${SW}; if (!w) return { problems: ['no skin window'] }; const d = w.document; const tb = d.getElementById('topbar'); if (!tb) return { problems: ['no #topbar'] }
+  const shown = (e) => { if (!e) return false; let op = 1; for (let p = e; p && p !== d.documentElement; p = p.parentElement) { const s = w.getComputedStyle(p)
+      if (s.display === 'none' || s.visibility === 'hidden') return false; op *= +s.opacity; if (op <= 0.05) return false }
+    const r = e.getBoundingClientRect(); return r.width > 1 && r.height > 1 }
+  const own = (e) => [...e.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim()
+  const names = [...tb.querySelectorAll('*')].filter((e) => own(e) === ${JSON.stringify(PRODUCT_NAME)} && shown(e))
+  const res = { host: ${JSON.stringify(TOPBAR_HOST_BITS[skin] || [])}.map((s) => shown(d.querySelector(s))), problems: [] }
+  if (tb.scrollWidth > tb.clientWidth + 1) res.problems.push('top bar overflows by ' + (tb.scrollWidth - tb.clientWidth) + ' px')
+  if (names.length !== 1) { res.problems.push(names.length ? 'name shown ' + names.length + ' times' : 'name not shown'); return res }
+  const e = names[0], er = e.getBoundingClientRect(), rg = d.createRange(); rg.selectNodeContents(e); const tr = rg.getBoundingClientRect()
+  res.rect = [Math.round(er.left), Math.round(er.top), Math.round(er.width), Math.round(er.height)]
+  if (new Set([...rg.getClientRects()].filter((q) => q.width > 0.5).map((q) => Math.round(q.top))).size !== 1) res.problems.push('wraps')
+  if (e.scrollWidth > e.clientWidth + 1) res.problems.push('wider than its box')
+  for (let p = e.parentElement; p && p !== d.documentElement; p = p.parentElement) { const s = w.getComputedStyle(p)
+    if (s.overflowX !== 'visible' || s.overflowY !== 'visible') { const c = p.getBoundingClientRect()
+      if (er.left < c.left - 0.5 || er.right > c.right + 0.5 || er.top < c.top - 0.5 || er.bottom > c.bottom + 0.5) { res.problems.push('cut off by ' + (p.id ? '#' + p.id : String(p.className || p.tagName))); break } } }
+  if (er.left < -0.5 || er.top < -0.5 || er.right > w.innerWidth + 0.5 || er.bottom > w.innerHeight + 0.5) res.problems.push('outside the window')
+  for (const o of tb.querySelectorAll('*')) { if (o === e || o.contains(e) || e.contains(o) || !shown(o)) continue
+    if (!own(o) && !/^(BUTTON|INPUT|SELECT|A|SVG)$/i.test(o.tagName) && o.getAttribute('role') !== 'button') continue
+    const q = o.getBoundingClientRect(), ox = Math.min(q.right, er.right) - Math.max(q.left, er.left), oy = Math.min(q.bottom, er.bottom) - Math.max(q.top, er.top)
+    if (ox > 2 && oy > 2) res.problems.push('overlaps ' + (own(o).slice(0, 14) || o.getAttribute('aria-label') || o.tagName)) }
+  for (const fx of [0.5, 0.1, 0.9]) { const hit = d.elementFromPoint(tr.left + tr.width * fx, tr.top + tr.height / 2)
+    if (hit && hit !== e && !e.contains(hit) && !hit.contains(e)) res.problems.push('covered by ' + (hit.id ? '#' + hit.id : String(hit.className || hit.tagName).slice(0, 30))) }
+  return res })()`
+// post the current host state back into the skin as DSH sends it while a task runs (fake = true), or the saved real one
+const POST_HOST_STATE = (fake) => `(() => { const f = document.querySelector('iframe'), w = f && f.contentWindow; if (!w || !w.PK || !w.PK.state) return false
+  if (!window.__e2eRealState) window.__e2eRealState = JSON.parse(JSON.stringify(w.PK.state))
+  const st = JSON.parse(JSON.stringify(window.__e2eRealState)); ${fake ? `st.host = 'dsh'; st.busy = ${JSON.stringify(TOPBAR_BUSY_TEXT)};` : 'window.__e2eRealState = null;'} st.ts = Date.now()
+  w.postMessage({ type: 'dsh-vw/state', state: st }, '*'); return true })()`
 
 // ---------------------------------------------------------------- checks
 const results = []
@@ -407,6 +445,112 @@ try {
     check('a finished film reaches the skins (preview.hasMp4 + mp4Url)', Boolean(filmUrl), made ? String(filmUrl) : 'ffmpeg could not make the test clip')
   }
 
+  // 长视频拆条 with a finished batch: a separate project with a recording, a saved clip plan and two rendered clips
+  // (made by the test, no model / speech engine needed): the panel shows the clip cards, plays them, and its controls
+  // never overlap at any viewport. The main test project is switched back afterwards.
+  {
+    const { resolveBinaries } = await import('../../packages/shared/index.js')
+    const scDir = await evaluate(`${SW}.PK.action('createProject', { title: 'E2E 拆条工程' }, { timeout: 60000 }).then((d) => d && d.dir)`)
+    const scAbs = scDir ? (isAbsolute(scDir) ? scDir : join(process.env.DSH_VIDEO_WORKSPACE, scDir)) : ''
+    let ok = false
+    if (scAbs) {
+      const ff = resolveBinaries().ffmpeg
+      const rec = join(scAbs, 'assets', 'videos', 'interview.mp4')
+      mkdirSync(dirname(rec), { recursive: true })
+      ok = spawnSync(ff, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=300:sample_rate=48000', '-t', '12', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', rec], { windowsHide: true }).status === 0
+      const am = await import('../../packages/dsh-tool-media/asset-manager.js')
+      await am.importAssets({ projectDir: scAbs, sources: [rec] })
+      const items = am.readAssets(scAbs).items || []
+      const it = items.find((x) => x.type === 'video')
+      const sc = await import('../../packages/dsh-tool-media/short-clips.js')
+      const files = sc.clipFilesFor(scAbs, join(scAbs, it.path))
+      mkdirSync(files.outDir, { recursive: true })
+      const rel = (p) => p.slice(scAbs.length + 1).replace(/\\/g, '/')
+      const clips = []
+      const rendered = {}
+      for (const [k, [title, size]] of [['先找观点最鲜明的一段', '1080x1920'], ['新手最容易犯的两个错误，第二个很多人都没注意到', '1080x1920']].entries()) {
+        const index = k + 1
+        const v = join(files.outDir, `${String(index).padStart(2, '0')}-clip.mp4`)
+        const c = join(files.outDir, `${String(index).padStart(2, '0')}-clip.jpg`)
+        spawnSync(ff, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', `testsrc2=size=${size}:rate=30`, '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', v], { windowsHide: true })
+        spawnSync(ff, ['-hide_banner', '-loglevel', 'error', '-y', '-i', v, '-frames:v', '1', c], { windowsHide: true })
+        clips.push({ index, title, reason: '观点鲜明、讲得完整', score: index === 1 ? 0.86 : 0.64, tags: ['剪辑', '短视频'], selectedBy: 'score', enabled: true, startRow: index * 3, endRow: index * 3 + 2, firstWord: index * 30, lastWord: index * 30 + 20, sourceStart: index * 4, sourceEnd: index * 4 + 3.5, spanSec: 3.5, text: '这是一段测试文字稿，用来检查卡片里的长文字不会撑破布局，也不会和按钮重叠。'.repeat(2) })
+        rendered[index] = { key: 'e2e', video: rel(v), cover: rel(c), srt: '', durationSec: 3, layout: 'fit', canvas: { width: 1080, height: 1920, aspect: '9:16' }, loudness: { mode: 'measured' } }
+      }
+      mkdirSync(dirname(files.plan), { recursive: true })
+      writeFileSync(files.plan, JSON.stringify({ version: 1, source: { path: it.path, name: 'interview.mp4', assetId: it.id, durationSec: 12, width: 640, height: 360, hasVideo: true }, transcriptHash: 'e2e', language: 'zh', platform: 'douyin', count: 0, focus: '', cut: {}, profile: {}, render: { layout: 'auto', captions: 'auto', title: true, progressBar: true, accent: '#FFD400' }, clips, found: { candidates: 2, windows: 1, failedWindows: 0, rows: 12, dropped: [] }, rendered, burned: { burned: false }, createdAt: new Date().toISOString() }))
+    }
+    await evaluate(`${SW}.PK.action('refresh', {}).then(() => true, () => false)`)
+    await viewport(1600, 900)
+    await evaluate(`(() => { const PK = ${SW}.PK; PK.closeAll(); PK.open('shortClips'); return true })()`)
+    const cards = await waitFor(`(() => { const top = ${SW}.PK.topFrame(); if (!top || top.id !== 'shortClips') return null; const n = top.body.querySelectorAll('.pk-sc-card').length; const v = top.body.querySelectorAll('.pk-sc-card video').length; return n >= 2 ? { n, v, text: [...top.body.querySelectorAll('.pk-sc-card input')].some((i) => i.value === '先找观点最鲜明的一段') } : null })()`, 20000, 'clip cards').catch((e) => ({ error: e.message }))
+    for (const [w, hgt] of VIEWPORTS) {
+      await viewport(w, hgt)
+      await sleep(900)
+      const issues = await evaluate(OVERLAP)
+      await shot(`shortClips-filled-${w}x${hgt}`)
+      check(`长视频拆条 with clips @${w}x${hgt}: cards with videos, no overlaps`, ok && cards && cards.n === 2 && cards.v === 2 && cards.text && issues.length === 0, JSON.stringify({ ok, cards, issues }))
+    }
+    // switching a clip off goes to the server and greys the card
+    await viewport(1600, 900)
+    const off = await evaluate(`(async () => { const top = ${SW}.PK.topFrame(); const sw = top && top.body.querySelector('.pk-sc-card [role="switch"]'); if (!sw) return 'no switch'; sw.click(); return 'clicked' })()`)
+    const greyed = await waitFor(`(() => { const top = ${SW}.PK.topFrame(); return top && top.body.querySelector('.pk-sc-card.pk-sc-off') ? true : null })()`, 10000, 'card off').catch(() => false)
+    check('长视频拆条: switching a clip off is saved and shown', off === 'clicked' && greyed === true, String(off))
+    await evaluate(`${SW}.PK.closeAll()`)
+    await evaluate(`${SW}.PK.action('selectProject', { dir: ${JSON.stringify(created || '')} }, { timeout: 60000 }).then(() => true, () => false)`)
+    await waitFor(`${SW}.PK.state.project && ${SW}.PK.state.project.dir === ${JSON.stringify(created || '')}`, 20000, 'back to the main project').catch(() => {})
+  }
+
+  // 本地语音识别自动准备: the shared install (a fake installer in this process — nothing is downloaded, the engine folders
+  // are scratch folders) shown while it runs and after it failed, in 口播粗剪 and 长视频拆条, without overlaps at any viewport
+  {
+    const sr = await import('../../packages/dsh-tool-media/speech-recognition.js')
+    const fakeRoot = join(scratch, 'asr-fake')
+    let release = null
+    const gate = new Promise((r) => (release = r))
+    sr.setAsrInstallerForTests(
+      async ({ onProgress }) => {
+        onProgress?.({ progress: 37, message: '下载 识别模型: 84 / 228 MB' })
+        if ((await gate) === 'fail') throw Object.assign(new Error('getaddrinfo ENOTFOUND hf-mirror.com'), { code: 'ENOTFOUND' })
+        return { ok: false }
+      },
+      { paths: { vendor: join(fakeRoot, 'vendor'), defaultHome: join(fakeRoot, 'default'), recommended: join(fakeRoot, 'recommended') } },
+    )
+    sr.startAsrInstall({ trigger: 'auto', mirror: 'cn' }).promise.catch(() => {})
+    const panels = [['talkEdit', '口播粗剪'], ['shortClips', '长视频拆条']]
+    const showPanel = async (id, re, label) => {
+      await viewport(1600, 900)
+      await evaluate(`(() => { const PK = ${SW}.PK; PK.closeAll(); PK.open(${JSON.stringify(id)}); return true })()`)
+      return waitFor(`(() => { const top = ${SW}.PK.topFrame(); if (!top || top.id !== ${JSON.stringify(id)}) return null; return ${re}.test(top.body.innerText) ? true : null })()`, 20000, label).catch(() => false)
+    }
+    for (const [id, name] of panels) {
+      // 口播粗剪: 「正在自动准备本地语音识别 … 37%」 (meter); 长视频拆条: 「本地语音识别正在自动准备：37%…」 (note)
+      const seen = await showPanel(id, '/(正在自动准备本地语音识别|本地语音识别正在自动准备)[\\s\\S]*37%|37%[\\s\\S]*正在自动准备本地语音识别/', `${id} preparing`)
+      for (const [w, hgt] of VIEWPORTS) {
+        await viewport(w, hgt)
+        await sleep(700)
+        const issues = await evaluate(OVERLAP)
+        await shot(`asr-preparing-${id}-${w}x${hgt}`)
+        check(`本地语音识别自动准备中 · ${name} @${w}x${hgt}: progress shown, nothing to click, no overlaps`, seen === true && issues.length === 0, JSON.stringify({ seen, issues }))
+      }
+    }
+    release('fail')
+    for (let i = 0; i < 50 && sr.getAsrInstallState().state !== 'failed'; i++) await sleep(100)
+    check('本地语音识别: a failed automatic install is kept with a plain-Chinese reason', sr.getAsrInstallState().state === 'failed' && /网络连不上下载服务器/.test(sr.getAsrInstallState().error), JSON.stringify(sr.getAsrInstallState()).slice(0, 300))
+    for (const [id, name] of panels) {
+      const seen = await showPanel(id, '/网络连不上下载服务器[\\s\\S]*重试|重试[\\s\\S]*网络连不上下载服务器/', `${id} failed`)
+      for (const [w, hgt] of VIEWPORTS) {
+        await viewport(w, hgt)
+        await sleep(700)
+        const issues = await evaluate(OVERLAP)
+        await shot(`asr-failed-${id}-${w}x${hgt}`)
+        check(`本地语音识别没准备好 · ${name} @${w}x${hgt}: reason + 「重试」, no overlaps`, seen === true && issues.length === 0, JSON.stringify({ seen, issues }))
+      }
+    }
+    sr.setAsrInstallerForTests(null)
+    await evaluate(`${SW}.PK.closeAll()`)
+  }
+
   // a toast must never cover the footer buttons of the open panel (skins dock toasts away from panel footers).
   // Returns null when the open panel has no footer buttons, else a list of problems.
   const TOAST_COVER = `(async () => {
@@ -459,6 +603,28 @@ try {
       const mainIssues = await evaluate(MAIN_OVERLAP)
       await shot(`${skin}-main-${w}x${hgt}`)
       check(`[${skin}] main screen @${w}x${hgt}`, mainIssues.length === 0 && consoleErrors.length === beforeMain, [mainIssues.join(' | '), consoleErrors.slice(beforeMain).join(' | ')].filter(Boolean).join(' ; '))
+      // 顶栏产品名「禾杨视频工坊」: in the studio, then as DSH shows it (返回对话) while a long task runs
+      {
+        const beforeBrand = consoleErrors.length
+        const plain = await evaluate(TOPBAR_BRAND(skin))
+        let inDsh = null
+        for (let k = 0; k < 4; k++) {
+          // a regular state push from the host can land in between: post again until both DSH bits are shown
+          await evaluate(POST_HOST_STATE(true))
+          await sleep(700)
+          inDsh = await evaluate(TOPBAR_BRAND(skin))
+          if (inDsh.host.length && inDsh.host.every(Boolean)) break
+        }
+        const dshText = await evaluate(TEXT_ISSUES_IN('#topbar'))
+        await shot(`${skin}-topbar-dsh-busy-${w}x${hgt}`)
+        await evaluate(POST_HOST_STATE(false))
+        await sleep(500)
+        check(
+          `[${skin}] top bar shows ${PRODUCT_NAME} once, on one line, nothing on it @${w}x${hgt} (studio + DSH while busy)`,
+          plain.problems.length === 0 && inDsh && inDsh.host.length && inDsh.host.every(Boolean) && inDsh.problems.length === 0 && dshText.length === 0 && consoleErrors.length === beforeBrand,
+          JSON.stringify({ plain, inDsh, dshText, errors: consoleErrors.slice(beforeBrand) }),
+        )
+      }
       // 全屏观看: the skin's own button opens the shared film viewer over the whole window; Esc closes it again
       if (filmUrl) {
         const beforeCine = consoleErrors.length

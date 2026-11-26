@@ -869,7 +869,7 @@ export function writeLockedRegistryBlock(absDir, modules = []) {
 }
 
 // ---------------------------------------------------------------------------
-// HyperFrames HTML protection for locked scenes (<template data-scene-id> blocks)
+// HTML5 motion engine protection for locked scenes (<template data-scene-id> blocks)
 // ---------------------------------------------------------------------------
 
 /** HTML engine locked-scene store (tracked by project history so restores stay consistent). */
@@ -880,7 +880,7 @@ function htmlSceneBlockRe(sceneId) {
 }
 
 /**
- * HyperFrames HTML engine: keep locked scenes' `<template data-scene-id="…">` blocks exactly as they were before an
+ * HTML5 motion engine: keep locked scenes' `<template data-scene-id="…">` blocks exactly as they were before an
  * AI rewrite of `index.html` (the whole page is regenerated as one file, so file-level protection is not enough).
  * @returns {{ html: string, restored: string[], missing: string[] }} `missing` = locked blocks the new page dropped
  */

@@ -1618,7 +1618,11 @@
     const beat = U.num(bgm.bpm) > 0
       ? [`已测定节拍 ${Math.round(U.num(bgm.bpm))} BPM`, bgm.phaseSec !== undefined ? `首拍 ${U.num(bgm.phaseSec).toFixed(2)} 秒` : '', Array.isArray(bgm.downbeats) ? `${bgm.downbeats.length} 个重拍` : '', Array.isArray(bgm.drops) ? `${bgm.drops.length} 个高潮突降点` : ''].filter(Boolean).join(' · ')
       : ''
-    return wrapSub(ui.item({ key: 'a60-curbgm', icon: 'music', title: `当前配乐：${lib ? assetName(lib) : U.baseName(rel)}`, sub: [src, beat].filter(Boolean).join(' · '), tip: rel, right: [ui.playBtn(PK.assetUrl(rel), { label: '试听' })] }))
+    // 配乐从精彩处开始: where the last production started the song (beats / drops above are already in film time)
+    const fromSec = Math.round(U.num(bgm.startSec))
+    const from = fromSec > 0 ? `本片配乐从 ${Math.floor(fromSec / 60)}:${String(fromSec % 60).padStart(2, '0')} 开始` : ''
+    const tip = [rel, fromSec > 0 && bgm.startNote ? String(bgm.startNote) : ''].filter(Boolean).join('\n')
+    return wrapSub(ui.item({ key: 'a60-curbgm', icon: 'music', title: `当前配乐：${lib ? assetName(lib) : U.baseName(rel)}`, sub: [src, from, beat].filter(Boolean).join(' · '), tip, right: [ui.playBtn(PK.assetUrl(rel), { label: '试听' })] }))
   }
   function bgmSection(ctx, L, s) {
     const mode = String(dv(L, 'bgmMode') || 'llm-coded')
@@ -1654,6 +1658,15 @@
             )
           : ui.note('还没有上传配乐。上传一首你喜欢的音乐，会自动测量节拍并作为背景音乐。', { level: 'info' }),
         ui.row([ui.btn('上传新的 BGM', () => pickAndImport(ctx, 'bgm'), { icon: 'upload', size: 'sm', busyText: '上传中…' }), ui.btn('去素材库', () => s.go('assets'), { size: 'sm', kind: 'ghost', icon: 'chevL' })], { wrap: true }),
+        // 配乐从精彩处开始 (script.bgm.startFrom 'auto' | 'head'); 口播剪辑 keeps the music as a light bed
+        String(dv(L, 'productionType') || '') === 'talk-edit'
+          ? null
+          : ui.toggle({
+              value: String(dv(L, 'bgmStartFrom') || 'auto') !== 'head',
+              label: '配乐从精彩处开始',
+              hint: '歌比成片长很多时，自动从合适的小节开始播放：跳过长前奏，让高潮落在片中合适的位置。关掉就从歌曲开头播放。下次出片时生效。',
+              onChange: (v) => guard(() => setD(ctx, L, 'bgmStartFrom', v ? 'auto' : 'head')),
+            }),
       ])
     } else {
       const b = bindText(ctx, L, 'bgmTtsPrompt', String(D().bgmTtsPrompt || ''))
@@ -1729,6 +1742,8 @@
     const vibeReady = vibe.filter((t) => t && t.available).length
     const fxHint = `${vibe.length ? `Vibecoding 工具箱（本机就绪 ${vibeReady}/${vibe.length}）` : 'Vibecoding 工具箱'}由 AI 按每一镜的需要自动调用，不用手动挑选；工具满足不了的效果，AI 会直接写代码实现。这里只定整体视效偏好。`
     const badgeOn = Boolean(dv(L, 'aiBadgeEnabled'))
+    const endOn = dv(L, 'endNotice') === true
+    const creditOn = dv(L, 'endNoticeCredit') === true
     const reviewOn = dv(L, 'visualReview') !== false
     const reviewFineOn = dv(L, 'visualReviewFine') !== false
     const badgePos = String(dv(L, 'aiBadgePosition') || 'top-right')
@@ -1773,6 +1788,20 @@
             ui.field({ label: '角标位置', en: 'POSITION' }, ui.select({ key: 'a60-badgepos', value: badgePos, options: withHints(OP('aiBadgePositions'), HINTS.badge), showHint: true, searchable: false, aria: '角标位置', onChange: (v) => guard(() => setD(ctx, L, 'aiBadgePosition', v)) })),
             ui.field({ label: '角标文字', en: 'TEXT', hint: '最多 40 个字' }, badgeTa),
           )
+        : null,
+      ui.toggle({
+        value: endOn,
+        label: '片尾声明（最后一行字）',
+        hint: '在成片最后约 2 秒显示一行「本视频含 AI 生成内容：……」。默认关闭：画面角落的 AI 角标已经标明这是 AI 作品；发布包里另有一段 AI 声明，发布时可以复制到作品描述里',
+        onChange: (v) => guard(() => setD(ctx, L, 'endNotice', v)),
+      }),
+      endOn
+        ? ui.toggle({
+            value: creditOn,
+            label: '片尾署名插件',
+            hint: `打开后这一行写成「本视频由${(PK.BRAND && PK.BRAND.productName) || '禾杨视频工坊'}创作：……」，导出发布包时面板里可复制的那段合规声明也带这句署名（发布文案本身始终不带）。默认关闭，你的作品不带插件署名`,
+            onChange: (v) => guard(() => setD(ctx, L, 'endNoticeCredit', v)),
+          })
         : null,
     )
   }
@@ -2017,6 +2046,8 @@
       aiBadgeEnabled: Boolean(d.aiBadgeEnabled),
       aiBadgePosition: d.aiBadgePosition || 'top-right',
       aiBadgeText: d.aiBadgeText || '',
+      endNotice: d.endNotice === true,
+      endNoticeCredit: d.endNoticeCredit === true,
       pacingMode: d.pacingMode || 'auto',
       durationMode: d.durationMode === 'custom' ? 'custom' : 'auto',
       targetDurationSec: d.durationMode === 'custom' ? clampInt(d.targetDurationSec, 15, 600, 120) : 0,
@@ -2270,7 +2301,7 @@
           ])
         : ui.note('还没有剪辑过。可以先打开「AI 剪辑」逐句看看要剪掉哪些地方（能一键恢复），也可以直接一键出片。', { level: 'info' }),
       ui.row([ui.btn('打开 AI 剪辑：逐句查看与恢复', () => PK.open('talkEdit'), { kind: 'primary', icon: 'film' })], { wrap: true }),
-      ui.hint('第一次使用需要安装「本地语音识别」（免费、离线，约 260 MB），在 AI 剪辑面板里一键安装。'),
+      ui.hint('第一次使用时会自动准备「本地语音识别」（免费、离线，约 260 MB，只需一次，不用你操作），准备进度可以在 AI 剪辑面板里看到。'),
     )
   }
   function produceTalkSection(ctx) {

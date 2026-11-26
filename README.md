@@ -1,4 +1,4 @@
-# 🎬 DSH Video Workbench (`dsh-video-workbench` · v0.7.0)
+# 🎬 禾杨视频工坊 · DSH Video Workbench (`dsh-video-workbench` · v0.8.0)
 
 > **全智能体通用双引擎 AI 视频全链路工作台（不限 DSH！支持 DeepSeek Harness · Claude Code · OpenAI Codex CLI · WorkBuddy · Cursor · Windsurf · Cline · Antigravity · 无黑窗静默后台独立网页）**  
 > **Universal Multi-Agent Dual-Engine AI Video Studio — CinePulse Hub (影核广场) `MOTION.md` Template Plaza, Cross-Genre Adaptive Beat-Sync & 48kHz SFX Mastering, Reference vs Remake Split/Curtain Sync Compare Player, 4-Track Visual Timeline, Optional BYOK Cloud Image/Video/Music (`Seedream` / `Seedance` / `Kling` / `Flux` / `Suno` / `MiniMax` + Open Custom HTTP Protocol), & Optional 1-Click Local TTS Installer**
@@ -6,12 +6,33 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Agents: DSH | Claude Code | Codex | WorkBuddy | Cursor](https://img.shields.io/badge/Agents-DSH%20%7C%20Claude%20Code%20%7C%20Codex%20%7C%20WorkBuddy%20%7C%20Cursor-7c3aed.svg)](#-四全智能体安装与接入指南不限-dshuniversal-multi-agent-setup)
 [![Engine: Remotion 4.x + Three.js 3D & HTML5](https://img.shields.io/badge/Engine-Remotion%204.x%20%2B%20Three.js%203D%20%7C%20HTML5-38bdf8.svg)](#)
+[![Studio: 禾杨智绘](https://img.shields.io/badge/%E5%87%BA%E5%93%81-%E7%A6%BE%E6%9D%A8%E6%99%BA%E7%BB%98-c2410c.svg)](#-联系作者与原创版权声明-author--copyright)
 [![Author: Merziller](https://img.shields.io/badge/Original%20Author-Merziller-f59e0b.svg)](#-联系作者与原创版权声明-author--copyright)
 [![QQ: 1411574209](https://img.shields.io/badge/QQ-1411574209-12B7F5.svg)](#-联系作者与原创版权声明-author--copyright)
 [![WeChat: Merziller](https://img.shields.io/badge/WeChat-Merziller-07C160.svg)](#-联系作者与原创版权声明-author--copyright)
 [![Gmail: k26789228@gmail.com](https://img.shields.io/badge/Gmail-k26789228%40gmail.com-EA4335.svg)](#-联系作者与原创版权声明-author--copyright)
 
-> 🛡️ **原创开源署名声明**：本项目由 **Merziller** 原创开源并依据 [MIT 协议](./LICENSE) 免费提供使用。任何二次分发、修改、打包、转载或商业/演示使用，**必须完整保留原作者署名与联系方式（作者：`Merziller` ｜ QQ：`1411574209` ｜ 微信：`Merziller` ｜ Gmail：`k26789228@gmail.com` ｜ 官方仓库：`https://github.com/Merziller/dsh-video-workbench`）**，严禁抹除作者信息冒充原创。详见 [`NOTICE`](./NOTICE)。
+> 🛡️ **原创开源署名声明**：**禾杨视频工坊** 由 **Merziller（子墨）** 与旗下 **绍兴市柯桥区禾杨智绘软件开发工作室（禾杨智绘）** 原创研发，依据 [MIT 协议](./LICENSE) 免费开源（`Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)`）。任何二次分发、修改、打包、转载或商业/演示使用，**必须完整保留双重版权署名与联系方式（出品：绍兴市柯桥区禾杨智绘软件开发工作室 ｜ 作者：`Merziller` ｜ QQ：`1411574209` ｜ 微信：`Merziller` ｜ Gmail：`k26789228@gmail.com` ｜ 官方仓库：`https://github.com/Merziller/dsh-video-workbench`）**，严禁抹除署名冒充原创。商业免配整合包与企业定制由工作室官方提供。详见 [`NOTICE`](./NOTICE)。
+
+---
+
+## 🆕 `v0.8.0` 更新：长视频拆条 · 配乐从精彩处开始 · 配音回听校验 · 片尾声明改为可选
+
+> - **✂️ AI 剪辑 · 长视频拆条**：把你自己的访谈、播客、直播回放、课程录像，剪成多条能单独发布的短视频（抖音 / 视频号 / 小红书 / 快手 / B站）。工具菜单打开 **「AI 剪辑 · 长视频拆条」**：
+>   - 先在本机识别说话内容（不花钱），再请大模型挑出精彩片段：每 1 小时内容只调用 **1 次** 大模型（也可以选「由当前智能体代写」）。
+>   - 每个片段都会自动检查：从一个问题或观点的第一句开始、讲完才结束，不停在半句话上，不以下一个问题结尾，开头不会是「所以」「他」这种接着前文的话。
+>   - 标题可以直接改，觉得开头或结尾不完整就点「往前一句 / 往后一句」，不想要的关掉。
+>   - 出片在本机完成：片段里的停顿、口头禅、重复和重录也会自动剪掉；竖屏 / 3:4 / 横屏三种画面（模糊背景、访谈小窗、裁成竖屏），标题、字幕（关键词变色）、进度条，声音统一到平台标准音量（−14 LUFS）。原视频已经带字幕时会自动发现，不再重复加。
+>   - 每条都有封面、字幕文件，还有一份「发布文案.md」（标题、简介、话题）。只用你素材库里的视频，插件不会去网上下载，也不会帮你自动发布。
+> - **🎙️ 本地语音识别自动准备好**：第一次打开工作台时，插件会在后台自动下载并装好本地语音识别（约 260 MB，国内镜像，只需一次，以后升级插件不用重新下载）；口播粗剪、长视频拆条、配音回听校验都不用再手动安装。还没装好时也可以直接点「找精彩片段」等按钮，会等它装好再继续。不想自动下载：在 `.env` 里写 `DSH_ASR_AUTO_INSTALL=0`（之后仍可在「口播粗剪」里手动安装）。
+> - **🏷️ 品牌升级 · 禾杨视频工坊**：中文产品名改为「禾杨视频工坊」，DSH 侧边栏、三套皮肤的顶栏和窗口标题统一显示；由 **禾杨智绘**（绍兴市柯桥区禾杨智绘软件开发工作室）出品，「使用帮助」弹窗页脚和「关于」里有完整署名。版权署名升级为工作室与原创作者双署名：`Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)`，依旧 MIT 开源。包名、命令、MCP 工具名、接口和环境变量都没变，旧工程和旧配置照常使用。
+> - **🎵 配乐从精彩处开始**：上传的歌比成片长很多时，配乐会从合适的小节开始播放，跳过长前奏，让高潮落在片中合适的位置；Vlog 高光和模板填空也一样。不想要的话，在「背景音乐」里关掉「配乐从精彩处开始」即可从头播放。
+> - **🎧 配音回听校验**：AI 配完音后，用本机语音识别把每一幕听一遍，和文案比对：漏读、重复、数字读错会自动重配一次，仍不对就在任务日志里提醒你（例如「第 4 幕配音可能漏读：“……”」），也写进质检报告。只是提醒，不会让出片失败；本地语音识别第一次会在后台自动安装，装好之前这一步先跳过，每幕约 0.25 秒。
+> - **🏷️ 片尾声明改为可选**：成片最后那一行「本视频含 AI 生成内容…」和里面的插件署名，现在 **默认不显示**；需要时在「画面规格」里打开（署名是单独的开关）。画面角标「AI 辅助创作」照旧，可在同一处关闭。插件本身的开源署名（LICENSE / NOTICE）不变。
+> - **📝 发布文案只写你的内容**：发布包里的标题、正文和话题标签，只用你这条视频自己的标题、主题和分镜标题；不再自动加工具宣传话题；AI 内容说明会如实写出画面里有没有角标和片尾声明。
+> - **其他**：口播粗剪新增「导出整段字幕 / 文稿」（原视频时间的 SRT 和 TXT）；修复了自带 FFmpeg 测不出响度、导致纯音乐卡点片音量校准不准的问题；HTML 引擎的名称改为「HTML5 动效引擎」。
+> - **🤖 智能体接口**：新增 MCP 工具 `make_short_clips`（`find` → `update` → `render`）；`run_agent_pipeline` / `ai_create_video` 新增 `endNotice`、`endNoticeCredit`、`bgmStartFrom`（`auto` / `head`）、`narrationCheck` 参数。现在共 49 个 MCP 工具。
+> - **借鉴与致谢**：长视频拆条的挑片设计参考了开源项目 [AutoClip](https://github.com/zhouxiaoka/autoclip)（MIT 协议，已在 NOTICE 中注明），代码和提示词均为本插件重新编写。
 
 ---
 
@@ -88,8 +109,8 @@
 > - **仓库内教程视频**：[`docs/tutorial/dsh-video-workbench-tutorial.mp4`](./docs/tutorial/dsh-video-workbench-tutorial.mp4)（1080P · 3 分 17 秒 · 由本插件全链路自动生成）
 >   - 📌 这段教程录制于 v0.5 旧版界面，按钮位置和现在不同；现在的界面操作请以下文「三、工作台使用指南」为准。
 > - **GitHub Release 高速直链下载**：
->   - 插件全能单包：[`dsh-video-workbench-0.7.0.tgz`](https://github.com/Merziller/dsh-video-workbench/releases/download/v0.7.0/dsh-video-workbench-0.7.0.tgz)
->   - 可选本地配音一键安装包（`Edge-TTS` / `IndexTTS-2.5` / `GPT-SoVITS`）：[`dsh-tts-installer-pack-0.7.0.zip`](https://github.com/Merziller/dsh-video-workbench/releases/download/v0.7.0/dsh-tts-installer-pack-0.7.0.zip)
+>   - 插件全能单包：[`dsh-video-workbench-0.8.0.tgz`](https://github.com/Merziller/dsh-video-workbench/releases/download/v0.8.0/dsh-video-workbench-0.8.0.tgz)
+>   - 可选本地配音一键安装包（`Edge-TTS` / `IndexTTS-2.5` / `GPT-SoVITS`）：[`dsh-tts-installer-pack-0.8.0.zip`](https://github.com/Merziller/dsh-video-workbench/releases/download/v0.8.0/dsh-tts-installer-pack-0.8.0.zip)
 >   - 1080P 教程成片：[`dsh-video-workbench-tutorial.mp4`](https://github.com/Merziller/dsh-video-workbench/releases/download/v0.6.0/dsh-video-workbench-tutorial.mp4)
 > - **✨ `v0.5.0` 重磅新能力**：
 >   1. **🔇 无黑窗后台静默守护**：Windows 双击 `start-workbench.cmd` / `start-workbench.vbs` 自动隐藏 CMD 黑窗并在后台静默常驻 `http://127.0.0.1:4399`，双击 `stop-workbench.cmd` 或 `node bin/dsh-video-cli.mjs stop` 优雅停止；
@@ -105,6 +126,7 @@
 ---
 
 ## 📖 目录 / Table of Contents
+- [🆕 v0.8.0 更新：长视频拆条 · 配乐从精彩处开始 · 配音回听校验 · 片尾声明改为可选](#-v080-更新长视频拆条--配乐从精彩处开始--配音回听校验--片尾声明改为可选)
 - [🆕 v0.7.0 更新：我的动漫形象讲解员 · AI 剪辑你自己的素材 · 模板填空](#-v070-更新我的动漫形象讲解员--ai-剪辑你自己的素材--模板填空--由当前智能体代写)
 - [🆕 v0.6.0 更新：全新「AI Agent 作战大屏」界面（三套皮肤）](#-v060-更新全新ai-agent-作战大屏界面三套皮肤自由切换)
 - [🎥 官方完整实操教程视频 & v0.5.0 核心亮点](#-官方完整实操教程视频--v050-核心亮点)
@@ -126,7 +148,7 @@
 1. **⚡ 8 位 AI Agent 作战大屏（三套原生皮肤）+ 分步精修 + 实时任务监控**：
    - **策划导演 → 素材剪辑 → 配音混音 → 动效编程 → 质检渲染** 五段主流水线全程可视化接力运行（**数字人、云端生成、参考复刻** 三位 Agent 按需出场），支持随时暂停、继续、停止子进程与断点重试，进度与「实时日志」同步显示。
    - 三套原生皮肤 **C · 棱镜实验室（默认）/ A · 星舰剪辑甲板 / B · 墨韵织机** 一键切换；所有面板、弹窗与分步精修页面都按当前皮肤原生绘制，换皮肤不换操作（详见 [「三、工作台使用指南」](#-三工作台使用指南ai-作战大屏--三套皮肤)）。
-   - 接入 DeepSeek Harness 桌面端后，从左侧栏 **「AI 视频工坊」** 进入作战大屏；大屏左上角的 **「返回 DSH 对话」** 按钮可随时一键回到对话。
+   - 接入 DeepSeek Harness 桌面端后，从左侧栏 **「禾杨视频工坊」** 进入作战大屏；大屏左上角的 **「返回 DSH 对话」** 按钮可随时一键回到对话。
 2. **🧠 通用四协议大模型接入 + ✨ AI 一键润色提示词**：
    - 默认 **「跟随当前智能体」(`auto`)**：在 DeepSeek Harness 里使用 DSH 当前选中的通道；在 Claude Code / Codex / opencode / OpenClaw / Hermes / pi / WorkBuddy / Antigravity / Cursor 等智能体里，自动使用该智能体运行环境中的模型 API Key（`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`GEMINI_API_KEY`、`OPENROUTER_API_KEY`，可配合 `*_BASE_URL`、`*_MODEL`），并优先选和该智能体匹配的服务商（如 Claude Code → Anthropic、Codex → OpenAI）。智能体的账号登录 / 订阅只能它自己使用，插件不会读取或借用。
    - 也可以 **「指定 DSH 通道」(`follow-dsh`)** 或 **「自定义」(`custom`)** 填写任意大模型；原生兼容 **OpenAI `/v1/chat/completions`**、**Anthropic `/v1/messages`**、**OpenAI `/v1/responses`** 与 **Google Gemini `/v1beta/models`** 四种接口协议。
@@ -315,6 +337,7 @@ flowchart TB
 | 影核广场 | `MOTION.md` 模板社区：看样片、「一键套用同款」、把当前工程发布为模板；「投稿到影核广场」把自己的作品打成投稿包发给作者审核收录，「刷新在线模板」获取新收录的模板（作者用 `node bin/dsh-video-cli.mjs plaza review / accept / add / index` 维护，见 [docs/plaza-community.md](docs/plaza-community.md)） | 顶栏「影核广场」 |
 | 模板填空 | 套用影核广场的模板：镜头、节奏、版式、转场和音效不变，把文字、图片、视频和配乐换成你自己的；可让 AI 按主题帮你写好每一镜的文字 | 影核广场模板卡片 / 模板详情里的「填空套用」；工具菜单「模板填空」 |
 | AI 剪辑 · 口播粗剪 | 你自己录的口播视频：本机语音识别，自动去停顿、口头禅和重录，配逐字字幕；口播包装（关键词、章节、空镜、录屏讲解、卡通讲解员） | 工具菜单「AI 剪辑 · 口播粗剪」 |
+| AI 剪辑 · 长视频拆条 | 访谈、播客、直播回放、课程录像剪成多条能单独发布的短视频：AI 挑片段（每小时内容约 1 次大模型调用），本机出片（字幕、标题、进度条、平台音量），附封面和发布文案 | 工具菜单「AI 剪辑 · 长视频拆条」 |
 | AI 剪辑 · Vlog 高光 | 一堆随手拍的视频按音乐节拍自动剪成 15 / 30 / 60 秒精彩短片 | 工具菜单「AI 剪辑 · Vlog 高光」 |
 | 参考复刻 | 上传一段爆款视频，AI 拆解镜头节奏、BPM 与风格后做同款，还能同步对比 | 工具菜单（星舰叫「参考视频复刻对比」） |
 | 提词器录制 | 对着摄像头边看提词边录口播 / 数字人底板，录好直接入库 | 工具菜单（星舰「提词器真人录制」/ 墨韵「提词器」）；「01 素材 → 更多素材来源」 |
@@ -418,7 +441,7 @@ pnpm install
 node scripts/install-profile.mjs
 ```
 
-执行成功后：**完全退出并重新启动 DeepSeek Harness 客户端**，在左侧边栏点 **「AI 视频工坊」** 即可进入作战大屏（大屏左上角的 **「返回 DSH 对话」** 按钮可随时切回主对话），大模型预设会自动挂载 **`视频制作模式 (video-maker)`**（会自动同步读取你在 DSH 客户端中配置好的模型与 API Key）。
+执行成功后：**完全退出并重新启动 DeepSeek Harness 客户端**，在左侧边栏点 **「禾杨视频工坊」** 即可进入作战大屏（大屏左上角的 **「返回 DSH 对话」** 按钮可随时切回主对话），大模型预设会自动挂载 **`视频制作模式 (video-maker)`**（会自动同步读取你在 DSH 客户端中配置好的模型与 API Key）。
 
 ### 方式 C：独立浏览器运行（支持系统浏览器直接开启摄像头自拍）
 
@@ -478,7 +501,7 @@ node scripts/pack-bundle.mjs
    - 解决：**「提词器录制」** 面板已内置零阻塞退路——摄像头不可用时会改为纯麦克风录音（录下的声音可用于配音 / 声纹克隆）；若仍被拦截，可直接点面板里的 **「🌐 在系统浏览器中打开自拍」**（用 Chrome/Edge 打开独立网页端口 `4399` 正常授权录制），或点 **「📁 上传本机录像入库」** 把手机/系统相机录好的文件一键导入为出镜底板并提取克隆声纹。
 2. **如果单独打开 `http://127.0.0.1:4399` 遇到黑屏或端口被占用怎么办？**
    - 原因通常为本机后台残留了旧版本 `dsh-runner.mjs` 监听在 `4399`，导致浏览器拉到新旧不匹配脚本，或外部 CDN 访问过慢。
-   - 解决：最新版 [`scripts/dsh-runner.mjs`](./scripts/dsh-runner.mjs) 与 [`start-workbench.cmd`](./start-workbench.cmd) 已内置多 CDN 容错与清晰启动诊断卡（不再黑屏），并支持检测到 `4399` 被占用时自动顺延空闲端口（`4400+`）再自动打开对应 URL；在 DeepSeek Harness 客户端内点击「AI 视频工坊」则直接走内置本地宿主通道，完全无需外网 CDN。
+   - 解决：最新版 [`scripts/dsh-runner.mjs`](./scripts/dsh-runner.mjs) 与 [`start-workbench.cmd`](./start-workbench.cmd) 已内置多 CDN 容错与清晰启动诊断卡（不再黑屏），并支持检测到 `4399` 被占用时自动顺延空闲端口（`4400+`）再自动打开对应 URL；在 DeepSeek Harness 客户端内点击「禾杨视频工坊」则直接走内置本地宿主通道，完全无需外网 CDN。
 3. **如何制作“纯音乐卡点动画（完全跳过 AI 配音）”？**
    - 在大屏的出片参数面板（棱镜实验室「参数控制单」/ 星舰「飞控面板」/ 墨韵「经折 · 出片参数」，快捷键 `P`）的 **「旁白」** 一栏，或「分步精修 → 02 导演参数 → 背景音乐与配音节奏」里，直接切换为 **「🔥 纯音乐卡点 MV（免配音）」** 即可；上传个人 BGM 后会自动对齐重拍与高潮段落。
 4. **作战大屏没有显示出来，或提示「加载超时」怎么办？**
@@ -496,16 +519,22 @@ node scripts/pack-bundle.mjs
 
 ## 📬 联系作者与原创版权声明 (Author & Copyright)
 
-本项目由 **Merziller** 原创开发并基于 [MIT License](./LICENSE) **完全开源免费**发布，欢迎个人创作者、开源社区及各类 AI 智能体用户使用与二次开发。
+**禾杨视频工坊**（DSH Video Workbench）由 **Merziller（子墨）** 与旗下 **绍兴市柯桥区禾杨智绘软件开发工作室（禾杨智绘）** 原创研发，基于 [MIT License](./LICENSE) **完全开源免费**发布，欢迎个人创作者、开源社区及各类 AI 智能体用户使用与二次开发。
 
-> ⚠️ **防盗用与署名要求**：根据 [`LICENSE`](./LICENSE) 与 [`NOTICE`](./NOTICE)，**任何复制、二次修改、打包分发、搬运上架插件市场或视频教程展示，均须保留原作者 Merziller 的版权署名及以下联系信息，严禁抹除署名冒充原创或倒卖套壳。**
+> **双重版权署名**：`Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)`
+>
+> 本项目由 Merziller 与旗下绍兴市柯桥区禾杨智绘软件开发工作室原创研发，开源版遵循 MIT 协议保留双署名，商业免配整合包与企业定制由工作室官方提供。
 
-- **原创作者 / Original Author**：**`Merziller`**
+> ⚠️ **防盗用与署名要求**：根据 [`LICENSE`](./LICENSE) 与 [`NOTICE`](./NOTICE)，**任何复制、二次修改、打包分发、搬运上架插件市场或视频教程展示，均须保留工作室与原创作者的双重版权署名及以下联系信息，严禁抹除署名冒充原创或倒卖套壳。**
+
+- **出品工作室 / Studio**：**禾杨智绘**（绍兴市柯桥区禾杨智绘软件开发工作室）
+- **原创作者 / Original Author**：**`Merziller`（子墨）**
 - **作者 QQ**：`1411574209`
 - **作者微信 / WeChat**：`Merziller`
 - **作者邮箱 / Gmail**：`k26789228@gmail.com`
 - **官方开源仓库 / GitHub**：https://github.com/Merziller/dsh-video-workbench
 - **Bug 反馈与功能建议**：https://github.com/Merziller/dsh-video-workbench/issues
+- **商业免配整合包与企业定制**：由禾杨智绘工作室官方提供（联系方式同上）
 - **实操教程视频**：[`docs/tutorial/dsh-video-workbench-tutorial.mp4`](./docs/tutorial/dsh-video-workbench-tutorial.mp4)
 
 ---
@@ -513,9 +542,22 @@ node scripts/pack-bundle.mjs
 ## 🌐 八、English Documentation
 
 ### Overview
-**DSH Video Workbench (`dsh-video-workbench` v0.7.0)** is an open-source, **universal multi-agent Dual-Engine AI Video Studio** compatible with **Claude Code, OpenAI Codex CLI, WorkBuddy, Cursor, Windsurf, Cline, OpenCode, Antigravity, DeepSeek Harness (DSH), and Standalone Local Browser**. It exposes **48 MCP & Cordis tools** plus a visual Web Studio supporting **Remotion 4.x TSX + Three.js 3D** & **HyperFrames HTML5/Canvas**, **Reference Video Deep Reverse-Engineering & Same-Style Remake (`MOTION.md` + Brand Kit)**, high-energy beat-synced silhouette/combat historical animation (`NarrativeDioramaStage`, `HeroWarriorFigure`, `SlashBurstOverlay`, 34–54 shots), **optional one-click local TTS installer** (`Edge-TTS 0GB`, `IndexTTS-2.5`, `IndexTTS-2`, `GPT-SoVITS`, plus zero-install `Windows Native SAPI` with automatic `voices/` seeding), real-time **Hardware Preflight & Low-Spec Protection Mode** (`8GB RAM + iGPU` supported), commercial-safe OFL typography, and model-agnostic 4-protocol LLM authoring.
+**禾杨视频工坊 · DSH Video Workbench (`dsh-video-workbench` v0.8.0)** — 禾杨智绘出品 (studio: 绍兴市柯桥区禾杨智绘软件开发工作室) — is an open-source, **universal multi-agent Dual-Engine AI Video Studio** compatible with **Claude Code, OpenAI Codex CLI, WorkBuddy, Cursor, Windsurf, Cline, OpenCode, Antigravity, DeepSeek Harness (DSH), and Standalone Local Browser**. It exposes **49 MCP & Cordis tools** plus a visual Web Studio supporting **Remotion 4.x TSX + Three.js 3D** & **HTML5 motion engine/Canvas**, **Reference Video Deep Reverse-Engineering & Same-Style Remake (`MOTION.md` + Brand Kit)**, high-energy beat-synced silhouette/combat historical animation (`NarrativeDioramaStage`, `HeroWarriorFigure`, `SlashBurstOverlay`, 34–54 shots), **optional one-click local TTS installer** (`Edge-TTS 0GB`, `IndexTTS-2.5`, `IndexTTS-2`, `GPT-SoVITS`, plus zero-install `Windows Native SAPI` with automatic `voices/` seeding), real-time **Hardware Preflight & Low-Spec Protection Mode** (`8GB RAM + iGPU` supported), commercial-safe OFL typography, and model-agnostic 4-protocol LLM authoring.
 
 **Vibecoding toolkit (8 tools, v0.5.3).** The AI director and coder **match tools to each video and shot** (none is mandatory; when no tool fits, the AI writes custom Canvas2D / SVG / CSS / WebGL code). Scene code can use **Three.js**, **Anime.js** (paused v4 timeline seeked per Remotion frame), **Tween.js** (three-bundled), **Ammo.js** (Bullet rigid bodies pre-simulated at a fixed step), **TSL Textures** (procedural node materials via `three/webgpu`), **Remotion** and **FFmpeg**. **SuperCollider** is optional: when `sclang` is installed, the AI writes an NRT score for the music bed after a safety gate rejects any file/system/server calls; otherwise the built-in JS DSP synthesizer is used. Readiness is shown in the Web Studio hardware panel and in `check_hardware_profile`.
+
+### What's New in v0.8.0 — long recordings into short clips, music from its best part, narration check, opt-in end notice
+
+- **AI 剪辑 · 长视频拆条 (long recording → short clips)**: the user's own interview / podcast / live-stream replay / lesson becomes stand-alone clips for 抖音 / 视频号 / 小红书 / 快手 / B站. Local speech recognition, then **one** model call per ~60 minutes of speech picks complete passages (or the host agent writes them); every pick is checked in code (whole sentences, no trailing next-topic question, no start that leans on what came before). Titles are editable, ends move by whole sentences, clips can be switched off. Rendering is local FFmpeg: pauses / fillers / retakes inside each clip removed, 9:16 / 3:4 / 16:9 layouts (blurred backdrop, interview window, crop), title, captions with keyword highlight, progress line, −14 LUFS; captions already burned into the recording are detected and not doubled. Each clip comes with a cover, an SRT and a 发布文案.md. Only the user's imported recordings are used; nothing is downloaded or published.
+- **The local speech recognition installs itself**: the first time the studio opens, the plugin downloads and installs the local speech engine in the background (~260 MB from domestic mirrors, once; plugin updates do not download it again). The talking-head rough cut, long-recording clips and the narration check need no manual install any more; their buttons can be used right away and wait for the engine. `DSH_ASR_AUTO_INSTALL=0` in `.env` turns the automatic download off (the manual install in 口播粗剪 still works).
+- **Brand: 禾杨视频工坊**: the Chinese product name is now 「禾杨视频工坊」 (DSH sidebar, the three skins' top bars and window titles), produced by **禾杨智绘** (绍兴市柯桥区禾杨智绘软件开发工作室); the 使用帮助 footer and 关于 carry the full credit. Copyright is now held jointly by the studio and the original author: `Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)`, still MIT. Package name, commands, MCP tool names, API routes and environment variables are unchanged.
+- **Music from its best part**: an uploaded song much longer than the film starts at a well-chosen bar line (skipping a long intro, with the climax at a good point of the film); also for Vlog highlights and template fills. Switch 「配乐从精彩处开始」 off to start from the top.
+- **Narration check (配音回听校验)**: after TTS every new take is listened to with the local speech engine and compared with the text; skipped, repeated or misread words and wrong numbers are re-dubbed once, then reported in the run log and the QA report (advisory, never a failure).
+- **End notice is opt-in**: the last line of a film and the plugin credit in it are off by default (two switches in 画面规格); the AI corner badge is unchanged. The plugin's own LICENSE / NOTICE attribution is unchanged.
+- **Publish pack copy uses only the film's own words** (title, topic, scene titles); no tool hashtags; the AI note states what the picture really carries.
+- **Also**: transcript export (SRT / TXT on the original timeline) in the rough-cut panel; loudness measurement fixed for the bundled FFmpeg (music-only masters are now trimmed to their target); the HTML engine is called "HTML5 motion engine".
+- **Agent interface**: new MCP tool `make_short_clips` (`find` → `update` → `render`); `run_agent_pipeline` / `ai_create_video` gain `endNotice`, `endNoticeCredit`, `bgmStartFrom` and `narrationCheck` — 49 MCP tools in total.
+- **Credits**: the clip finder design follows [AutoClip](https://github.com/zhouxiaoka/autoclip) (MIT, see NOTICE); code and prompts were written anew.
 
 ### What's New in v0.7.0 — your own anime presenter, edit your own footage, fill-in templates, the agent writes for you
 
@@ -585,7 +627,10 @@ node scripts/pack-bundle.mjs
 - `packages/dsh-preset-video` & `packages/dsh-web-video-workbench`: Cordis plugin adapter, REST API, and the war-room UI — the host (`lib/client.js`), three native skins (`lib/warroom/prism-lab.html`, `nova-deck.html`, `ink-loom.html`) and the shared native panel kit (`lib/warroom/kit`, documented in `KIT.md` and `lib/warroom/BRIDGE.md`).
 
 ### Contact, Attribution & License
-- **Original Author**: **Merziller**
+- **Copyright**: `Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)`
+- **Studio**: **禾杨智绘** (绍兴市柯桥区禾杨智绘软件开发工作室)
+- **Original Author**: **Merziller** (子墨)
 - **QQ**: `1411574209` · **WeChat**: `Merziller` · **Gmail**: `k26789228@gmail.com`
 - **Repository**: https://github.com/Merziller/dsh-video-workbench
-- **License**: Released under the [MIT License](./LICENSE) — all redistributions, forks, and derivative works **must retain original author attribution** per [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).
+- **License**: Released under the [MIT License](./LICENSE) — all redistributions, forks, and derivative works **must retain both the studio and the original author attribution** per [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).
+- **Origin**: Originally created by Merziller (子墨) and the studio founded by Merziller, 绍兴市柯桥区禾杨智绘软件开发工作室 (禾杨智绘). The open-source edition is released under the MIT License with both credits retained; ready-to-run commercial bundles and enterprise customization are provided officially by the studio.

@@ -1,0 +1,25 @@
+/* AI 剪辑 · 长视频拆条 (63b-short-clips.js) */
+/* every clip is shown whole (portrait clips letterboxed) in the same 4:3 window, so the cards line up */
+.pk-sc-card .pk-card-m {
+  aspect-ratio: 4 / 3;
+  background: #000;
+}
+.pk-sc-card .pk-card-m > .pk-media {
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+.pk-sc-card .pk-card-m .pk-video {
+  object-fit: contain;
+  background: #000;
+}
+/* a switched-off clip stays visible but steps back */
+.pk-sc-card.pk-sc-off {
+  opacity: 0.55;
+}
+.pk-sc-card.pk-sc-off:hover,
+.pk-sc-card.pk-sc-off:focus-within {
+  opacity: 0.85;
+}
+.pk-sc-card.pk-sc-off .pk-card-m {
+  filter: grayscale(0.6);
+}

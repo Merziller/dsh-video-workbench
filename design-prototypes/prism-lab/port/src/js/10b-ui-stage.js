@@ -107,7 +107,7 @@ let obSig = '';
 function renderOnboard() { const box = $('#onboard'), on = !M || !M.project; box.classList.toggle('on', on); document.body.classList.toggle('noproj', on); if (!on) { obSig = ''; return; }
   const ps = M ? M.projects.slice().sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0, 5) : [];
   const sig = (M ? 'M' : 'W') + (BRIDGE.parent ? 'p' : 's') + ps.map(p => p.dir + p.title + p.hasMp4).join('|'); if (sig === obSig) return; obSig = sig;
-  if (!M) { box.innerHTML = `<div class="ob-card"><span class="ob-k">PRISM LAB · STANDBY</span><b class="ob-t">${BRIDGE.parent ? '正在连接宿主…' : '未连接宿主'}</b><p>${BRIDGE.parent ? '等待 DSH 视频工坊推送工程数据。' : '该页面需要在 DSH 视频工坊中打开，才能载入工程与 Agent 数据。'}</p></div>`; return; }
+  if (!M) { box.innerHTML = `<div class="ob-card"><span class="ob-k">PRISM LAB · STANDBY</span><b class="ob-t">${BRIDGE.parent ? '正在连接宿主…' : '未连接宿主'}</b><p>${BRIDGE.parent ? '等待禾杨视频工坊推送工程数据。' : '该页面需要在禾杨视频工坊中打开，才能载入工程与 Agent 数据。'}</p></div>`; return; }
   const day = s => { const d = new Date(s); return isNaN(d) ? '' : (d.getMonth() + 1) + '月' + d.getDate() + '日'; };
   box.innerHTML = `<div class="ob-card"><span class="ob-k">NO SAMPLE LOADED · 未装入样片</span><b class="ob-t">棱镜尚未装入样片</b><p>新建一个视频工程，或打开已有工程，8 位 AI Agent 即刻就位。</p>
     <div class="ob-b"><button class="btn pri" id="obNew">${icon('plus')}新建工程</button><button class="btn" id="obOpen">${icon('folder')}打开工程</button></div>

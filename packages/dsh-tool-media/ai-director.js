@@ -268,6 +268,8 @@ export async function planVideoFromAssets(options = {}) {
     aiBadgeEnabled,
     aiBadgePosition = 'top-right',
     aiBadgeText = '',
+    endNotice,
+    endNoticeCredit,
     pacingMode = 'auto',
     visual3dMode = 'auto',
     fps: requestedFps,
@@ -746,6 +748,8 @@ export async function planVideoFromAssets(options = {}) {
     aiBadgeEnabled: aiBadgeEnabled !== undefined ? Boolean(aiBadgeEnabled) : (existing.aiBadgeEnabled !== undefined ? Boolean(existing.aiBadgeEnabled) : aiBadge !== false),
     aiBadgePosition: String(aiBadgePosition || existing.aiBadgePosition || 'top-right'),
     aiBadgeText: String(aiBadgeText || existing.aiBadgeText || (typeof aiBadge === 'string' && aiBadge.trim() ? aiBadge : '') || ''),
+    endNotice: endNotice !== undefined ? endNotice === true : existing.endNotice === true,
+    endNoticeCredit: endNoticeCredit !== undefined ? endNoticeCredit === true : existing.endNoticeCredit === true,
     pacingMode: String(pacingMode || existing.pacingMode || 'auto'),
     visual3dMode: String(visual3dMode || existing.visual3dMode || 'auto'),
     durationMode: String(options.durationMode || existing.durationMode || 'auto'),
@@ -798,7 +802,7 @@ export async function planVideoFromAssets(options = {}) {
   const reloaded = readScriptJson(absDir).data
   syncProjectCodeFromScript(absDir, reloaded, { forceOverwrite: true })
   if (Object.keys(lockedHtmlBlocks).length > 0) {
-    // Locked scenes keep the HyperFrames HTML implementation they had when they were locked
+    // Locked scenes keep the HTML5 motion-engine implementation they had when they were locked
     try {
       const htmlPath = join(absDir, 'index.html')
       const cur = readFileSync(htmlPath, 'utf8')

@@ -1,6 +1,6 @@
 /**
  * @dsh-video/tool-media — Reference Video Deep Reverse-Engineering, MOTION.md & Brand Kit Engine
- * Copyright (c) 2026 Merziller (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨) (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
  *
  * Lets users upload ANY reference video -> automatically reverse-engineers:
  *   1. Technical specs (`ffprobe`: resolution, aspect ratio, fps, duration, audio presence)

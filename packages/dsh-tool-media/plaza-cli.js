@@ -1,6 +1,6 @@
 /**
  * `dsh-video-cli plaza …` — 影核广场维护命令（作者用）
- * Copyright (c) 2026 Merziller (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨) (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
  *
  *   plaza review <zip|dir> [--json]
  *   plaza accept <zip|dir> [--id <id>] [--category <cat>] [--force] [--templates-dir <dir>]

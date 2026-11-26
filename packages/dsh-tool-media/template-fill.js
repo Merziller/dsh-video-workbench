@@ -35,7 +35,7 @@ import {
 } from '../shared/index.js'
 import { readAssets } from './asset-manager.js'
 import { buildBeatGrid } from './audio-dsp.js'
-import { analyzeAudioBeatStructure, choreographBeatSfxCues, chunkSubtitleText, quantizeScenesToBeatGrid } from './beat-analyzer.js'
+import { analyzeAudioBeatStructure, choreographBeatSfxCues, chunkSubtitleText, cutToMusicWindow, quantizeScenesToBeatGrid } from './beat-analyzer.js'
 import { ensureFootageWindows } from './footage-index.js'
 import { buildRichHtmlVideo } from './html-generator.js'
 import { callLlmChat, extractJsonFromLlmText } from './llm-client.js'
@@ -102,7 +102,7 @@ const DROP_SCENE_KEYS = [
   'fanMedia',
 ]
 /** Project settings that are the user's, not the template's. */
-const KEEP_FROM_PROJECT = ['brandKit', 'brandMark', 'aiBadge', 'aiBadgeEnabled', 'aiBadgePosition', 'aiBadgeText', 'targetPlatform', 'lowSpecSafe', 'hardwarePolicy', 'voiceMode', 'defaultVoiceId', 'ttsEngine']
+const KEEP_FROM_PROJECT = ['brandKit', 'brandMark', 'aiBadge', 'aiBadgeEnabled', 'aiBadgePosition', 'aiBadgeText', 'endNotice', 'endNoticeCredit', 'targetPlatform', 'lowSpecSafe', 'hardwarePolicy', 'voiceMode', 'defaultVoiceId', 'ttsEngine']
 /** What applyPlazaTemplateToProject decided for the look. */
 const KEEP_FROM_APPLY = ['genre', 'genreLabel', 'style', 'styleMode', 'styleProfile', 'styleAuto', 'theme', 'engine', 'narrationMode', 'pacingMode', 'subtitleStyle', 'referenceStyle', 'audioProfile', 'appliedPlazaTemplate']
 /** The template's frame. */
@@ -613,6 +613,19 @@ export async function fillTemplateIntoProject({ projectDir, templateId, fills = 
   const songSec = Number(grid.durationSec) || 0
   // a song shorter than the template: the film follows the song (down to 60 % of the template), else it loops
   const targetSec = music && songSec > 0 && songSec < tplTotal && songSec >= tplTotal * 0.6 ? songSec : tplTotal
+  // 配乐从精彩处开始: a song clearly longer than the template starts at a well-chosen bar line (the user's 「从头开始」 pin
+  // on this project is kept) and the grid moves to film time. A pure-music template is cut to exactly targetSec; a voiced
+  // one gets its length from the voice later, so its window keeps a third more room inside the song.
+  const musicStartFrom = prev.bgm?.startFrom === 'head' ? 'head' : 'auto'
+  let musicWindow = null
+  if (music && grid.analyzed) {
+    const pureMusic = (applied.narrationMode || info.template.narrationMode) === 'subtitle-mv'
+    const musicRel = isAbsolute(music.path) ? relative(absDir, music.path).replace(/\\/g, '/') : String(music.path).replace(/\\/g, '/')
+    const musicCut = cutToMusicWindow(grid, { filmSec: targetSec, exactLength: pureMusic, fitSec: pureMusic ? 0 : targetSec * 1.3 + 2, musicOnly: pureMusic, startFrom: musicStartFrom, songPath: musicRel })
+    grid = musicCut.meta
+    musicWindow = musicCut.window
+    if (musicWindow.startSec > 0) progress(28, musicWindow.note)
+  }
   const rel = (p) => (isAbsolute(p) ? relative(absDir, p).replace(/\\/g, '/') : String(p).replace(/\\/g, '/'))
   const bgm = {
     enabled: true,
@@ -621,6 +634,9 @@ export async function fillTemplateIntoProject({ projectDir, templateId, fills = 
     bpm: Math.round(Number(grid.bpm) || tplBpm),
     beats: grid.beats,
     ...(grid.analyzed ? { analyzed: true, beatSec: grid.beatSec, durationSec: grid.durationSec, phaseSec: grid.phaseSec, barOffset: grid.barOffset, downbeats: grid.downbeats, drops: grid.drops } : {}),
+    // where the song starts in the film (song seconds; the lists above are in film time)
+    ...(musicWindow ? { startSec: Number(grid.startSec) || 0, songDurationSec: songSec, ...(grid.startFor ? { startFor: grid.startFor } : {}), ...(musicWindow.startSec > 0 ? { startNote: musicWindow.note } : {}) } : {}),
+    ...(musicStartFrom === 'head' ? { startFrom: 'head' } : {}),
     ...(music
       ? { mode: 'uploaded', source: 'user-imported', path: rel(music.path), uploadedPath: rel(music.path) }
       : { mode: 'generated', source: 'generated', path: '' }),
@@ -702,7 +718,7 @@ export async function fillTemplateIntoProject({ projectDir, templateId, fills = 
     autoFilledMedia,
     emptyMedia,
     changedShots,
-    music: music ? { id: music.id, name: music.originalName || music.name || music.id, bpm: bgm.bpm } : { generated: true, bpm: bgm.bpm },
+    music: music ? { id: music.id, name: music.originalName || music.name || music.id, bpm: bgm.bpm, startSec: Number(bgm.startSec) || 0 } : { generated: true, bpm: bgm.bpm },
     aspectRatio: saved.aspectRatio,
   }
 }

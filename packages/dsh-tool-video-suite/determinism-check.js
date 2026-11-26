@@ -1,7 +1,7 @@
 /**
  * Deep-QA determinism check: render the same frames twice (second pass in reverse seek order) and compare pixel hashes.
  * - Remotion: one throwaway bundle + one shared headless browser, `renderStill` ×2 per frame (bundle deleted afterwards).
- * - HTML/HyperFrames: one warm Chromium CDP session capturing [a, b, c, c, b, a].
+ * - HTML5 motion engine: one warm Chromium CDP session capturing [a, b, c, c, b, a].
  */
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'

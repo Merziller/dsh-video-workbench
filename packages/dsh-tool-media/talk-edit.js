@@ -32,6 +32,7 @@ import {
   hashTranscript,
   joinWordTexts,
   keepFrames,
+  normalizeKeepOnly,
   planRoughCut,
   planTexts,
   probeCutSource,
@@ -40,7 +41,7 @@ import {
   ROUGH_CUT_DEFAULTS,
   ROUGH_CUT_ENCODE_VERSION,
 } from './rough-cut.js'
-import { getAsrStatus, transcribeMedia } from './speech-recognition.js'
+import { ensureAsrEngine, getAsrStatus, transcribeMedia } from './speech-recognition.js'
 import { indexFootage } from './footage-index.js'
 import { cleanMascotSetting, detectChapters, extractKeywords, planBroll, resolveTalkPack, storedMascotSetting, TALK_PACK_PRESETS } from './talk-pack.js'
 import { planMascot } from './talk-mascot.js'
@@ -292,7 +293,8 @@ const pickOptions = (o = {}) => {
 /**
  * Transcribe + plan (+ render) the rough cut of one recording. `options` (persisted per recording; omitted fields keep
  * the saved / default values): cutPauses, maxPauseSec, keepPauseSec, cutFillers, cutStutters, cutRetakes, enhanceVoice,
- * language. `overrides` `{ restore: [removalId], cutWords: [[from, to]] }` replace the saved ones when given.
+ * language. `overrides` `{ restore: [removalId], cutWords: [[from, to]], keepOnly?: [[from, to]] }` replace the saved
+ * ones when given (keepOnly = 选段剪辑: only those passages are kept).
  */
 export async function runTalkRoughCut({ projectDir, sourcePath = '', options = undefined, overrides = undefined, render = true, force = false, signal, onChild, onProgress } = {}) {
   if (!projectDir) throw new Error('projectDir is required')
@@ -359,7 +361,11 @@ export async function runTalkRoughCut({ projectDir, sourcePath = '', options = u
     transcript: { path: transcript.cachePath ? toRel(absDir, transcript.cachePath) : '', language: transcript.language, durationSec: transcript.durationSec, segments: (transcript.segments || []).length, engine: transcript.engine },
     transcriptHash,
     options: { ...opts, fps },
-    overrides: { restore: Array.isArray(ov.restore) ? ov.restore : [], cutWords: Array.isArray(ov.cutWords) ? ov.cutWords : [] },
+    overrides: {
+      restore: Array.isArray(ov.restore) ? ov.restore : [],
+      cutWords: Array.isArray(ov.cutWords) ? ov.cutWords : [],
+      ...(Array.isArray(ov.keepOnly) && ov.keepOnly.length ? { keepOnly: normalizeKeepOnly(ov.keepOnly, plan.words.length) } : {}),
+    },
     plan,
     captions,
     texts,
@@ -625,7 +631,7 @@ export async function buildTalkEditProject({ projectDir, sourcePath = '', option
   })
   if (packPlan.settings.sfx !== false) addTalkPackSfx(scenes, packPlan.pack, fps)
   applyScreenSetting(scenes, packPlan.settings.screen)
-  const keepFromPrev = ['displayTitle', 'brandKit', 'brandMark', 'aiBadgeEnabled', 'aiBadgePosition', 'aiBadgeText', 'targetPlatform', 'figureStyleChoice', 'figureStyleChoiceNote', 'genre', 'genreLabel']
+  const keepFromPrev = ['displayTitle', 'brandKit', 'brandMark', 'aiBadgeEnabled', 'aiBadgePosition', 'aiBadgeText', 'endNotice', 'endNoticeCredit', 'targetPlatform', 'figureStyleChoice', 'figureStyleChoiceNote', 'genre', 'genreLabel']
   const script = {
     ...Object.fromEntries(keepFromPrev.filter((k) => prev[k] !== undefined).map((k) => [k, prev[k]])),
     title: title || prev.title || res.source.asset?.name?.replace(/\.[^.]+$/, '') || '口播剪辑',
@@ -816,13 +822,28 @@ export async function executeTalkEditRunner(run, helpers, deps = {}) {
   }
   const done = (id) => (run.tasks || []).find((t) => t.id === id)?.status === 'completed'
   const talkOpts = spec.talkEdit && typeof spec.talkEdit === 'object' ? spec.talkEdit : {}
+  // 片尾声明 / 片尾署名 passed with the run (MCP run_agent_pipeline) are kept on the project like the studio's switches
+  if (spec.endNotice !== undefined || spec.endNoticeCredit !== undefined) {
+    let cur = null
+    try {
+      cur = readScriptJson(absDir).data
+    } catch {
+      cur = null // a brand-new folder: the project written below starts with the defaults (no end line)
+    }
+    if (cur) {
+      writeScriptJson(absDir, {
+        ...cur,
+        ...(spec.endNotice !== undefined ? { endNotice: spec.endNotice === true } : {}),
+        ...(spec.endNoticeCredit !== undefined ? { endNoticeCredit: spec.endNoticeCredit === true } : {}),
+      })
+    }
+  }
 
   if (!done('t-director')) {
     await waitIfPaused('t-director')
-    const engine = await getAsrStatus()
-    if (!engine.ready) {
-      throw Object.assign(new Error(`口播剪辑需要先安装「本地语音识别」（免费、离线，约 260 MB）：${engine.reason}。打开「AI 剪辑 · 口播粗剪」面板即可一键安装。`), { code: 'ASR_NOT_INSTALLED' })
-    }
+    // the local speech recognition: waits for its automatic install when it is still being prepared (first use);
+    // a clear Chinese reason (code ASR_NOT_INSTALLED) when it cannot be installed here
+    await ensureAsrEngine({ signal, onProgress: (p) => updateTask('t-director', { status: 'running', progress: 2, message: p.message, log: false }) })
     updateTask('t-director', { status: 'running', progress: 5, message: '正在听写口播：本地语音识别（不联网、不花钱）...' })
     if (spec.avatarEnabled) appendLog('director', '口播剪辑用的是你本人的出镜视频，已跳过数字人合成。')
     const res = await runTalkRoughCut({

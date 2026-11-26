@@ -1153,7 +1153,7 @@ export async function runCoreTests() {
 
     await test('refine run (HTML, mocked LLM): snapshot before, locked block kept, diff returned', async () => {
       const dir = makeProject('refine-html', { durations: [3, 3, 3] })
-      // AI-coded HyperFrames page: built-in template + the frame-seek contract the coder must keep
+      // AI-coded HTML5 motion-engine page: built-in template + the frame-seek contract the coder must keep
       writeFileSync(
         join(dir, 'index.html'),
         htmlGen

@@ -1,6 +1,7 @@
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BRAND } from './brand.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -484,17 +485,43 @@ export function computeSafeZonePreflight(scriptData, options = {}) {
 }
 
 /**
- * Mandatory legal AI synthesis compliance disclosure reflecting actual generation modes used.
+ * 片尾声明（视频最后一行字）. Off unless the user turns it on (`script.endNotice === true`): the AI corner badge
+ * (`aiBadgeEnabled`, on by default for AI films) already labels AI content in the picture, and a creator's film carries
+ * no credit for the tool unless they ask for it (`endNoticeCredit === true`, which only counts while the line is shown).
+ */
+export function resolveEndNotice(scriptData = {}) {
+  const visible = scriptData?.endNotice === true
+  return { visible, credit: visible && scriptData?.endNoticeCredit === true }
+}
+
+/** The product name a credited end line names (片尾署名; see brand.js). */
+export const END_NOTICE_CREDIT_NAME = BRAND.productName
+
+/**
+ * AI synthesis / editing disclosure reflecting the generation modes actually used.
+ *   badgeText            the corner badge (「AI 辅助创作」 / 「AI 辅助剪辑」)
+ *   endNoticeAiBody      the disclosure without any tool credit
+ *   endNoticeCreditBody  the same disclosure crediting the plugin
+ *   endNoticeBody        what this project uses: the credit version only when the end line is shown with the credit
+ *   endNoticeVisible     whether the last line of the video is shown at all (片尾声明)
+ *   endNoticeCredit      whether that line credits the plugin (片尾署名)
  */
 export function buildComplianceNoticeText(scriptData = {}) {
+  const { visible, credit } = resolveEndNotice(scriptData)
+  const pack = (badgeText, endNoticeTitle, endNoticeAiBody, endNoticeCreditBody) => ({
+    badgeText,
+    endNoticeTitle,
+    endNoticeAiBody,
+    endNoticeCreditBody,
+    endNoticeBody: credit ? endNoticeCreditBody : endNoticeAiBody,
+    endNoticeVisible: visible,
+    endNoticeCredit: credit,
+  })
   // 口播剪辑: the picture and the voice are the person's own recording — only the editing and the captions are automatic
   if (scriptData?.productionType === 'talk-edit') {
     const music = scriptData?.bgm?.enabled === false ? '' : (scriptData?.audioSpec?.bgmMode || scriptData?.bgmMode) === 'uploaded' ? ' · 用户授权背景音乐' : ' · AI 合成配乐'
-    return {
-      badgeText: 'AI 辅助剪辑',
-      endNoticeTitle: '内容生成合规声明 · AI Editing Disclosure',
-      endNoticeBody: `本视频由 DSH Video Workbench (by Merziller) 剪辑：真人出镜原声 · 本地语音识别生成字幕 · 自动粗剪${music}`,
-    }
+    const parts = `真人出镜原声 · 本地语音识别生成字幕 · 自动粗剪${music}`
+    return pack('AI 辅助剪辑', '内容生成合规声明 · AI Editing Disclosure', `本视频为 AI 辅助剪辑：${parts}`, `本视频由${END_NOTICE_CREDIT_NAME}剪辑：${parts}`)
   }
   const bgmMode = scriptData?.audioSpec?.bgmMode || scriptData?.bgmMode || 'llm-coded'
   const creationMode = scriptData?.creationMode || 'ai-coded'
@@ -508,10 +535,116 @@ export function buildComplianceNoticeText(scriptData = {}) {
         ? 'AI 配音引擎氛围声景'
         : 'AI 编程合成配乐'
   const voicePart = narrationMode === 'subtitle-mv' ? ' · 纯音乐节拍卡点' : ` + ${engineName} 语音合成`
+  const parts = `${visualPart} · ${audioPart}${voicePart}`
+  return pack('AI 辅助创作', '内容生成合规声明 · AI Synthesis Disclosure', `本视频含 AI 生成内容：${parts}`, `本视频由${END_NOTICE_CREDIT_NAME}创作：${parts}`)
+}
 
-  return {
-    badgeText: 'AI 辅助创作',
-    endNoticeTitle: '内容生成合规声明 · AI Synthesis Disclosure',
-    endNoticeBody: `本视频由 DSH Video Workbench (by Merziller) 创作：${visualPart} · ${audioPart}${voicePart}`,
+// ---- keeping already generated compositions in step with the switch (re-render without regenerating) ----
+
+const escapeHtmlText = (s) =>
+  String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+
+/** The HTML engine's end-notice element as the generator writes it (hidden with display:none while the switch is off). */
+export function renderEndNoticeHtml(notice) {
+  const mode = notice.endNoticeVisible ? (notice.endNoticeCredit ? 'credit' : 'ai') : 'off'
+  return `<div id="end-notice-wrap" data-end-notice="${mode}"${notice.endNoticeVisible ? '' : ' style="display:none"'}><div id="end-notice">${escapeHtmlText(notice.endNoticeBody)}</div></div>`
+}
+
+const HTML_END_NOTICE_RE = /<div id="end-notice-wrap"[^>]*>\s*<div id="end-notice">[\s\S]*?<\/div>\s*<\/div>/
+const HTML_SWITCH_STYLE_RE = /<style id="dsh-end-notice-switch">[\s\S]*?<\/style>\n?/g
+const HTML_SWITCH_SCRIPT_RE = /<script id="dsh-end-notice-text">[\s\S]*?<\/script>\n?/g
+const HTML_ANY_END_NOTICE_RE = /\bid\s*=\s*["']end-notice(?:-wrap)?["']/
+
+const insertBefore = (html, closingTagRe, block) => {
+  const m = closingTagRe.exec(html)
+  if (!m) return `${html}\n${block}`
+  return `${html.slice(0, m.index)}${block}\n${html.slice(m.index)}`
+}
+
+/**
+ * Bring an index.html written by any version in line with `notice`; returns the same string when nothing changes.
+ * Our generated page: its end-notice element is rewritten. A page the model wrote itself: while the line is off a
+ * style block hides any #end-notice / #end-notice-wrap (beats inline styles set by its own seek code); while on, a
+ * small script puts the chosen text into #end-notice.
+ */
+export function patchEndNoticeHtml(html, notice) {
+  const src = String(html ?? '')
+  let out = src.replace(HTML_SWITCH_STYLE_RE, '').replace(HTML_SWITCH_SCRIPT_RE, '')
+  if (HTML_END_NOTICE_RE.test(out)) {
+    out = out.replace(HTML_END_NOTICE_RE, () => renderEndNoticeHtml(notice))
+  } else if (HTML_ANY_END_NOTICE_RE.test(out)) {
+    if (!notice.endNoticeVisible) {
+      out = insertBefore(out, /<\/head>/i, '<style id="dsh-end-notice-switch">#end-notice-wrap,#end-notice{display:none !important}</style>')
+    } else {
+      const text = JSON.stringify(String(notice.endNoticeBody || '')).replace(/</g, '\\u003c')
+      out = insertBefore(out, /<\/body>/i, `<script id="dsh-end-notice-text">(function(){var n=document.getElementById('end-notice');if(n)n.textContent=${text};})();</script>`)
+    }
   }
+  return out === src ? src : out
+}
+
+/** The constants a generated VideoComposition.tsx carries (both texts, so the switch works at render time). */
+export function renderEndNoticeTsxConstants(notice) {
+  return [
+    `const END_NOTICE_AI = ${JSON.stringify(notice.endNoticeAiBody)};`,
+    `const END_NOTICE_CREDIT = ${JSON.stringify(notice.endNoticeCreditBody)};`,
+    'const DEFAULT_END_NOTICE = END_NOTICE_AI;',
+  ].join('\n')
+}
+
+/** The end-notice element of a generated VideoComposition.tsx: shown only when script.json switches it on. */
+export const END_NOTICE_TSX_ELEMENT = `{(scriptData as any)?.endNotice === true ? (
+        <EndNotice
+          text={(scriptData as any)?.endNoticeCredit === true ? END_NOTICE_CREDIT : END_NOTICE_AI}
+          accentColor={PALETTE.accent}
+        />
+      ) : null}`
+
+const TSX_LEGACY_CONST_RE = /^const DEFAULT_END_NOTICE = (?:"(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*');[ \t]*(?=\r?$)/m
+const TSX_NEW_CONSTS_RE = /^const END_NOTICE_AI = [^\r\n]*;\r?\nconst END_NOTICE_CREDIT = [^\r\n]*;\r?\nconst DEFAULT_END_NOTICE = END_NOTICE_AI;[ \t]*(?=\r?$)/m
+const TSX_LEGACY_ELEMENT_RE = /<EndNotice\s+text=\{DEFAULT_END_NOTICE\}\s+accentColor=\{PALETTE\.accent\}\s*\/>/
+
+/**
+ * Bring a generated VideoComposition.tsx (any version since the end notice existed) in line with the switch: refresh
+ * the two texts and make the element conditional. Files without our generated markers are returned unchanged.
+ */
+export function patchEndNoticeTsx(tsx, notice) {
+  const src = String(tsx ?? '')
+  const consts = renderEndNoticeTsxConstants(notice)
+  let out = src
+  if (TSX_NEW_CONSTS_RE.test(out)) out = out.replace(TSX_NEW_CONSTS_RE, () => consts)
+  else if (TSX_LEGACY_CONST_RE.test(out)) out = out.replace(TSX_LEGACY_CONST_RE, () => consts)
+  else return src
+  if (TSX_LEGACY_ELEMENT_RE.test(out)) out = out.replace(TSX_LEGACY_ELEMENT_RE, () => END_NOTICE_TSX_ELEMENT)
+  // a file that still renders the notice unconditionally (e.g. hand-edited) keeps its element but now uses the texts
+  return out
+}
+
+/**
+ * Apply the switch to the compositions already on disk (index.html of the HTML engine, src/VideoComposition.tsx of
+ * the Remotion engine). Only files whose content changes are written. Returns what was done per file.
+ */
+export function syncEndNoticeFiles(projectDir, scriptData = {}) {
+  const notice = buildComplianceNoticeText(scriptData)
+  const result = { html: 'absent', remotion: 'absent', visible: notice.endNoticeVisible, credit: notice.endNoticeCredit }
+  const targets = [
+    ['html', join(projectDir, 'index.html'), patchEndNoticeHtml],
+    ['remotion', join(projectDir, 'src', 'VideoComposition.tsx'), patchEndNoticeTsx],
+  ]
+  for (const [key, file, patch] of targets) {
+    if (!existsSync(file)) continue
+    try {
+      const before = readFileSync(file, 'utf8')
+      const after = patch(before, notice)
+      if (after === before) {
+        result[key] = 'unchanged'
+        continue
+      }
+      writeFileSync(file, after, 'utf8')
+      result[key] = 'updated'
+    } catch (err) {
+      result[key] = `error: ${err?.message || err}`
+    }
+  }
+  return result
 }

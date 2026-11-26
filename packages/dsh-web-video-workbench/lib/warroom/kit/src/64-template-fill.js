@@ -223,7 +223,9 @@
     const pics = U.num(res.filledMedia, 0) + U.num(res.autoFilledMedia, 0)
     if (pics) bits.push(`放进 ${pics} 处画面${U.num(res.autoFilledMedia, 0) ? `（自动挑了 ${res.autoFilledMedia} 处）` : ''}`)
     if (U.num(res.emptyMedia, 0)) bits.push(`${res.emptyMedia} 处画面位没有素材，改成了文字动画`)
-    bits.push(res.music && res.music.generated ? `配乐按模板节奏自动生成（${res.music.bpm} BPM）` : `配乐：${S(res.music && res.music.name)}`)
+    const musicFrom = U.num(res.music && res.music.startSec, 0)
+    const fromLine = musicFrom > 0 ? `（从 ${Math.floor(Math.round(musicFrom) / 60)}:${String(Math.round(musicFrom) % 60).padStart(2, '0')} 开始）` : ''
+    bits.push(res.music && res.music.generated ? `配乐按模板节奏自动生成（${res.music.bpm} BPM）` : `配乐：${S(res.music && res.music.name)}${fromLine}`)
     if (!produce && res.needsVoice) bits.push('下一步：一键配音，再渲染')
     return `已套用：${bits.join(' · ')}`
   }

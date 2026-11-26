@@ -1,6 +1,6 @@
 /**
  * @dsh-video/tool-local-tts — Optional One-Click Local TTS Engine Installer
- * Copyright (c) 2026 Merziller (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨) (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
  *
  * Lets users freely choose whether to install IndexTTS-2.5, IndexTTS-2, GPT-SoVITS, or Edge-TTS (0-VRAM CPU),
  * automatically creates `voices/` + seeds default speaker reference WAVs, and wires the installed engine

@@ -39,6 +39,33 @@ export const REMOVAL_KINDS = {
   tail: '结尾空白',
   fragment: '疑似口误（孤立的单个字）',
   manual: '手动删除',
+  outside: '选段以外',
+}
+
+/**
+ * 选段剪辑: normalise `keepOnly` word ranges ([[fromWordIdx, toWordIdx]…], inclusive) to sorted, merged, in-range
+ * integer ranges. Empty / invalid input → [] (no selection: the whole recording is the cut's material).
+ */
+export function normalizeKeepOnly(ranges, wordCount) {
+  const n = Math.max(0, Math.floor(Number(wordCount) || 0))
+  if (!n || !Array.isArray(ranges)) return []
+  const out = []
+  for (const r of ranges) {
+    const a0 = Number(Array.isArray(r) ? r[0] : r?.from)
+    const b0 = Number(Array.isArray(r) ? (r[1] ?? r[0]) : (r?.to ?? r?.from))
+    if (!Number.isFinite(a0) || !Number.isFinite(b0)) continue
+    const a = Math.max(0, Math.min(n - 1, Math.floor(Math.min(a0, b0))))
+    const b = Math.max(0, Math.min(n - 1, Math.floor(Math.max(a0, b0))))
+    out.push([a, b])
+  }
+  out.sort((x, y) => x[0] - y[0] || x[1] - y[1])
+  const merged = []
+  for (const r of out) {
+    const last = merged[merged.length - 1]
+    if (last && r[0] <= last[1] + 1) last[1] = Math.max(last[1], r[1])
+    else merged.push([r[0], r[1]])
+  }
+  return merged
 }
 
 const STRONG_PUNCT = new Set(['。', '！', '？', '；', '…', '.', '!', '?', ';'])
@@ -559,7 +586,9 @@ function snapFrame(t, fps) {
  * Plan the rough cut. Returns `{ keep:[{start,end}], removals:[{id,kind,label,start,end,text,applied}], words,
  * sourceDurationSec, outputDurationSec, stats, options }` (seconds on the source timeline; keep ranges on the frame grid).
  *
- * overrides: `{ restore: [removalId…], cutWords: [[fromWordIdx, toWordIdx]…] }`
+ * overrides: `{ restore: [removalId…], cutWords: [[fromWordIdx, toWordIdx]…], keepOnly: [[fromWordIdx, toWordIdx]…] }`
+ * keepOnly (选段剪辑): only the words inside these ranges are kept (the rest is one 「选段以外」 removal per stretch);
+ * pauses / fillers / retakes inside the chosen passages are still cleaned up by the rules above.
  */
 export function planRoughCut(transcript, options = {}, overrides = {}) {
   const o = { ...ROUGH_CUT_DEFAULTS, ...Object.fromEntries(Object.entries(options || {}).filter(([, v]) => v !== undefined && v !== null)) }
@@ -570,9 +599,30 @@ export function planRoughCut(transcript, options = {}, overrides = {}) {
   const words = groupWords(tokens)
   const restore = new Set(Array.isArray(overrides?.restore) ? overrides.restore.map(String) : [])
   const removals = []
+  const keepOnly = normalizeKeepOnly(overrides?.keepOnly, words.length)
 
-  // 1. word-level removals
+  // 1. word-level removals (the 选段 comes first so the other rules only report what happens inside the passages)
   const candidates = []
+  if (keepOnly.length) {
+    const inside = new Uint8Array(words.length)
+    for (const [a, b] of keepOnly) for (let k = a; k <= b; k++) inside[k] = 1
+    let run = []
+    const flush = () => {
+      if (run.length) {
+        // a stretch outside the passages can be most of the recording: the removal only carries a short preview
+        const all = run.map((k) => words[k].text).join('')
+        const chars = Array.from(all)
+        candidates.push({ kind: 'outside', words: run, text: chars.length > 36 ? `${chars.slice(0, 18).join('')}…${chars.slice(-12).join('')}` : all })
+      }
+      run = []
+    }
+    for (const w of words) {
+      if (w.punct) continue
+      if (inside[w.i]) flush()
+      else run.push(w.i)
+    }
+    flush()
+  }
   if (o.cutRetakes) candidates.push(...detectRetakes(words))
   if (o.cutStutters) candidates.push(...detectStutters(words))
   if (o.cutFillers) candidates.push(...detectFillers(words), ...detectFragments(words))

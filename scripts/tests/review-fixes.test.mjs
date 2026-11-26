@@ -39,6 +39,8 @@ const SCRATCH_ENV = {
   PIXABAY_API_KEY: '',
 }
 Object.assign(process.env, SCRATCH_ENV)
+// tests never download the local speech engine (its automatic install starts from the studio state / talk routes)
+if (process.env.DSH_ASR_AUTO_INSTALL === undefined) process.env.DSH_ASR_AUTO_INSTALL = '0'
 const realFetch = globalThis.fetch
 const blockNetwork = () => {
   globalThis.fetch = async (input) => {

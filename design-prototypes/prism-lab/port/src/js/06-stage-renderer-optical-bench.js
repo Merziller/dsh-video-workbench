@@ -209,7 +209,7 @@ function drawScope(c, r, now) { c.fillStyle = '#0D1214'; c.fillRect(r.x, r.y, r.
   c.font = `700 ${fs}px ${MONO}`; c.fillText(fitText(c, 'BGM ' + (PROJ.bpm ? Math.round(PROJ.bpm) + ' BPM' : '—') + ' · VO ' + voiced + '/' + SCENES.length + ' · SFX ' + Math.floor(S.film.sfxN || 0) + '/' + SFX.length, r.w - pw - fs * 3), r.x + fs, r.y + fs * .8); }
 let CODE_CACHE = {sig:'', lines:[]};
 function codeLines() { if (CODE_CACHE.sig === waveSig + PROJ.engine) return CODE_CACHE.lines; const html5 = PROJ.engine === 'html', L = [];
-  L.push(html5 ? `// HyperFrames · HTML5 · ${SCENES.length} scenes · ${PROJ.fps}fps` : `// Remotion 4 · ${SCENES.length} scenes · ${PROJ.fps}fps`);
+  L.push(html5 ? `// HTML5 动效引擎 · ${SCENES.length} scenes · ${PROJ.fps}fps` : `// Remotion 4 · ${SCENES.length} scenes · ${PROJ.fps}fps`);
   SCENES.slice(0, 160).forEach(s => { const id = 'S' + String(s.no).padStart(2, '0');
     if (html5) { L.push(`<section id="${s.id}" data-start="${s.start.toFixed(2)}" data-dur="${s.dur.toFixed(2)}">`); L.push(`  <h1>${s.title}</h1>`); if (s.sub) L.push(`  <p class="sub">${s.sub}</p>`); L.push('</section>'); }
     else { L.push(`export const ${id} = () => (`); L.push(`  <Shot title="${s.title}" at={${s.start.toFixed(2)}} dur={${s.dur.toFixed(2)}}>`); if (s.sub) L.push(`    <Subtitle text="${s.sub}" />`); L.push('  </Shot>);'); } });
@@ -228,5 +228,5 @@ function drawCode(c, r, now) { c.fillStyle = '#101113'; c.fillRect(r.x, r.y, r.w
   c.restore(); c.font = `700 ${fs}px ${MONO}`; c.textBaseline = 'top';
   const rs = S.film.err ? '构建失败 · FAILED' : p >= 1 ? 'BUILD OK' : '编译中 · ' + Math.round(p * 100) + '%', rsw = c.measureText(rs).width;
   c.fillStyle = S.film.err ? '#FF5A1F' : '#C8F53B'; c.textAlign = 'right'; c.fillText(rs, r.x + r.w - fs, r.y + fs * .7); c.textAlign = 'left';
-  c.fillStyle = '#fff'; c.fillText(fitText(c, (PROJ.engine === 'html' ? 'HTML5 · HyperFrames' : 'TSX · Remotion 4') + ' · ' + SCENES.length + ' 镜 · tsc --noEmit', r.w - rsw - fs * 3), r.x + fs, r.y + fs * .7);
+  c.fillStyle = '#fff'; c.fillText(fitText(c, (PROJ.engine === 'html' ? 'HTML5 动效引擎' : 'TSX · Remotion 4') + ' · ' + SCENES.length + ' 镜 · tsc --noEmit', r.w - rsw - fs * 3), r.x + fs, r.y + fs * .7);
   const bn = p * 16; for (let i = 0; i < 16; i++) { c.fillStyle = i < bn ? rgba(specAt(i / 15), 1) : 'rgba(255,255,255,.12)'; c.fillRect(r.x + 12 + i * (r.w - 24) / 16, r.y + r.h - bot * .6, (r.w - 24) / 16 - 3, Math.max(4, fs * .45)); } }

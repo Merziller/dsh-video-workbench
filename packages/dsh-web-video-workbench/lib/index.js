@@ -1,6 +1,6 @@
 /**
  * @dsh-video/web-video-workbench — Backend REST API & Cordis Plugin Adapter
- * Copyright (c) 2026 Merziller
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)
  * Author: Merziller | QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com
  * Official Repo: https://github.com/Merziller/dsh-video-workbench (MIT License)
  */
@@ -20,6 +20,7 @@ import {
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  BRAND,
   computeSafeZonePreflight,
   deriveDisplayTitle,
   formatDurationLabel,
@@ -40,6 +41,7 @@ import {
   saveHardwarePreferences,
   SCRUBBED_SCENE_TEXT_KEYS,
   splitDirectorBrief,
+  syncEndNoticeFiles,
   trustedSceneTextKey,
   writeScriptJson,
 } from '../../shared/index.js'
@@ -156,6 +158,7 @@ import { handleTalkApiRequest, isTalkRoute, TALK_ROUTES } from './routes-talk.js
 import { ANIME_ROUTES, handleAnimeApiRequest, isAnimeRoute } from './routes-anime.js'
 import { CONNECTION_TEST_ROUTES, handleConnectionTestApiRequest, isConnectionTestRoute } from './routes-connection-test.js'
 import { buildPolishContext, buildPolishRequest, buildPolishUserPayload, renderPolishResult } from './polish-brief.js'
+import { maybeStartAsrAutoInstall } from '../../dsh-tool-media/speech-recognition.js'
 
 function describeStyleForPrompt(v) {
   const s = String(v || '').trim()
@@ -185,14 +188,22 @@ function safeVibeToolkitStatus() {
   }
 }
 
+// 原创作者与出品工作室（双重版权署名, packages/shared/brand.js); the original keys keep their meaning for old clients
 export const AUTHOR_INFO = Object.freeze({
-  name: 'Merziller',
-  qq: '1411574209',
-  wechat: 'Merziller',
-  email: 'k26789228@gmail.com',
-  github: 'https://github.com/Merziller/dsh-video-workbench',
-  license: 'MIT',
-  notice: '© 2026 Merziller · 开源免费（MIT），二次分发/修改请保留原作者署名与联系方式',
+  name: BRAND.author,
+  nameZh: BRAND.authorZh,
+  qq: BRAND.qq,
+  wechat: BRAND.wechat,
+  email: BRAND.email,
+  github: BRAND.repoUrl,
+  license: BRAND.license,
+  productName: BRAND.productName,
+  studio: BRAND.studioName,
+  studioFullName: BRAND.studioFullName,
+  producedBy: BRAND.producedBy,
+  copyright: BRAND.copyright,
+  origin: BRAND.origin,
+  notice: `${BRAND.copyright} · 开源免费（MIT），二次分发或修改请保留工作室与原创作者的双署名和联系方式`,
 })
 import {
   scaffoldVideoProject,
@@ -432,7 +443,8 @@ export async function polishTopicPrompt(body = {}, { fetchImpl } = {}) {
     bgm: {
       bpm: Number(bgmSnap?.bpm) || 0,
       measured: Boolean(bgmSnap?.bpm),
-      durationSec: Number(bgmSnap?.durationSec || musicItems[0]?.durationSec) || 0,
+      // the whole song (bgm.durationSec is what is left after a chosen start, see 配乐从精彩处开始)
+      durationSec: Number(bgmSnap?.songDurationSec || bgmSnap?.durationSec || musicItems[0]?.durationSec) || 0,
       drops: (Array.isArray(bgmSnap?.drops) ? bgmSnap.drops : []).map((d) => (typeof d === 'number' ? d : Number(d?.time))).filter((d) => Number.isFinite(d)),
     },
   })
@@ -713,6 +725,9 @@ export async function handleWorkbenchApiRequest(req) {
     }
     // 1. GET /api/video-workbench/state
     if (pathname === '/api/video-workbench/state' && req.method === 'GET') {
+      // the War Room is open: prepare the local speech recognition in the background when it is missing (15 s later,
+      // so the startup self-check / smoke runs end first; DSH_ASR_AUTO_INSTALL=0 turns it off)
+      void maybeStartAsrAutoInstall({ delayMs: 15_000 })
       const { workspaceRoot, projects } = listVideoProjects()
       const requestedProject = url.searchParams.get('projectDir') || projects[0]?.projectDir || ''
       let activeProject = null
@@ -1005,6 +1020,8 @@ export async function handleWorkbenchApiRequest(req) {
         aiBadgeEnabled: body.aiBadgeEnabled !== undefined ? Boolean(body.aiBadgeEnabled) : (body.aiBadge !== undefined ? Boolean(body.aiBadge) : true),
         aiBadgePosition: body.aiBadgePosition || 'top-right',
         aiBadgeText: body.aiBadgeText || '',
+        endNotice: body.endNotice === true,
+        endNoticeCredit: body.endNoticeCredit === true,
         pacingMode: body.pacingMode || 'auto',
         narrationMode: body.narrationMode || 'tts',
         durationMode: body.durationMode === 'custom' ? 'custom' : 'auto',
@@ -1842,8 +1859,12 @@ export async function handleWorkbenchApiRequest(req) {
           ...(body.aiBadgeEnabled !== undefined ? { aiBadge: Boolean(body.aiBadgeEnabled), aiBadgeEnabled: Boolean(body.aiBadgeEnabled) } : {}),
           ...(body.aiBadgePosition ? { aiBadgePosition: String(body.aiBadgePosition) } : {}),
           ...(body.aiBadgeText !== undefined ? { aiBadgeText: String(body.aiBadgeText) } : {}),
+          ...(body.endNotice !== undefined ? { endNotice: body.endNotice === true } : {}),
+          ...(body.endNoticeCredit !== undefined ? { endNoticeCredit: body.endNoticeCredit === true } : {}),
           ...(body.targetPlatform ? { targetPlatform: body.targetPlatform } : {}),
           ...(body.bgmMode ? { bgmMode: body.bgmMode, audioSpec: { ...(data.audioSpec || {}), bgmMode: body.bgmMode } } : {}),
+          // 配乐从精彩处开始 ('auto') / 「从头开始」 ('head'): used by the next production (the current cut keeps its start)
+          ...(body.bgmStartFrom === 'auto' || body.bgmStartFrom === 'head' ? { bgm: { ...(data.bgm || {}), startFrom: body.bgmStartFrom } } : {}),
           ...(body.creationMode ? { creationMode: body.creationMode } : {}),
           ...(body.narrationMode ? { narrationMode: body.narrationMode } : {}),
           ...(body.pacingMode ? { pacingMode: body.pacingMode } : {}),
@@ -1868,6 +1889,8 @@ export async function handleWorkbenchApiRequest(req) {
           ...(body.genreLabel !== undefined ? { genreLabel: String(body.genreLabel) } : {}),
         })
         syncProjectCodeFromScript(projectDir, updated.data)
+        // AI-coded compositions are kept as written: only their end-notice line follows the switch (preview = render)
+        syncEndNoticeFiles(projectDir, updated.data)
         return jsonResponse({ ok: true, action, dimensions: dims, script: updated.data })
       }
 

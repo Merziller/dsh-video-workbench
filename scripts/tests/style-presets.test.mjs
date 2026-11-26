@@ -33,6 +33,8 @@ Object.assign(process.env, {
   DSH_HOME: dirs.dshClient,
   DSH_VIDEO_SKIP_PROFILE_MOUNT: '1',
 })
+// tests never download the local speech engine (its automatic install starts from the studio state / talk routes)
+if (process.env.DSH_ASR_AUTO_INSTALL === undefined) process.env.DSH_ASR_AUTO_INSTALL = '0'
 globalThis.fetch = async (input) => {
   throw new Error(`network blocked in tests: ${typeof input === 'string' ? input : input?.url || input}`)
 }

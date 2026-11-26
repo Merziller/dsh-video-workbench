@@ -2784,7 +2784,7 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
   })
 
   /* ================================================================ 4 · 提词器录制 TELEPROMPTER */
-  const TELE_DEFAULT_TEXT = '欢迎来到 DSH 电影视频工坊。\n只要在这里导入素材或现场录制一段口播，\n四位 AI 智能体就会协同完成分镜、剪辑、配音混音与 1080P 成片渲染。'
+  const TELE_DEFAULT_TEXT = `欢迎来到${(PK.BRAND && PK.BRAND.productName) || '禾杨视频工坊'}。\n只要在这里导入素材或现场录制一段口播，\n四位 AI 智能体就会协同完成分镜、剪辑、配音混音与 1080P 成片渲染。`
   const TELE = { text: '', speed: 1.1, font: 26, lh: 1.65, opacity: 0.62, mirrorCam: true, mirrorText: false, clone: true, role: 'host_video', layout: 'side', durationSec: 45 }
   const TELE_ROLES = [
     { value: 'host_video', label: '真人出镜主镜头', hint: '直接用作视频口播与原声片源（host_video）' },

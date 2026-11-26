@@ -1,0 +1,67 @@
+@@@ REPLACE
+body.tiny .brand-txt,body.tiny .hc-t,body.tiny .lamp b,body.tiny .seg button span,body.tiny .dd-btn em{display:none}
+@@@ WITH
+body.tiny .brand-txt,body.tiny #hostBack .hc-t,body.tiny .lamp b,body.tiny .seg button span,body.tiny .dd-btn em{display:none}
+@@@ END
+@@@ REPLACE
+#projDD{flex:0 1 auto;min-width:96px}
+#projDD .dd-btn{max-width:300px;min-width:0}
+@@@ WITH
+/* 工程选择器的上限加在外层槽位上（按钮填满槽位、不留空白，也不越界压住页签） */
+#projDD{flex:0 1 auto;min-width:96px;max-width:300px}
+#projDD .dd-btn{max-width:100%;min-width:0}
+@@@ END
+@@@ REPLACE
+#topbar.tb-5 .hc-t{display:none}
+#topbar.tb-5 #projDD .dd-btn{max-width:170px}
+@@@ WITH
+#topbar.tb-5 #hostBack .hc-t{display:none}
+#topbar.tb-5 #projDD{max-width:170px}
+@@@ END
+@@@ REPLACE
+#topbar.tb-6 #projDD .dd-btn{max-width:130px}
+#topbar.tb-6 .busy{max-width:150px}
+@@@ WITH
+#topbar.tb-6 #projDD{max-width:130px}
+#topbar.tb-6 .busy{max-width:150px}
+#topbar.tb-7 .busy{min-width:0;padding:0 8px}
+#topbar.tb-7 .busy span{display:none}
+#topbar.tb-7 .slip{padding:0 6px}
+#topbar.tb-7 #projDD{max-width:120px}
+#topbar.tb-8 .hc-t{display:none}
+/* 产品名「禾杨视频工坊」只出现一次：放得下时在印章旁（.brand-txt），否则在宿主胶囊里（收拢到最后一步才隐藏） */
+body:not(.tiny) #topbar:not(.tb-2) .hostcap.solo{display:none}
+body:not(.tiny) #topbar:not(.tb-2) .hc.on .hc-t{display:none}
+@@@ END
+@@@ REPLACE
+  const back = $('#hostBack'); if (back.hidden === dsh) { back.hidden = !dsh; $('#hostCap').classList.toggle('solo', !dsh); fitTopbar(); }
+@@@ WITH
+  const back = $('#hostBack'); if (back.hidden === dsh) { back.hidden = !dsh; $('#hostCap').classList.toggle('solo', !dsh); }
+@@@ END
+@@@ REPLACE
+  if (bp.hidden === !!busy) { bp.hidden = !busy; fitTopbar(); }
+  setTxt('busyTxt', busy); setTitle('busyPill', busy ? busy + '（点击打开任务中心）' : '');
+@@@ WITH
+  setTxt('busyTxt', busy); setTitle('busyPill', busy ? busy + '（点击打开任务中心）' : '');
+  if (bp.hidden === !!busy) bp.hidden = !busy;
+@@@ END
+@@@ REPLACE
+  document.body.classList.toggle('noproj', !p);
+}
+@@@ WITH
+  document.body.classList.toggle('noproj', !p);
+  /* 顶栏内容（返回按钮、工程名、忙碌文字、状态灯、计数）一变就按新宽度重新收拢：先填好文字再量，永不重叠 */
+  const fit = `${dsh}|${!!busy}|${$('#topbar').textContent}`;
+  if (fit !== CHROME.fit) { CHROME.fit = fit; fitTopbar(); }
+}
+@@@ END
+@@@ REPLACE
+/* 顶栏宽度不足时依次收起：状态灯文字 → 品牌字 → 页签英文/计数 → 镜头文字 → 状态灯 → 工程名缩短（永不重叠） */
+@@@ WITH
+/* 顶栏宽度不足时依次收起：状态灯文字 → 品牌字 → 页签英文/计数 → 镜头文字 → 状态灯 → 工程名缩短 → 忙碌只留转圈（文字在悬停提示和任务中心里） → 最后才收起产品名（永不重叠） */
+@@@ END
+@@@ REPLACE
+  const steps = ['tb-1', 'tb-2', 'tb-3', 'tb-4', 'tb-5', 'tb-6'];
+@@@ WITH
+  const steps = ['tb-1', 'tb-2', 'tb-3', 'tb-4', 'tb-5', 'tb-6', 'tb-7', 'tb-8'];
+@@@ END

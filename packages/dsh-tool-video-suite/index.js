@@ -18,6 +18,7 @@ import {
   resolveEnvPath,
   RESTRICTED_COMMERCIAL_FONT_PATTERNS,
   runCommandRedirected,
+  syncEndNoticeFiles,
   syncProjectFonts,
   writeScriptJson,
 } from '../shared/index.js'
@@ -406,6 +407,8 @@ export async function executeVideoSnapshot(args = {}) {
     : resolve(REPO_ROOT, args.projectDir || '.')
 
   const { data: script } = writeScriptJson(targetDir, readScriptJson(targetDir).data)
+  // 片尾声明 switch: compositions written before the switch existed (or before it changed) follow it without regenerating
+  syncEndNoticeFiles(targetDir, script)
   const engine = args.engine || script.engine || 'html'
   const fps = Number(script.fps) || 30
   const totalFrames = Math.max(9, Number(script.totalDurationInFrames) || 270)
@@ -571,6 +574,8 @@ export async function executeVideoRender(args = {}) {
     : resolve(REPO_ROOT, args.projectDir || '.')
 
   const { data: script } = writeScriptJson(targetDir, readScriptJson(targetDir).data)
+  // 片尾声明 switch: compositions written before the switch existed (or before it changed) follow it without regenerating
+  syncEndNoticeFiles(targetDir, script)
   const engine = args.engine || script.engine || 'html'
   const fps = Number(script.fps) || 30
   const width = Number(args.width) || Number(script.width) || 1920

@@ -455,6 +455,13 @@ try {
   console.error('[PK] module 00-core.js failed to load', err)
 }
 
+/* ---- brand (generated from packages/shared/brand.js) ---- */
+try {
+  if (window.PK && !window.PK.BRAND) window.PK.BRAND = Object.freeze({"productName":"禾杨视频工坊","productNameEn":"DSH Video Workbench","packageName":"dsh-video-workbench","studioName":"禾杨智绘","studioFullName":"绍兴市柯桥区禾杨智绘软件开发工作室","producedBy":"禾杨智绘出品","author":"Merziller","authorZh":"子墨","authorDisplay":"Merziller (子墨)","qq":"1411574209","wechat":"Merziller","email":"k26789228@gmail.com","repoUrl":"https://github.com/Merziller/dsh-video-workbench","license":"MIT","copyrightYear":2026,"copyright":"Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)","copyrightShort":"© 2026 禾杨智绘 & Merziller","origin":"本项目由 Merziller 与旗下绍兴市柯桥区禾杨智绘软件开发工作室原创研发，开源版遵循 MIT 协议保留双署名，商业免配整合包与企业定制由工作室官方提供。","originEn":"Originally created by Merziller (子墨) and the studio founded by Merziller, 绍兴市柯桥区禾杨智绘软件开发工作室 (禾杨智绘). The open-source edition is released under the MIT License with both credits retained; ready-to-run commercial bundles and enterprise customization are provided officially by the studio.","contactLine":"QQ：1411574209 · 微信：Merziller · Gmail：k26789228@gmail.com","footerLine":"禾杨视频工坊 · 禾杨智绘出品"})
+} catch (err) {
+  console.error('[PK] brand failed to load', err)
+}
+
 /* ---- 10-ui.js ---- */
 try {
 /* ============================================================================================================
@@ -2906,7 +2913,9 @@ try {
     order: 99,
     desc: '三步出片、快捷键与常见问题',
     render(ctx) {
-      ctx.foot([ui.spacer(), ui.btn('知道了', () => ctx.close(), { kind: 'primary' })])
+      // footer: 「禾杨视频工坊 · 禾杨智绘出品」; the full credits are in the 关于 section at the end
+      const B = PK.BRAND || {}
+      ctx.foot([B.footerLine ? ui.hint(B.footerLine) : null, ui.spacer(), ui.btn('知道了', () => ctx.close(), { kind: 'primary' })].filter(Boolean))
       const keys = (PK.cfg.shortcuts || [
         ['R', '一键出片 / 继续'],
         ['空格', '播放 / 暂停预览'],
@@ -2931,9 +2940,25 @@ try {
             ui.item({ icon: 'cpu', title: '电脑比较卡', sub: '打开「算力体检」开启低配保护：自动降帧、关闭重特效。', onClick: () => PK.open('hardware') }),
           ]),
         ),
-      ]
+        B.productName ? aboutSection(B) : null,
+      ].filter(Boolean)
     },
   })
+
+  /** 关于: product, studio, original author, licence and the dual copyright (from PK.BRAND, packages/shared/brand.js) */
+  function aboutSection(B) {
+    return ui.section(
+      { title: '关于', en: 'ABOUT', icon: 'info' },
+      ui.kv([
+        ['产品', `${B.productName}（${B.productNameEn}）`],
+        ['出品', `${B.studioName} · ${B.studioFullName}`],
+        ['原创作者', `${B.authorDisplay} · ${B.contactLine}`],
+        ['开源协议', `${B.license}（开源免费）· ${B.repoUrl}`],
+        ['版权', B.copyright],
+      ]),
+      B.origin ? ui.hint(B.origin) : null,
+    )
+  }
 
   /* ---------------------------------------------------------------- 组件样板 (for skin authors; hidden) */
   PK.panel('kitchen', {
@@ -4997,7 +5022,11 @@ try {
     const beat = U.num(bgm.bpm) > 0
       ? [`已测定节拍 ${Math.round(U.num(bgm.bpm))} BPM`, bgm.phaseSec !== undefined ? `首拍 ${U.num(bgm.phaseSec).toFixed(2)} 秒` : '', Array.isArray(bgm.downbeats) ? `${bgm.downbeats.length} 个重拍` : '', Array.isArray(bgm.drops) ? `${bgm.drops.length} 个高潮突降点` : ''].filter(Boolean).join(' · ')
       : ''
-    return wrapSub(ui.item({ key: 'a60-curbgm', icon: 'music', title: `当前配乐：${lib ? assetName(lib) : U.baseName(rel)}`, sub: [src, beat].filter(Boolean).join(' · '), tip: rel, right: [ui.playBtn(PK.assetUrl(rel), { label: '试听' })] }))
+    // 配乐从精彩处开始: where the last production started the song (beats / drops above are already in film time)
+    const fromSec = Math.round(U.num(bgm.startSec))
+    const from = fromSec > 0 ? `本片配乐从 ${Math.floor(fromSec / 60)}:${String(fromSec % 60).padStart(2, '0')} 开始` : ''
+    const tip = [rel, fromSec > 0 && bgm.startNote ? String(bgm.startNote) : ''].filter(Boolean).join('\n')
+    return wrapSub(ui.item({ key: 'a60-curbgm', icon: 'music', title: `当前配乐：${lib ? assetName(lib) : U.baseName(rel)}`, sub: [src, from, beat].filter(Boolean).join(' · '), tip, right: [ui.playBtn(PK.assetUrl(rel), { label: '试听' })] }))
   }
   function bgmSection(ctx, L, s) {
     const mode = String(dv(L, 'bgmMode') || 'llm-coded')
@@ -5033,6 +5062,15 @@ try {
             )
           : ui.note('还没有上传配乐。上传一首你喜欢的音乐，会自动测量节拍并作为背景音乐。', { level: 'info' }),
         ui.row([ui.btn('上传新的 BGM', () => pickAndImport(ctx, 'bgm'), { icon: 'upload', size: 'sm', busyText: '上传中…' }), ui.btn('去素材库', () => s.go('assets'), { size: 'sm', kind: 'ghost', icon: 'chevL' })], { wrap: true }),
+        // 配乐从精彩处开始 (script.bgm.startFrom 'auto' | 'head'); 口播剪辑 keeps the music as a light bed
+        String(dv(L, 'productionType') || '') === 'talk-edit'
+          ? null
+          : ui.toggle({
+              value: String(dv(L, 'bgmStartFrom') || 'auto') !== 'head',
+              label: '配乐从精彩处开始',
+              hint: '歌比成片长很多时，自动从合适的小节开始播放：跳过长前奏，让高潮落在片中合适的位置。关掉就从歌曲开头播放。下次出片时生效。',
+              onChange: (v) => guard(() => setD(ctx, L, 'bgmStartFrom', v ? 'auto' : 'head')),
+            }),
       ])
     } else {
       const b = bindText(ctx, L, 'bgmTtsPrompt', String(D().bgmTtsPrompt || ''))
@@ -5108,6 +5146,8 @@ try {
     const vibeReady = vibe.filter((t) => t && t.available).length
     const fxHint = `${vibe.length ? `Vibecoding 工具箱（本机就绪 ${vibeReady}/${vibe.length}）` : 'Vibecoding 工具箱'}由 AI 按每一镜的需要自动调用，不用手动挑选；工具满足不了的效果，AI 会直接写代码实现。这里只定整体视效偏好。`
     const badgeOn = Boolean(dv(L, 'aiBadgeEnabled'))
+    const endOn = dv(L, 'endNotice') === true
+    const creditOn = dv(L, 'endNoticeCredit') === true
     const reviewOn = dv(L, 'visualReview') !== false
     const reviewFineOn = dv(L, 'visualReviewFine') !== false
     const badgePos = String(dv(L, 'aiBadgePosition') || 'top-right')
@@ -5152,6 +5192,20 @@ try {
             ui.field({ label: '角标位置', en: 'POSITION' }, ui.select({ key: 'a60-badgepos', value: badgePos, options: withHints(OP('aiBadgePositions'), HINTS.badge), showHint: true, searchable: false, aria: '角标位置', onChange: (v) => guard(() => setD(ctx, L, 'aiBadgePosition', v)) })),
             ui.field({ label: '角标文字', en: 'TEXT', hint: '最多 40 个字' }, badgeTa),
           )
+        : null,
+      ui.toggle({
+        value: endOn,
+        label: '片尾声明（最后一行字）',
+        hint: '在成片最后约 2 秒显示一行「本视频含 AI 生成内容：……」。默认关闭：画面角落的 AI 角标已经标明这是 AI 作品；发布包里另有一段 AI 声明，发布时可以复制到作品描述里',
+        onChange: (v) => guard(() => setD(ctx, L, 'endNotice', v)),
+      }),
+      endOn
+        ? ui.toggle({
+            value: creditOn,
+            label: '片尾署名插件',
+            hint: `打开后这一行写成「本视频由${(PK.BRAND && PK.BRAND.productName) || '禾杨视频工坊'}创作：……」，导出发布包时面板里可复制的那段合规声明也带这句署名（发布文案本身始终不带）。默认关闭，你的作品不带插件署名`,
+            onChange: (v) => guard(() => setD(ctx, L, 'endNoticeCredit', v)),
+          })
         : null,
     )
   }
@@ -5396,6 +5450,8 @@ try {
       aiBadgeEnabled: Boolean(d.aiBadgeEnabled),
       aiBadgePosition: d.aiBadgePosition || 'top-right',
       aiBadgeText: d.aiBadgeText || '',
+      endNotice: d.endNotice === true,
+      endNoticeCredit: d.endNoticeCredit === true,
       pacingMode: d.pacingMode || 'auto',
       durationMode: d.durationMode === 'custom' ? 'custom' : 'auto',
       targetDurationSec: d.durationMode === 'custom' ? clampInt(d.targetDurationSec, 15, 600, 120) : 0,
@@ -5649,7 +5705,7 @@ try {
           ])
         : ui.note('还没有剪辑过。可以先打开「AI 剪辑」逐句看看要剪掉哪些地方（能一键恢复），也可以直接一键出片。', { level: 'info' }),
       ui.row([ui.btn('打开 AI 剪辑：逐句查看与恢复', () => PK.open('talkEdit'), { kind: 'primary', icon: 'film' })], { wrap: true }),
-      ui.hint('第一次使用需要安装「本地语音识别」（免费、离线，约 260 MB），在 AI 剪辑面板里一键安装。'),
+      ui.hint('第一次使用时会自动准备「本地语音识别」（免费、离线，约 260 MB，只需一次，不用你操作），准备进度可以在 AI 剪辑面板里看到。'),
     )
   }
   function produceTalkSection(ctx) {
@@ -8749,7 +8805,9 @@ a.pk-btn{text-decoration:none}
 try {
 /* ============================================================================================================
  * PK · AI 剪辑 · 口播粗剪 (talkEdit panel) — the user's own talking-head recording, cut by the computer:
- *   1. 本地语音识别 engine: status, one-click install (folder + download source), licences
+ *   1. 本地语音识别 engine: status; it prepares itself automatically (progress, polled every 2 s); when that failed the
+ *      reason + 「重试」 + 「自己选安装位置（高级）」 (folder + download source); the one-click install form when the
+ *      automatic install is switched off; licences
  *   2. pick the recording, the cut rules (停顿 / 口头禅 / 结巴 / 重录 / 声音增强 / 语言)
  *   3. 识别并规划: the transcript with every cut shown in place (struck through, reason on hover) — click a cut to bring
  *      it back, click a kept word to cut it; the list of cuts with 恢复 / 剪掉; stats
@@ -8886,11 +8944,33 @@ try {
     ctx.update()
   }
   async function loadEngine(ctx, deep) {
+    const L = ctx.local
     const res = await PK.get('asr/status', deep ? { deep: 1 } : undefined, { timeout: deep ? 120000 : 30000 })
-    ctx.local.asr = (res && res.asr) || null
-    ctx.local.installer = (res && res.installer) || null
-    if (ctx.local.installer && !ctx.local.installDir) ctx.local.installDir = S(ctx.local.installer.recommendedHome)
+    const was = L.install && L.install.state
+    L.asr = (res && res.asr) || null
+    L.installer = (res && res.installer) || null
+    L.install = (res && res.install) || null
+    if (L.installer && !L.installDir) L.installDir = S(L.installer.recommendedHome)
+    // the shared install just ended (automatic or 「重试」 / 一键安装)
+    const now = L.install && L.install.state
+    if (was === 'running' && now !== 'running') {
+      if (L.asr && L.asr.ready) {
+        PK.toast('本地语音识别已经准备好了，可以开始口播粗剪', 'success')
+        loadState(ctx, { quiet: true })
+      } else if (now === 'failed') {
+        PK.toast(`本地语音识别没有准备好：${S(L.install.error)}`, 'warn')
+      }
+    }
     return res
+  }
+  /** every ~2 s while the engine is being prepared (ctx.every pauses while the window is hidden) */
+  function pollEngine(ctx) {
+    const L = ctx.local
+    if (L.enginePolling || !(L.install && L.install.state === 'running')) return
+    L.enginePolling = true
+    loadEngine(ctx)
+      .then(() => ctx.update(), () => {})
+      .finally(() => (L.enginePolling = false))
   }
 
   const overridesOf = (L) => ({ restore: [...(L.restore || [])], cutWords: (L.cutWords || []).map((r) => [r[0], r[1]]) })
@@ -8921,20 +9001,38 @@ try {
       ok: '开始安装',
     })
     if (!ok) return
-    startJob('install', {
-      label: '安装本地语音识别',
-      startText: '正在启动安装…',
-      start: () => PK.post('asr/install', { installDir: dir, mirror }),
-      doneText: (r) => (r && r.ok ? '安装完成并通过自检' : `已安装，但自检没通过：${S(r && r.status && r.status.reason)}`),
-      maxMs: 3 * 3600 * 1000,
-    })
-      .then(async () => {
-        PK.toast('本地语音识别安装完成，可以开始口播粗剪了', 'success')
-        await loadEngine(ctx).catch(() => {})
-        await loadState(ctx, { quiet: true })
-      })
-      .catch((err) => PK.toast(`本地语音识别安装未完成：${S(err && err.message)}`, 'error', { title: '安装失败', timeout: 0 }))
+    await postInstall(ctx, { installDir: dir, mirror })
+  }
+  /** the shared install on the server (joins one already running); its progress is then polled from asr/status */
+  async function postInstall(ctx, body) {
+    const L = ctx.local
+    const res = await PK.post('asr/install', body)
+    L.install = (res && res.install) || { ...(L.install || {}), state: 'running', progress: 0, message: '正在启动安装…' }
+    L.showAdvanced = false
     ctx.update()
+  }
+  /** 「重试」: the same folder and download source as the attempt that failed, right away */
+  function retryInstall(ctx) {
+    const inst = ctx.local.install || {}
+    return postInstall(ctx, { mirror: inst.mirror === 'global' ? 'global' : 'cn', ...(inst.home ? { installDir: S(inst.home) } : {}) })
+  }
+
+  /** 导出整段字幕 / 文稿: the whole recording on its own timeline (uses the cached recognition, no cut) */
+  async function exportTranscript(ctx) {
+    PK.needProject()
+    const L = ctx.local
+    if (!L.source) throw new PK.Error('请先选择视频')
+    const key = `transcribe:${PK.dir()}`
+    const res = await startJob(key, {
+      label: '导出整段字幕 / 文稿',
+      startText: '正在提交…',
+      start: () => PK.postP('talk/transcribe', { mediaPath: L.source }),
+      doneText: (r) => `已导出：${S(r && r.srt)}、${S(r && r.txt)}`,
+    })
+    ctx.update()
+    if (!res || !res.srt) return
+    const ok = await PK.confirm({ title: '字幕和文稿已导出', text: `已保存在工程里：\n· ${S(res.srt)}（字幕，原视频时间）\n· ${S(res.txt)}（文稿）\n\n要另存一份字幕到别的位置吗？`, ok: '另存字幕', cancel: '不用了' })
+    if (ok) await PK.saveFile({ rel: res.srt, what: '字幕' })
   }
 
   async function runPlan(ctx, { force = false } = {}) {
@@ -9093,7 +9191,7 @@ try {
     const a = L.asr
     const inst = L.installer || {}
     const pkg = inst.package || {}
-    const installing = jobRunning('install')
+    const auto = L.install || {}
     if (!a) return ui.section({ title: '本地语音识别', en: 'SPEECH ENGINE', icon: 'mic' }, L.asrErr ? ui.errorBox(L.asrErr, () => loadEngine(ctx).then(() => ctx.update(), () => {})) : ui.loading('正在检测…'))
     if (a.ready) {
       return ui.section(
@@ -9104,26 +9202,66 @@ try {
     if (a.supportedPlatform === false) {
       return ui.section({ title: '本地语音识别', en: 'SPEECH ENGINE', icon: 'mic' }, ui.note(`当前系统（${S(a.platform)}）没有可用的识别引擎：支持 Windows / macOS / Linux 的 x64 与 arm64。`, { level: 'warn' }))
     }
-    const free = inst.freeBytes
+    // being prepared (automatically, or after 「重试」 / 一键安装): progress only, nothing to do
+    if (auto.state === 'running') {
+      const pct = U.clamp(U.num(auto.progress, 0), 0, 100)
+      return ui.section(
+        { title: '本地语音识别', en: 'SPEECH ENGINE · SETUP', icon: 'mic' },
+        ui.meter(pct, {
+          label: auto.trigger === 'manual' ? '正在安装本地语音识别（约 260 MB，装好后一直能用）' : '正在自动准备本地语音识别（首次约 260 MB，装好后一直能用，不用你操作）',
+          valueText: `${Math.round(pct)}%`,
+          indeterminate: pct <= 2,
+        }),
+        auto.message ? ui.text(S(auto.message), { tone: 'muted' }) : null,
+        ui.hint(`可以先选视频、调剪辑规则；现在点「识别并规划粗剪」也行，它会等准备好再开始。关掉这个窗口没关系，准备会在后台继续。${auto.home ? `装在：${S(auto.home)}` : ''}`),
+        licenseToggle(ctx, pkg.license || a.attribution || []),
+      )
+    }
+    // the last attempt failed: why, 「重试」, and the old form for another folder / download source
+    if (auto.state === 'failed') {
+      return ui.section(
+        { title: '本地语音识别', en: 'SPEECH ENGINE · SETUP', icon: 'mic' },
+        ui.note(S(auto.error) || '原因未知', { level: 'warn', title: '本地语音识别没有准备好', actions: [ui.btn('重试', () => retryInstall(ctx), { size: 'sm', kind: 'primary', icon: 'retry', busyText: '正在重试…' })] }),
+        ui.btn(L.showAdvanced ? '收起「自己选安装位置」' : '自己选安装位置（高级）', () => {
+          L.showAdvanced = !L.showAdvanced
+          ctx.update()
+        }, { size: 'sm', kind: 'link', icon: L.showAdvanced ? 'collapse' : 'folder' }),
+        L.showAdvanced ? ui.hint('一直不成功的话：换一个空间大、纯英文路径的文件夹，或者换「官方全球源」再装。') : null,
+        L.showAdvanced ? installForm(ctx) : null,
+        licenseToggle(ctx, pkg.license || a.attribution || []),
+      )
+    }
+    // nothing running (the automatic install is switched off): the one-click install as before
     return ui.section(
       { title: '先安装本地语音识别', en: 'SPEECH ENGINE · ONE-TIME SETUP', icon: 'mic', desc: '口播粗剪要先“听懂”你说了什么。识别在你自己的电脑上完成：不上传、不花钱，装一次以后一直能用。' },
+      auto.state === 'disabled' && auto.disabledReason === 'switched-off' ? ui.hint('自动安装已经关掉了（设置了 DSH_ASR_AUTO_INSTALL=0），需要时在这里一键安装。') : null,
       ui.kv([
         ['能做什么', (pkg.uses || []).join('、') || '口播粗剪、真实字幕'],
         ['支持语言', S(pkg.languages) || '普通话 · 粤语 · 英语 · 日语 · 韩语'],
         ['占用空间', S(pkg.diskRequired) || '约 260 MB'],
         ['预计耗时', S(pkg.etaLabel) || '几分钟'],
       ]),
-      ui.field(
-        { label: '安装位置', en: 'FOLDER', hint: `建议放在系统盘以外、纯英文路径的文件夹${free ? `（这个盘还剩 ${(free / 1024 ** 3).toFixed(1)} GB）` : ''}` },
-        ui.input({ key: 'te-dir', value: S(L.installDir), mono: true, placeholder: 'D:/dsh-ai/asr', onInput: (v) => (L.installDir = v), disabled: installing }),
-      ),
-      ui.field(
-        { label: '下载源', en: 'SOURCE' },
-        ui.seg({ value: L.mirror === 'global' ? 'global' : 'cn', options: [{ value: 'cn', label: '国内镜像（推荐）' }, { value: 'global', label: '官方全球源' }], onChange: (v) => (L.mirror = v), disabled: installing }),
-      ),
-      ui.row([ui.btn(installing ? '正在安装…' : '一键安装（约 260 MB）', () => installEngine(ctx), { kind: 'primary', icon: 'download', disabled: installing })]),
-      jobView('install'),
+      installForm(ctx),
       licenseToggle(ctx, pkg.license || a.attribution || []),
+    )
+  }
+  /** 安装位置 + 下载源 + 一键安装 */
+  function installForm(ctx) {
+    const L = ctx.local
+    const free = (L.installer || {}).freeBytes
+    return ui.stack(
+      [
+        ui.field(
+          { label: '安装位置', en: 'FOLDER', hint: `建议放在系统盘以外、纯英文路径的文件夹${free ? `（这个盘还剩 ${(free / 1024 ** 3).toFixed(1)} GB）` : ''}` },
+          ui.input({ key: 'te-dir', value: S(L.installDir), mono: true, placeholder: 'D:/dsh-ai/asr', onInput: (v) => (L.installDir = v) }),
+        ),
+        ui.field(
+          { label: '下载源', en: 'SOURCE' },
+          ui.seg({ value: L.mirror === 'global' ? 'global' : 'cn', options: [{ value: 'cn', label: '国内镜像（推荐）' }, { value: 'global', label: '官方全球源' }], onChange: (v) => (L.mirror = v) }),
+        ),
+        ui.row([ui.btn('一键安装（约 260 MB）', () => installEngine(ctx), { kind: 'primary', icon: 'download', busyText: '正在启动…' })]),
+      ],
+      { gap: 10 },
     )
   }
   /** 开源授权与出处: collapsed by default (a toggle, so hidden text is never laid out over the rest) */
@@ -9297,11 +9435,21 @@ try {
     const rc = d.roughcut
     const key = `plan:${PK.dir()}`
     const busy = jobRunning(key) || jobRunning(`build:${PK.dir()}`)
-    const engineReady = Boolean(L.asr && L.asr.ready)
+    // while the engine is being prepared the buttons work too: the job waits for it on the server
+    const preparing = Boolean(L.install && L.install.state === 'running')
+    const engineReady = Boolean(L.asr && (L.asr.ready || preparing))
+    const engineNote = L.asr && L.asr.ready
+      ? null
+      : preparing
+        ? ui.note('本地语音识别正在自动准备（进度见上面），准备好后就能识别；现在点「识别并规划粗剪」也可以，它会自动等。', { level: 'info' })
+        : L.install && L.install.state === 'failed'
+          ? ui.note('本地语音识别还没准备好：请在上面点「重试」。', { level: 'warn' })
+          : ui.note('请先在上面安装本地语音识别。', { level: 'info' })
     const head = ui.row(
       [
         ui.btn(rc ? (L.dirty ? '应用修改并重新规划' : '重新识别并规划') : '识别并规划粗剪', () => runPlan(ctx), { kind: rc && !L.dirty ? 'secondary' : 'primary', icon: 'wave', disabled: busy || !engineReady || !L.source, busyText: '处理中…' }),
         rc && !L.dirty ? ui.btn('从头重新识别', () => runPlan(ctx, { force: true }), { kind: 'ghost', size: 'sm', icon: 'refresh', disabled: busy || !engineReady, title: '识别结果有误时：忽略缓存，重新听写一遍' }) : null,
+        rc ? ui.btn('导出整段字幕 / 文稿', () => exportTranscript(ctx), { kind: 'ghost', size: 'sm', icon: 'download', disabled: busy || !engineReady || jobRunning(`transcribe:${PK.dir()}`), busyText: '导出中…', title: '按原视频的时间导出 SRT 字幕和 TXT 文稿（不剪任何内容）' }) : null,
         ui.spacer(),
         L.dirty ? ui.pill('有未应用的修改', 'warn', { dot: true }) : null,
       ],
@@ -9310,7 +9458,7 @@ try {
     if (!rc) {
       return ui.section(
         { title: '粗剪结果', en: 'ROUGH CUT', icon: 'scissors', desc: '先“听写”整段视频，再按上面的规则标出要剪掉的地方。第一次识别 1 分钟的视频大约需要几秒钟。' },
-        engineReady ? null : ui.note('请先在上面安装本地语音识别。', { level: 'info' }),
+        engineNote,
         head,
         jobView(key),
       )
@@ -9631,6 +9779,8 @@ try {
         },
       )
       loadState(ctx, { quiet: true })
+      // the engine prepares itself in the background: follow its progress until it is done
+      ctx.every(2000, () => pollEngine(ctx))
     },
     render(ctx) {
       const L = ctx.local
@@ -9856,6 +10006,512 @@ try {
 
 } catch (err) {
   console.error('[PK] module 63-highlight.js failed to load', err)
+}
+
+/* ---- 63b-short-clips.js ---- */
+try {
+/* ============================================================================================================
+ * PK · AI 剪辑 · 长视频拆条 (shortClips panel) — a long recording of the user's own (访谈 / 播客 / 直播回放 / 课程)
+ * turned into stand-alone short clips:
+ *   1. which recording, which platform (canvas + clip length), how many clips, an optional wish
+ *   2. 找精彩片段: local speech recognition (cached) + ONE model call per ~60 min of speech (or the current agent)
+ *   3. the clips: title (editable), why it was picked, where it sits in the recording, on / off, one sentence
+ *      earlier / later at either end
+ *   4. look (layout, captions, title, progress line, accent) → 出片 (local FFmpeg, free) → play, 另存为, open folder
+ * The local speech recognition prepares itself automatically (clips/state starts it): its progress is shown (polled
+ * from asr/status every 2 s) and 「找精彩片段」 can already be clicked (the job waits for it); 「重试」 when it failed.
+ * Routes (routes-talk.js): GET clips/state · asr/status · POST clips/find · clips/update · clips/render · clips/reveal ·
+ * asr/install.
+ * ============================================================================================================ */
+;(function () {
+  'use strict'
+  const PK = window.PK
+  if (!PK || typeof PK.panel !== 'function') return
+  const U = PK.util
+  const ui = PK.ui
+
+  const S = (v) => (v === undefined || v === null ? '' : String(v))
+  const fmtLen = (s) => {
+    const v = Math.max(0, Math.round(Number(s) || 0))
+    return v >= 60 ? `${Math.floor(v / 60)} 分 ${String(v % 60).padStart(2, '0')} 秒` : `${v} 秒`
+  }
+  const fmtClock = (s) => {
+    const v = Math.max(0, Math.floor(Number(s) || 0))
+    const h = Math.floor(v / 3600)
+    const m = Math.floor((v % 3600) / 60)
+    const ss = String(v % 60).padStart(2, '0')
+    return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
+  }
+  const LAYOUTS = [
+    { value: 'auto', label: '自动', hint: '画面比例和平台一样就直接铺满；不一样就把整个画面放在模糊背景上，不会切掉人' },
+    { value: 'fit', label: '模糊背景', hint: '完整画面 + 模糊的同一画面做背景，最稳妥' },
+    { value: 'window', label: '访谈小窗', hint: '画面放进上方的小窗，标题在上、字幕在下（只用于竖屏）' },
+    { value: 'crop', label: '裁成竖屏', hint: '从画面中间裁成竖屏，适合一个人坐在正中间的视频' },
+  ]
+  const CAPTIONS = [
+    { value: 'auto', label: '自动', hint: '原视频已经有字幕时不再重复加' },
+    { value: 'on', label: '加字幕' },
+    { value: 'off', label: '不加' },
+  ]
+
+  // one job per project at a time; progress survives closing / reopening the panel
+  const RUN = { dir: '', kind: '', state: '', pct: 0, msg: '', startedAt: 0, result: null }
+
+  async function loadState(ctx, { quiet = false } = {}) {
+    const L = ctx.local
+    if (!PK.hasProject()) return
+    try {
+      const d = await PK.get('clips/state', { projectDir: PK.dir(), ...(L.source ? { source: L.source } : {}) }, { timeout: 60000 })
+      L.data = d
+      L.err = null
+      if (!L.source && d && d.source) L.source = d.source.path
+      const plan = d && d.plan
+      if (plan && !L.touched) {
+        L.form.platform = plan.platform || L.form.platform
+        L.form.count = Number(plan.count) || 0
+        L.form.focus = S(plan.focus)
+      }
+      if (plan && plan.render && !L.lookTouched) L.look = { ...L.look, ...plan.render }
+    } catch (err) {
+      L.err = err
+      if (!quiet) PK.reportError(err)
+    }
+    ctx.update()
+  }
+
+  async function runJob(ctx, kind, label, start, doneText) {
+    if (RUN.state === 'running') return
+    RUN.dir = PK.dir()
+    RUN.kind = kind
+    RUN.state = 'running'
+    RUN.pct = 2
+    RUN.msg = '正在提交…'
+    RUN.startedAt = Date.now()
+    RUN.result = null
+    ctx.update()
+    const tick = setInterval(() => ctx.update(), 1000)
+    try {
+      const init = await start()
+      const jobId = init && (init.jobId || (init.job && init.job.id))
+      if (!jobId) throw new PK.Error(S(init && (init.error || init.message)) || '后台任务没有启动，请重试')
+      const res = await PK.job(jobId, {
+        interval: 1000,
+        maxMs: 6 * 3600 * 1000,
+        onProgress: (job) => {
+          if (S(job && job.message).trim()) RUN.msg = S(job.message).trim()
+          const p = U.num(job && job.progress, RUN.pct)
+          if (p > 0) RUN.pct = U.clamp(p, 0, 100)
+        },
+      })
+      RUN.state = 'done'
+      RUN.pct = 100
+      RUN.result = res
+      RUN.msg = doneText(res)
+      PK.toast(RUN.msg, 'success')
+    } catch (err) {
+      RUN.state = 'error'
+      RUN.msg = S(err && err.message) || `${label}没有完成`
+      PK.reportError(err, `${label}没有完成`)
+    } finally {
+      clearInterval(tick)
+      await loadState(ctx, { quiet: true })
+    }
+  }
+
+  const find = (ctx, force = false) => {
+    const L = ctx.local
+    const f = L.form
+    return runJob(
+      ctx,
+      'find',
+      '找精彩片段',
+      () => PK.postP('clips/find', { sourcePath: L.source, platform: f.platform, count: Number(f.count) || 0, focus: S(f.focus).trim(), force }),
+      (r) => `找到 ${U.num(r && r.clips, 0)} 个精彩片段，看一下标题和内容，再出片`,
+    )
+  }
+  const render = (ctx, indexes = null, force = false) => {
+    const L = ctx.local
+    return runJob(
+      ctx,
+      'render',
+      '出片',
+      () => PK.postP('clips/render', { sourcePath: L.source, ...(indexes ? { indexes } : {}), settings: L.look, force }),
+      (r) => {
+        const list = (r && r.clips) || []
+        const ok = list.filter((c) => !c.error).length
+        return `出好了 ${ok} 条短视频${list.some((c) => c.reused) ? '（没改动的沿用了上次的）' : ''}`
+      },
+    )
+  }
+  async function edit(ctx, edits) {
+    const L = ctx.local
+    const res = await PK.postP('clips/update', { sourcePath: L.source, edits })
+    if (res && res.plan && L.data) L.data = { ...L.data, plan: res.plan }
+    ctx.update()
+  }
+
+  /* -------------------------------------------------------------------------------------------- speech engine */
+  const installOf = (d) => (d && d.install) || {}
+  /** every ~2 s while the engine is being prepared: the light asr/status, then the full state once it ended */
+  async function pollInstall(ctx) {
+    const L = ctx.local
+    if (!L.data || L.installPolling || installOf(L.data).state !== 'running') return
+    L.installPolling = true
+    try {
+      const res = await PK.get('asr/status', undefined, { timeout: 30000 })
+      const asr = (res && res.asr) || {}
+      const inst = (res && res.install) || {}
+      if (!L.data) return
+      L.data = { ...L.data, install: inst, engine: { ...(L.data.engine || {}), ready: Boolean(asr.ready), reason: asr.reason, missing: asr.missing, supportedPlatform: asr.supportedPlatform } }
+      if (inst.state === 'running') ctx.update()
+      else {
+        if (asr.ready) PK.toast('本地语音识别已经准备好了', 'success')
+        await loadState(ctx, { quiet: true })
+      }
+    } catch {
+      // the next tick tries again
+    } finally {
+      L.installPolling = false
+    }
+  }
+  /** 「重试」 / 「现在安装」: the shared install on the server (same folder and download source as the last attempt) */
+  async function startInstall(ctx) {
+    const L = ctx.local
+    const inst = installOf(L.data)
+    const res = await PK.post('asr/install', { mirror: inst.mirror === 'global' ? 'global' : 'cn', ...(inst.home ? { installDir: S(inst.home) } : {}) })
+    if (L.data) L.data = { ...L.data, install: (res && res.install) || { ...inst, state: 'running', progress: 0 } }
+    ctx.update()
+  }
+  async function installNow(ctx) {
+    const ok = await PK.confirm({
+      title: '现在安装本地语音识别？',
+      text: '会下载约 260 MB（识别模型和运行库），装在推荐的位置；装好后完全离线、不花钱，以后一直能用。想自己选安装位置，可以到「AI 剪辑 · 口播粗剪」里安装。',
+      ok: '开始安装',
+    })
+    if (ok) await startInstall(ctx)
+  }
+
+  /* -------------------------------------------------------------------------------------------- sections */
+  function readinessNotes(ctx) {
+    const d = ctx.local.data || {}
+    const out = []
+    const inst = installOf(d)
+    if (d.engine && !d.engine.ready) {
+      if (d.engine.supportedPlatform === false) {
+        out.push(ui.note('这台电脑的系统暂时用不了本地语音识别（只支持 Windows、macOS、Linux 的 x64 和 arm64 电脑）。', { level: 'warn' }))
+      } else if (inst.state === 'running') {
+        const pct = Math.round(U.clamp(U.num(inst.progress, 0), 0, 100))
+        out.push(ui.note(`本地语音识别正在自动准备：${pct}%（首次约 260 MB，只需一次，不用你操作）。现在就可以点「找精彩片段」，它会等准备好后自动开始。`, { level: 'info' }))
+      } else if (inst.state === 'failed' || inst.state === 'done') {
+        // done but still not usable (files moved / deleted meanwhile): the same way out as a failure
+        out.push(
+          ui.note(`本地语音识别没有准备好：${S(inst.error) || (d.engine.missing && d.engine.missing.length ? `还缺 ${d.engine.missing.join('、')}` : '原因未知')}`, {
+            level: 'warn',
+            actions: [ui.btn('重试', () => startInstall(ctx), { size: 'sm', kind: 'primary', icon: 'retry', busyText: '正在重试…' }), ui.btn('自己选安装位置', () => PK.open('talkEdit'), { size: 'sm', kind: 'ghost', icon: 'folder' })],
+          }),
+        )
+      } else if (inst.state === 'disabled') {
+        out.push(
+          ui.note('拆条要先“听懂”视频里说了什么，需要本地语音识别（约 260 MB，装一次，免费离线）。自动安装已经关掉了：可以现在安装，或者去「口播粗剪」里自己选安装位置。', {
+            level: 'warn',
+            actions: [ui.btn('现在安装', () => installNow(ctx), { size: 'sm', kind: 'primary', icon: 'download', busyText: '正在启动…' }), ui.btn('自己选安装位置', () => PK.open('talkEdit'), { size: 'sm', kind: 'ghost', icon: 'folder' })],
+          }),
+        )
+      } else {
+        out.push(ui.note('拆条要先“听懂”视频里说了什么：第一次使用时会自动准备本地语音识别（约 260 MB，只需一次，不用你操作），可以直接点「找精彩片段」。', { level: 'info' }))
+      }
+    }
+    if (d.llm && !d.llm.configured) {
+      out.push(ui.note('挑片段要用到大模型：请先在「设置 · 模型与密钥」里选一个模型（也可以选「由当前智能体代写」）。', { level: 'warn', actions: [ui.btn('去设置', () => PK.open('llm'), { size: 'sm', icon: 'settings' })] }))
+    }
+    return out
+  }
+
+  function sourceSection(ctx) {
+    const L = ctx.local
+    const d = L.data || {}
+    const f = L.form
+    const sources = Array.isArray(d.sources) ? d.sources : []
+    const busy = RUN.state === 'running'
+    const set = (k, v) => {
+      f[k] = v
+      L.touched = true
+      ctx.update()
+    }
+    if (!sources.length) {
+      return ui.section(
+        { title: '要拆的长视频', en: 'RECORDING', icon: 'film' },
+        ui.empty({
+          icon: 'film',
+          title: '素材库里还没有带声音的视频',
+          text: '把访谈、播客、直播回放或课程录像上传到素材库。只用你自己的视频，插件不会去网上下载。',
+          actions: [ui.btn('去素材库上传', () => PK.open('studio', { step: 'assets' }), { kind: 'primary', icon: 'upload' })],
+        }),
+      )
+    }
+    const platforms = Array.isArray(d.platforms) ? d.platforms : []
+    const plat = platforms.find((p) => p.value === f.platform) || platforms[0] || {}
+    const est = d.estimate
+    const estText = !est
+      ? ''
+      : est.transcribed
+        ? `这段视频约需调用大模型 ${U.num(est.calls, 1)} 次（约 ${Math.round(U.num(est.inputTokens, 0) / 1000)} 千 token）${est.local ? '，用的是本机模型，不花钱' : ''}${d.llm && d.llm.mode === 'host-agent' ? '，由当前智能体代写' : ''}`
+        : '第一次会先在本机识别说话内容（不花钱，长视频要几分钟），然后每 1 小时内容调用一次大模型'
+    return ui.section(
+      { title: '要拆的长视频', en: 'RECORDING · PLATFORM', icon: 'film', desc: 'AI 会从整段内容里挑出能单独发布的片段：从一个问题或观点的第一句开始，到讲完为止，不会停在半句话上。' },
+      ui.field(
+        { label: '视频', en: 'RECORDING' },
+        ui.select({
+          value: S(L.source),
+          options: sources.map((s) => ({ value: s.path, label: `${s.type === 'audio' ? '🎧' : '🎬'} ${S(s.name)}${s.durationSec ? `（${fmtLen(s.durationSec)}）` : ''}` })),
+          disabled: busy,
+          onChange: (v) => {
+            L.source = v
+            L.data = { ...(L.data || {}), plan: null, rendered: [] }
+            L.touched = false
+            L.lookTouched = false
+            loadState(ctx)
+          },
+        }),
+      ),
+      ui.grid(
+        [
+          ui.field(
+            { label: '发到哪里', en: 'PLATFORM', hint: plat.value ? `${plat.aspect === 'source' ? '保持原画幅' : plat.aspect} · 每条 ${plat.minSec}–${plat.maxSec} 秒，最好 ${plat.targetLo}–${plat.targetHi} 秒` : '' },
+            ui.select({ value: S(f.platform), options: platforms.map((p) => ({ value: p.value, label: p.label })), disabled: busy, onChange: (v) => set('platform', v) }),
+          ),
+          ui.field({ label: '要几条', en: 'COUNT' }, ui.seg({ value: String(Number(f.count) || 0), options: [{ value: '0', label: '自动' }, { value: '3', label: '3 条' }, { value: '5', label: '5 条' }, { value: '8', label: '8 条' }], disabled: busy, aria: '要几条', onChange: (v) => set('count', Number(v) || 0) })),
+        ],
+        { min: 240, fit: true },
+      ),
+      ui.field(
+        { label: '想要哪些内容（可不填）', en: 'FOCUS', hint: '例如：只要讲方法的部分 / 嘉宾讲个人经历的片段' },
+        ui.input({ key: 'sc-focus', value: S(f.focus), maxLength: 120, placeholder: '不填就让 AI 自己挑最精彩的', disabled: busy, onInput: (v) => ((f.focus = v), (L.touched = true)), onChange: () => ctx.update() }),
+      ),
+      estText ? ui.hint(estText) : null,
+    )
+  }
+
+  function clipCard(ctx, c, rendered) {
+    const busy = RUN.state === 'running'
+    const r = rendered[c.index]
+    const off = c.enabled === false
+    return ui.card({
+      key: `clip-${c.index}`,
+      class: ['pk-sc-card', off ? 'pk-sc-off' : ''].filter(Boolean).join(' '),
+      // portrait clips are shown whole (letterboxed) in a 4:3 window so the cards stay a sensible height
+      media: r && r.video ? ui.video(PK.assetUrl(r.video), { poster: r.cover ? PK.assetUrl(r.cover) : '' }) : null,
+      title: null,
+      body: ui.stack(
+        [
+          ui.row(
+            [
+              ui.pill(`#${c.index}`, 'acc'),
+              ui.pill(fmtLen(c.spanSec), 'mute'),
+              ui.pill(`原视频 ${fmtClock(c.sourceStart)}–${fmtClock(c.sourceEnd)}`, 'mute'),
+              Number(c.score) ? ui.pill(`AI 评分 ${Math.round(Number(c.score) * 100)}`, Number(c.score) >= 0.7 ? 'ok' : 'mute') : null,
+              r && r.video ? ui.pill('已出片', 'ok', { dot: true }) : null,
+            ],
+            { wrap: true },
+          ),
+          ui.input({
+            key: `sc-title-${c.index}`,
+            value: S(c.title),
+            maxLength: 30,
+            disabled: busy,
+            aria: `第 ${c.index} 条的标题`,
+            onChange: (v) => {
+              const t = S(v).trim()
+              if (t && t !== c.title) edit(ctx, [{ index: c.index, title: t }]).catch((e) => PK.reportError(e))
+            },
+          }),
+          c.reason ? ui.hint(`入选理由：${S(c.reason)}`) : null,
+          ui.text(U.trimText(S(c.text), 160), { tone: 'muted' }),
+          c.tags && c.tags.length ? ui.row(c.tags.map((t) => ui.tag(`#${t}`)), { wrap: true }) : null,
+        ],
+        { gap: 6 },
+      ),
+      actions: [
+        ui.toggle({ value: !off, label: off ? '不出这条' : '出这条', disabled: busy, onChange: (v) => edit(ctx, [{ index: c.index, enabled: v }]).catch((e) => PK.reportError(e)) }),
+        ui.row(
+          [
+            ui.btn('开头往前一句', () => edit(ctx, [{ index: c.index, startDelta: -1 }]), { size: 'sm', kind: 'ghost', disabled: busy, title: '把前面一句话也包含进来' }),
+            ui.btn('开头往后一句', () => edit(ctx, [{ index: c.index, startDelta: 1 }]), { size: 'sm', kind: 'ghost', disabled: busy }),
+            ui.btn('结尾往前一句', () => edit(ctx, [{ index: c.index, endDelta: -1 }]), { size: 'sm', kind: 'ghost', disabled: busy }),
+            ui.btn('结尾往后一句', () => edit(ctx, [{ index: c.index, endDelta: 1 }]), { size: 'sm', kind: 'ghost', disabled: busy, title: '把后面一句话也包含进来' }),
+          ],
+          { wrap: true },
+        ),
+        r && r.video
+          ? ui.row(
+              [
+                ui.btn('另存为', () => PK.saveFile({ rel: r.video, name: `${S(c.title) || `片段${c.index}`}.mp4`, what: '短视频' }), { size: 'sm', icon: 'download' }),
+                r.cover ? ui.btn('封面', () => PK.saveFile({ rel: r.cover, name: `${S(c.title) || `片段${c.index}`}.jpg`, what: '封面' }), { size: 'sm', kind: 'ghost', icon: 'image' }) : null,
+                ui.btn('只重出这条', () => render(ctx, [c.index], true), { size: 'sm', kind: 'ghost', icon: 'refresh', disabled: busy }),
+              ],
+              { wrap: true },
+            )
+          : null,
+      ],
+    })
+  }
+
+  function clipsSection(ctx) {
+    const L = ctx.local
+    const d = L.data || {}
+    const plan = d.plan
+    if (!plan || !Array.isArray(plan.clips) || !plan.clips.length) return null
+    const rendered = {}
+    for (const r of d.rendered || []) rendered[r.index] = r
+    const on = plan.clips.filter((c) => c.enabled !== false).length
+    const found = plan.found || {}
+    return ui.section(
+      {
+        title: '挑出来的片段',
+        en: 'CLIPS',
+        icon: 'scissors',
+        count: plan.clips.length,
+        desc: `标题可以直接改；觉得开头或结尾不完整，就按「往前一句 / 往后一句」调整。${found.dropped && found.dropped.length ? `另有 ${found.dropped.length} 个片段太短，已经去掉。` : ''}`,
+      },
+      ui.grid(plan.clips.map((c) => clipCard(ctx, c, rendered)), { min: 300 }),
+      ui.hint(`将出 ${on} 条 · 关掉的片段不出片`),
+    )
+  }
+
+  function lookSection(ctx) {
+    const L = ctx.local
+    const d = L.data || {}
+    const plan = d.plan
+    if (!plan || !plan.clips || !plan.clips.length) return null
+    const look = L.look
+    const busy = RUN.state === 'running'
+    const set = (k, v) => {
+      L.look = { ...L.look, [k]: v }
+      L.lookTouched = true
+      ctx.update()
+    }
+    const lay = LAYOUTS.find((x) => x.value === (look.layout || 'auto')) || LAYOUTS[0]
+    const burned = plan.burned && plan.burned.burned
+    return ui.section(
+      { title: '成片样式', en: 'LOOK', icon: 'brush', desc: '每条片段里的停顿、口头禅、重复和重录也会自动剪掉；声音统一到短视频平台的标准音量。' },
+      ui.grid(
+        [
+          ui.field({ label: '画面', en: 'LAYOUT', hint: lay.hint }, ui.seg({ value: look.layout || 'auto', options: LAYOUTS.map(({ value, label }) => ({ value, label })), disabled: busy, aria: '画面', onChange: (v) => set('layout', v) })),
+          ui.field({ label: '字幕', en: 'CAPTIONS', hint: burned ? '检测到原视频已经带字幕，「自动」时不再重复加' : (CAPTIONS.find((x) => x.value === (look.captions || 'auto')) || CAPTIONS[0]).hint || '' }, ui.seg({ value: look.captions || 'auto', options: CAPTIONS.map(({ value, label }) => ({ value, label })), disabled: busy, aria: '字幕', onChange: (v) => set('captions', v) })),
+        ],
+        { min: 260, fit: true },
+      ),
+      ui.row(
+        [
+          ui.toggle({ value: look.title !== false, label: '显示标题', disabled: busy, onChange: (v) => set('title', v) }),
+          ui.toggle({ value: look.progressBar !== false, label: '进度条', disabled: busy, onChange: (v) => set('progressBar', v) }),
+          ui.field({ label: '强调色', en: 'ACCENT', inline: true }, ui.color({ value: look.accent || '#FFD400', onChange: (v) => set('accent', v) })),
+        ],
+        { wrap: true },
+      ),
+    )
+  }
+
+  function runSection(ctx) {
+    const L = ctx.local
+    const d = L.data || {}
+    const plan = d.plan
+    const busy = RUN.state === 'running'
+    const mine = RUN.dir === PK.dir()
+    // the engine being prepared (or about to be, on first use) is fine: the find job waits for it on the server
+    const engineOk = d.engine && (d.engine.ready || ['running', 'idle'].includes(installOf(d).state))
+    const ready = engineOk && d.llm && d.llm.configured && L.source
+    const hasClips = plan && plan.clips && plan.clips.length
+    const enabled = hasClips ? plan.clips.filter((c) => c.enabled !== false).length : 0
+    const elapsed = RUN.startedAt ? U.fmtDur((Date.now() - RUN.startedAt) / 1000) : ''
+    const rendered = (d.rendered || []).length
+    return ui.section(
+      { title: hasClips ? '出片' : '开始', en: hasClips ? 'RENDER' : 'FIND', icon: 'bolt' },
+      ui.grid(
+        [
+          hasClips
+            ? ui.stack([ui.btn(`出片（${enabled} 条）`, () => render(ctx), { kind: 'primary', size: 'lg', block: true, icon: 'bolt', disabled: busy || !enabled, busyText: '出片中…' }), ui.hint('本机剪辑，不花钱；没改过的片段直接沿用上次的成片')], { gap: 4 })
+            : null,
+          ui.stack(
+            [
+              ui.btn(hasClips ? '重新找片段' : '找精彩片段', () => find(ctx), { kind: hasClips ? 'secondary' : 'primary', size: hasClips ? 'md' : 'lg', block: true, icon: 'wand', disabled: busy || !ready, busyText: '寻找中…', confirm: hasClips ? '重新找会替换当前这批片段（已出的成片文件保留），确定吗？' : null }),
+              ui.hint(hasClips ? '换了平台、条数或想要的内容后，可以重新找' : '识别说话内容 → AI 挑片段 → 检查每个片段是否完整'),
+            ],
+            { gap: 4 },
+          ),
+        ],
+        { min: 240, fit: true },
+      ),
+      mine && RUN.state
+        ? ui.stack(
+            [
+              ui.meter(RUN.state === 'error' ? 100 : RUN.pct, {
+                label: `${RUN.kind === 'render' ? '出片' : '找精彩片段'} · ${RUN.state === 'running' ? `进行中 · 已用 ${elapsed}` : RUN.state === 'done' ? '已完成' : '未完成'}`,
+                valueText: RUN.state === 'error' ? '失败' : `${Math.round(RUN.pct)}%`,
+                tone: RUN.state === 'error' ? 'err' : RUN.state === 'done' ? 'ok' : '',
+                indeterminate: RUN.state === 'running' && RUN.pct <= 3,
+              }),
+              RUN.msg ? ui.text(RUN.msg, { tone: RUN.state === 'error' ? null : 'muted', class: RUN.state === 'error' ? 'pk-text--err' : '' }) : null,
+            ],
+            { gap: 6 },
+          )
+        : null,
+      rendered
+        ? ui.row(
+            [
+              ui.btn('打开成片文件夹', () => PK.postP('clips/reveal', { sourcePath: L.source }).then((r) => PK.toast(r && r.opened ? '已在文件管理器里打开' : `成片在工程的 ${S(r && r.folder)} 文件夹里`, 'info')), { size: 'sm', icon: 'folder' }),
+              ui.hint('文件夹里还有每条的字幕文件和「发布文案.md」（标题、简介、话题）'),
+            ],
+            { wrap: true },
+          )
+        : null,
+    )
+  }
+
+  PK.panel('shortClips', {
+    title: 'AI 剪辑 · 长视频拆条',
+    en: 'AI EDIT · SHORT CLIPS',
+    idx: 'SC',
+    icon: 'scissors',
+    kind: 'modal',
+    size: 'xl',
+    group: 'tools',
+    order: 12.5,
+    desc: '把访谈、播客、直播回放剪成多条能单独发布的短视频',
+    needsProject: true,
+    aliases: { clips: {}, clipFactory: {}, shorts: {} },
+    watch: (s) => s && s.project && s.project.dir,
+    onWatch: (ctx) => {
+      if (!PK.hasProject()) {
+        ctx.close()
+        return
+      }
+      ctx.local.source = ''
+      ctx.local.data = null
+      ctx.local.touched = false
+      ctx.local.lookTouched = false
+      loadState(ctx, { quiet: true })
+    },
+    mount(ctx) {
+      const L = ctx.local
+      L.form = L.form || { platform: 'douyin', count: 0, focus: '' }
+      L.look = L.look || { layout: 'auto', captions: 'auto', title: true, progressBar: true, accent: '#FFD400' }
+      loadState(ctx, { quiet: true })
+      // the speech engine prepares itself in the background: follow its progress until it is done
+      ctx.every(2000, () => pollInstall(ctx))
+    },
+    render(ctx) {
+      const L = ctx.local
+      ctx.foot([ui.hint('识别和剪辑都在本机完成；只有挑片段这一步调用大模型（每 1 小时内容约 1 次）。'), ui.spacer(), ui.btn('任务中心', () => PK.open('tasks'), { kind: 'ghost', icon: 'tasks' })])
+      if (!L.data && !L.err) return [ui.loading('正在读取素材库…')]
+      if (L.err && !L.data) return [ui.errorBox(L.err, () => loadState(ctx))]
+      return [...readinessNotes(ctx), sourceSection(ctx), clipsSection(ctx), lookSection(ctx), runSection(ctx)]
+    },
+  })
+})()
+
+} catch (err) {
+  console.error('[PK] module 63b-short-clips.js failed to load', err)
 }
 
 /* ---- 64-template-fill.js ---- */
@@ -10085,7 +10741,9 @@ try {
     const pics = U.num(res.filledMedia, 0) + U.num(res.autoFilledMedia, 0)
     if (pics) bits.push(`放进 ${pics} 处画面${U.num(res.autoFilledMedia, 0) ? `（自动挑了 ${res.autoFilledMedia} 处）` : ''}`)
     if (U.num(res.emptyMedia, 0)) bits.push(`${res.emptyMedia} 处画面位没有素材，改成了文字动画`)
-    bits.push(res.music && res.music.generated ? `配乐按模板节奏自动生成（${res.music.bpm} BPM）` : `配乐：${S(res.music && res.music.name)}`)
+    const musicFrom = U.num(res.music && res.music.startSec, 0)
+    const fromLine = musicFrom > 0 ? `（从 ${Math.floor(Math.round(musicFrom) / 60)}:${String(Math.round(musicFrom) % 60).padStart(2, '0')} 开始）` : ''
+    bits.push(res.music && res.music.generated ? `配乐按模板节奏自动生成（${res.music.bpm} BPM）` : `配乐：${S(res.music && res.music.name)}${fromLine}`)
     if (!produce && res.needsVoice) bits.push('下一步：一键配音，再渲染')
     return `已套用：${bits.join(' · ')}`
   }
@@ -13229,18 +13887,23 @@ try {
     ]
   }
   function authorNote(a) {
+    const B = PK.BRAND || {}
+    const studio = a.studioFullName || B.studioFullName || ''
+    const copyright = a.copyright || B.copyright || ''
     return ui.note(
       h(
         'div.pk-stack',
         { style: { gap: '4px' } },
-        ui.text(`作者：${a.name || '—'}${a.qq ? ` · QQ：${a.qq}` : ''}${a.wechat ? ` · 微信：${a.wechat}` : ''}${a.email ? ` · 邮箱：${a.email}` : ''}`),
+        studio ? ui.text(`出品：${a.studio || B.studioName || ''} · ${studio}`) : null,
+        ui.text(`原创作者：${a.name || '—'}${a.nameZh ? ` (${a.nameZh})` : ''}${a.qq ? ` · QQ：${a.qq}` : ''}${a.wechat ? ` · 微信：${a.wechat}` : ''}${a.email ? ` · 邮箱：${a.email}` : ''}`),
+        copyright ? ui.text(copyright, { tone: 'muted' }) : null,
         a.github ? ui.row([ui.text(`官方仓库：${a.github}`, { mono: true, tone: 'muted' }), ui.iconBtn('copy', async () => {
           const ok = await U.copyText(a.github)
           PK.toast(ok ? '仓库地址已复制' : '复制失败', ok ? 'success' : 'warn')
         }, { title: '复制仓库地址' })], { wrap: true }) : null,
         a.notice ? ui.text(a.notice, { tone: 'dim' }) : null,
       ),
-      { level: 'info', title: `原创作者署名与开源版权声明${a.license ? `（${a.license}）` : ''}` },
+      { level: 'info', title: `${(PK.BRAND && PK.BRAND.productName) || '版权声明'} · 出品与原创作者署名${a.license ? `（${a.license} 开源）` : ''}` },
     )
   }
 
@@ -17854,7 +18517,7 @@ ${W} .pk-ops-sliders{display:grid;grid-template-columns:repeat(auto-fill,minmax(
   })
 
   /* ================================================================ 4 · 提词器录制 TELEPROMPTER */
-  const TELE_DEFAULT_TEXT = '欢迎来到 DSH 电影视频工坊。\n只要在这里导入素材或现场录制一段口播，\n四位 AI 智能体就会协同完成分镜、剪辑、配音混音与 1080P 成片渲染。'
+  const TELE_DEFAULT_TEXT = `欢迎来到${(PK.BRAND && PK.BRAND.productName) || '禾杨视频工坊'}。\n只要在这里导入素材或现场录制一段口播，\n四位 AI 智能体就会协同完成分镜、剪辑、配音混音与 1080P 成片渲染。`
   const TELE = { text: '', speed: 1.1, font: 26, lh: 1.65, opacity: 0.62, mirrorCam: true, mirrorText: false, clone: true, role: 'host_video', layout: 'side', durationSec: 45 }
   const TELE_ROLES = [
     { value: 'host_video', label: '真人出镜主镜头', hint: '直接用作视频口播与原声片源（host_video）' },
@@ -20501,19 +21164,23 @@ try {
     )
 
     const a = data && data.authorInfo
-    const authorText = a ? `作者：${a.name} · QQ：${a.qq} · 微信：${a.wechat} · 邮箱：${a.email} · 官方仓库：${a.github}（${a.license} 开源）` : ''
+    const authorText = a
+      ? `${a.copyright ? `${a.copyright} · ` : ''}${a.studioFullName ? `出品：${a.studioFullName} · ` : ''}原创作者：${a.name}${a.nameZh ? ` (${a.nameZh})` : ''} · QQ：${a.qq} · 微信：${a.wechat} · 邮箱：${a.email} · 官方仓库：${a.github}（${a.license} 开源）`
+      : ''
     const authorSec = a
       ? ui.section(
-          { title: '原创作者署名与开源声明', en: 'AUTHOR · LICENSE', icon: 'user', actions: [copyBtn(authorText, { label: '复制署名', what: '作者署名' })] },
+          { title: '出品与原创作者署名', en: 'STUDIO · AUTHOR · LICENSE', icon: 'user', actions: [copyBtn(authorText, { label: '复制署名', what: '署名' })] },
           ui.kv([
-            ['作者', a.name],
+            ...(a.studioFullName ? [['出品', `${a.studio || ''} · ${a.studioFullName}`]] : []),
+            ['原创作者', a.nameZh ? `${a.name} (${a.nameZh})` : a.name],
             ['QQ', a.qq],
             ['微信', a.wechat],
             ['邮箱', a.email],
             ['官方仓库', a.github],
             ['开源协议', a.license ? `${a.license}（开源免费）` : ''],
+            ...(a.copyright ? [['版权', a.copyright]] : []),
           ]),
-          a.notice ? ui.hint(a.notice) : null,
+          a.origin ? ui.hint(a.origin) : a.notice ? ui.hint(a.notice) : null,
         )
       : null
 
@@ -20680,6 +21347,8 @@ try {
     visual3dMode: '视效偏好',
     aiBadgeEnabled: 'AI 角标',
     aiBadgePosition: 'AI 角标',
+    endNotice: '片尾声明',
+    endNoticeCredit: '片尾署名',
     aiMeta: 'AI 生成记录',
     directorMeta: '导演记录',
     audience: '目标观众',

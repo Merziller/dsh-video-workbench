@@ -1488,6 +1488,7 @@ export function writeScriptJson(projectOrFile, scriptData, options = {}) {
   return { scriptPath, projectDir, data: scriptData }
 }
 
+export * from './brand.js'
 export * from './compliance.js'
 export * from './hardware-guard.js'
 export * from './meta-guard.js'

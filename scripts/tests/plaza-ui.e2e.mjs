@@ -46,6 +46,8 @@ process.env.DSH_VIDEO_ENV_PATH = join(scratch, 'empty.env')
 process.env.DSH_VIDEO_WORKSPACE = join(scratch, 'ws')
 process.env.DSH_VIDEO_HOME = join(scratch, 'home')
 process.env.DSH_PLAZA_REVEAL = '0'
+// tests never download the local speech engine (its automatic install starts from the studio state / talk routes)
+if (process.env.DSH_ASR_AUTO_INSTALL === undefined) process.env.DSH_ASR_AUTO_INSTALL = '0'
 const sha = (b) => createHash('sha256').update(b).digest('hex')
 const netTpl = join(scratch, 'net', 'templates', 'cinepulse-hub')
 {

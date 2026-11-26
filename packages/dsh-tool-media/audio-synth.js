@@ -225,12 +225,14 @@ export async function ensureProjectAudioAssets(projectDir, script, assetsManifes
 
 /**
  * Integrated loudness (EBU R128) and true peak of an audio/video file, or nulls when unmeasurable.
+ * Optional window: only [startSec, startSec + durationSec] of the file is measured (plain input seek, no loop).
  */
-export async function measureLoudnessStats(ffmpeg, file, { signal } = {}) {
+export async function measureLoudnessStats(ffmpeg, file, { signal, startSec = 0, durationSec = 0 } = {}) {
   try {
+    const win = [...(Number(startSec) > 0 ? ['-ss', String(Number(startSec))] : []), ...(Number(durationSec) > 0 ? ['-t', String(Number(durationSec))] : [])]
     const res = await runCommandRedirected(
       ffmpeg,
-      ['-hide_banner', '-nostats', '-i', file, '-vn', '-af', 'aresample=48000,ebur128=peak=true:framelog=quiet', '-f', 'null', '-'],
+      ['-hide_banner', '-nostats', ...win, '-i', file, '-vn', '-af', 'aresample=48000,ebur128=peak=true', '-f', 'null', '-'],
       { timeoutMs: 180_000, signal },
     )
     // A failed run still prints an empty summary ("I: 0.0 LUFS", "Peak: -inf") — never trust it
@@ -258,7 +260,7 @@ async function measureStemSumLoudness(ffmpeg, files, { signal } = {}) {
     const args = ['-hide_banner', '-nostats']
     for (const f of files) args.push('-i', f)
     const ins = files.map((_, i) => `[${i}:a]`).join('')
-    args.push('-filter_complex', `${ins}${formatAmixChain(files.length, 'longest', ffmpeg)},aresample=${SR},ebur128=peak=true:framelog=quiet`, '-f', 'null', '-')
+    args.push('-filter_complex', `${ins}${formatAmixChain(files.length, 'longest', ffmpeg)},aresample=${SR},ebur128=peak=true`, '-f', 'null', '-')
     const res = await runCommandRedirected(ffmpeg, args, { timeoutMs: 180_000, signal })
     if (res.code !== 0) return { lufs: null, truePeak: null }
     const txt = `${res.stderr || ''}\n${res.stdout || ''}`
@@ -312,6 +314,57 @@ async function finalizeAudioStems({ ffmpeg, outWav, stemOutputs, stemsDir, total
     durationSec: Number(Number(totalSec).toFixed(4)),
     gainDb: Number(gainDb.toFixed(2)),
     reference: 'pre-limiter bus taps (same timing/ducking as master), level-matched to master integrated loudness',
+  }
+}
+
+/**
+ * 配乐从精彩处开始: the song second the film's music starts at — `script.bgm.startSec` (chosen when the film was cut to
+ * the song, see chooseMusicWindow) for the user's song it was chosen for, else 0. A start never applies to a generated /
+ * AI track, to another file, or to a recording whose length differs from the analysed one (a song replaced without a
+ * new analysis plays from its start). A film that has grown past the end of the song after the start (scenes lengthened
+ * by hand, another production reusing the music settings) moves the start back by whole bars — the cuts stay on the
+ * beat and in their place in the bar — so the music never restarts in the middle of the film because of the start.
+ */
+export async function resolveMusicStartSec({ script, absDir, absBgm, bgmPath, bgmSource, totalSec = 0 }) {
+  const bgm = script?.bgm || {}
+  let start = Number(bgm.startSec)
+  if (!(start > 0) || bgmSource !== 'user-imported' || bgm.enabled === false || !absBgm) return 0
+  // the file the start was chosen for (startFor; older scripts: the bound song) must be the file being mixed
+  const chosenFor = String(bgm.startFor || bgm.uploadedPath || bgm.path || '')
+  const norm = (p) => {
+    const r = resolve(absDir, String(p))
+    return process.platform === 'win32' ? r.toLowerCase() : r
+  }
+  if (!chosenFor || norm(chosenFor) !== norm(bgmPath || absBgm)) return 0
+  let fileSec = 0
+  try {
+    fileSec = Number((await probeAudioDuration(absBgm)).durationSec) || 0
+  } catch {}
+  const songSec = Number(bgm.songDurationSec) || 0
+  if (fileSec > 0 && songSec > 0 && Math.abs(fileSec - songSec) > 0.6) return 0
+  const len = fileSec || songSec
+  if (len > 0 && start > len - 1) return 0
+  const film = Number(totalSec) || 0
+  if (len > 0 && film > 0 && start + film > len + 0.05) {
+    const beatSec = Number(bgm.beatSec) > 0.2 ? Number(bgm.beatSec) : Number(bgm.bpm) > 0 ? 60 / Number(bgm.bpm) : 0
+    const bar = beatSec * 4
+    if (!(bar > 0)) return 0
+    start = Math.max(0, start - Math.ceil((start + film - len - 0.05) / bar) * bar)
+  }
+  return Number(start.toFixed(3))
+}
+
+/**
+ * Input options and the head of the music-bed filter chain for a song that starts at `startSec`. The looped input is
+ * never seeked: on the bundled FFmpeg `-stream_loop -1 -ss X` restarts at the wrong place after its first loop. It is
+ * read for X + totalSec + 1 s instead and `atrim` drops the first X seconds (a loop then restarts at the song start).
+ */
+export function musicBedInput({ absBgm, totalSec, startSec = 0 }) {
+  const x = Number(startSec) > 0 ? Number(Number(startSec).toFixed(3)) : 0
+  if (!(x > 0)) return { args: ['-stream_loop', '-1', '-t', String(totalSec), '-i', absBgm], head: '' }
+  return {
+    args: ['-stream_loop', '-1', '-t', String(Number((x + Number(totalSec) + 1).toFixed(3))), '-i', absBgm],
+    head: `atrim=start=${x},asetpts=PTS-STARTPTS,`,
   }
 }
 
@@ -448,7 +501,10 @@ export async function mixVideoAudio({ projectDir, script, assetsManifest, output
   const bgmVol = isPureMvNoVoice
     ? (Number.isFinite(rawBgmVol) && rawBgmVol >= 0.72 && rawBgmVol <= 1.25 ? rawBgmVol : Math.max(1.0, audioProf.bgmVolMv || 1.0))
     : (Number.isFinite(rawBgmVol) && rawBgmVol >= 0.20 && rawBgmVol <= 0.85 ? rawBgmVol : isBeatSyncVoice ? Math.max(audioProf.bgmVolVoice, 0.44) : audioProf.bgmVolVoice)
-  const bgmFadeInSec = isPureMvNoVoice ? 0.10 : 0.40
+  // 配乐从精彩处开始: the user's song starts at the bar line chosen when the film was cut (script.bgm.startSec); a song
+  // entering mid-phrase gets a slightly longer fade-in
+  const bgmStartSec = hasBgm ? await resolveMusicStartSec({ script, absDir, absBgm, bgmPath, bgmSource, totalSec }) : 0
+  const bgmFadeInSec = isPureMvNoVoice ? (bgmStartSec > 0 ? 0.15 : 0.10) : bgmStartSec > 0 ? 0.6 : 0.40
   // Pure-music beat-sync (no TTS): protagonist-grade thrilling loudness (-10.5 LUFS, peak -0.5 dBTP) — NEVER apply -18dB voice ducking!
   // Music-only beat-sync: loud but with transient headroom (-12 … -13 LUFS, close to commercial cut-to-beat
   // edits) so steel clashes stay crisp instead of being squashed by limiting.
@@ -456,7 +512,8 @@ export async function mixVideoAudio({ projectDir, script, assetsManifest, output
   // Linear BGM gain (keeps the track's own mastering/dynamics) instead of single-pass dynamic loudnorm
   let bgmLinearGainDb = null
   if (isPureMvNoVoice && hasBgm) {
-    const bgmStats = await measureLoudnessStats(ffmpeg, absBgm, { signal })
+    // the part of the song the film plays (from its chosen start), not the whole song
+    const bgmStats = await measureLoudnessStats(ffmpeg, absBgm, bgmStartSec > 0 ? { signal, startSec: bgmStartSec, durationSec: totalSec } : { signal })
     if (Number.isFinite(bgmStats.lufs)) {
       bgmLinearGainDb = Math.max(-14, Math.min(8, masterLufs - 0.35 - bgmStats.lufs))
     }
@@ -526,19 +583,20 @@ export async function mixVideoAudio({ projectDir, script, assetsManifest, output
 
   let bgmIdx = -1
   if (hasBgm) {
-    args.push('-stream_loop', '-1', '-t', String(totalSec), '-i', absBgm)
+    const bed = musicBedInput({ absBgm, totalSec, startSec: bgmStartSec })
+    args.push(...bed.args)
     bgmIdx = idx++
     const fadeOutStart = Math.max(0, Number((totalSec - 1.5).toFixed(2)))
     if (isPureMvNoVoice) {
       // Protagonist-grade BGM loudness for pure-SFX beat-sync videos (zero -18dB voice-ducking!)
       filters.push(
         bgmLinearGainDb !== null
-          ? `[${bgmIdx}:a:0]aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${bgmLinearGainDb.toFixed(2)}dB${Number.isFinite(rawBgmVol) && rawBgmVol >= 0.5 && rawBgmVol <= 1.25 ? `,volume=${rawBgmVol.toFixed(2)}` : ''},afade=t=in:st=0:d=${bgmFadeInSec},afade=t=out:st=${fadeOutStart}:d=1.4,${STEREO}[bgm_raw]`
-          : `[${bgmIdx}:a:0]aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,loudnorm=I=-10.0:TP=-0.6:LRA=5,volume=${bgmVol.toFixed(2)},afade=t=in:st=0:d=${bgmFadeInSec},afade=t=out:st=${fadeOutStart}:d=1.4,${STEREO}[bgm_raw]`,
+          ? `[${bgmIdx}:a:0]${bed.head}aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${bgmLinearGainDb.toFixed(2)}dB${Number.isFinite(rawBgmVol) && rawBgmVol >= 0.5 && rawBgmVol <= 1.25 ? `,volume=${rawBgmVol.toFixed(2)}` : ''},afade=t=in:st=0:d=${bgmFadeInSec},afade=t=out:st=${fadeOutStart}:d=1.4,${STEREO}[bgm_raw]`
+          : `[${bgmIdx}:a:0]${bed.head}aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,loudnorm=I=-10.0:TP=-0.6:LRA=5,volume=${bgmVol.toFixed(2)},afade=t=in:st=0:d=${bgmFadeInSec},afade=t=out:st=${fadeOutStart}:d=1.4,${STEREO}[bgm_raw]`,
       )
     } else {
       filters.push(
-        `[${bgmIdx}:a:0]aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,loudnorm=I=-16.5:TP=-2.0:LRA=9,volume=${bgmVol.toFixed(2)},afade=t=in:st=0:d=${bgmFadeInSec},afade=t=out:st=${fadeOutStart}:d=1.5,${STEREO}[bgm_raw]`,
+        `[${bgmIdx}:a:0]${bed.head}aresample=${SR},aformat=sample_fmts=fltp:channel_layouts=stereo,loudnorm=I=-16.5:TP=-2.0:LRA=9,volume=${bgmVol.toFixed(2)},afade=t=in:st=0:d=${bgmFadeInSec},afade=t=out:st=${fadeOutStart}:d=1.5,${STEREO}[bgm_raw]`,
       )
     }
   }
@@ -709,6 +767,7 @@ export async function mixVideoAudio({ projectDir, script, assetsManifest, output
     sfxCount: proceduralCues.length + customSfxEvents.length,
     bgmUsed: hasBgm ? bgmPath : '',
     bgmSource: hasBgm ? bgmSource : 'none',
+    ...(bgmStartSec > 0 ? { bgmStartSec } : {}),
     ...(bgmFallback ? { bgmFallback } : {}),
     builtinSfxCount: Object.keys(builtinSfx).length,
     ambience: ambience

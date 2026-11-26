@@ -24,7 +24,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const SCR = join(ROOT, '.tmp', 'host-compat', new Date().toISOString().replace(/[:.]/g, '-'))
 // The MCP server lists the plugin's tools plus its two MCP-only helpers. Update when a tool is added or removed.
-const EXPECTED_PLUGIN_TOOLS = 46
+const EXPECTED_PLUGIN_TOOLS = 47
 const MCP_ONLY_TOOLS = ['install_tts_engine', 'open_video_studio']
 
 const dirs = { home: join(SCR, 'home'), ws: join(SCR, 'ws'), voices: join(SCR, 'voices'), dshClient: join(SCR, 'no-dsh-client') }

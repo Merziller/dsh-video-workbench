@@ -1,6 +1,8 @@
 /* ============================================================================================================
  * PK · AI 剪辑 · 口播粗剪 (talkEdit panel) — the user's own talking-head recording, cut by the computer:
- *   1. 本地语音识别 engine: status, one-click install (folder + download source), licences
+ *   1. 本地语音识别 engine: status; it prepares itself automatically (progress, polled every 2 s); when that failed the
+ *      reason + 「重试」 + 「自己选安装位置（高级）」 (folder + download source); the one-click install form when the
+ *      automatic install is switched off; licences
  *   2. pick the recording, the cut rules (停顿 / 口头禅 / 结巴 / 重录 / 声音增强 / 语言)
  *   3. 识别并规划: the transcript with every cut shown in place (struck through, reason on hover) — click a cut to bring
  *      it back, click a kept word to cut it; the list of cuts with 恢复 / 剪掉; stats
@@ -137,11 +139,33 @@
     ctx.update()
   }
   async function loadEngine(ctx, deep) {
+    const L = ctx.local
     const res = await PK.get('asr/status', deep ? { deep: 1 } : undefined, { timeout: deep ? 120000 : 30000 })
-    ctx.local.asr = (res && res.asr) || null
-    ctx.local.installer = (res && res.installer) || null
-    if (ctx.local.installer && !ctx.local.installDir) ctx.local.installDir = S(ctx.local.installer.recommendedHome)
+    const was = L.install && L.install.state
+    L.asr = (res && res.asr) || null
+    L.installer = (res && res.installer) || null
+    L.install = (res && res.install) || null
+    if (L.installer && !L.installDir) L.installDir = S(L.installer.recommendedHome)
+    // the shared install just ended (automatic or 「重试」 / 一键安装)
+    const now = L.install && L.install.state
+    if (was === 'running' && now !== 'running') {
+      if (L.asr && L.asr.ready) {
+        PK.toast('本地语音识别已经准备好了，可以开始口播粗剪', 'success')
+        loadState(ctx, { quiet: true })
+      } else if (now === 'failed') {
+        PK.toast(`本地语音识别没有准备好：${S(L.install.error)}`, 'warn')
+      }
+    }
     return res
+  }
+  /** every ~2 s while the engine is being prepared (ctx.every pauses while the window is hidden) */
+  function pollEngine(ctx) {
+    const L = ctx.local
+    if (L.enginePolling || !(L.install && L.install.state === 'running')) return
+    L.enginePolling = true
+    loadEngine(ctx)
+      .then(() => ctx.update(), () => {})
+      .finally(() => (L.enginePolling = false))
   }
 
   const overridesOf = (L) => ({ restore: [...(L.restore || [])], cutWords: (L.cutWords || []).map((r) => [r[0], r[1]]) })
@@ -172,20 +196,38 @@
       ok: '开始安装',
     })
     if (!ok) return
-    startJob('install', {
-      label: '安装本地语音识别',
-      startText: '正在启动安装…',
-      start: () => PK.post('asr/install', { installDir: dir, mirror }),
-      doneText: (r) => (r && r.ok ? '安装完成并通过自检' : `已安装，但自检没通过：${S(r && r.status && r.status.reason)}`),
-      maxMs: 3 * 3600 * 1000,
-    })
-      .then(async () => {
-        PK.toast('本地语音识别安装完成，可以开始口播粗剪了', 'success')
-        await loadEngine(ctx).catch(() => {})
-        await loadState(ctx, { quiet: true })
-      })
-      .catch((err) => PK.toast(`本地语音识别安装未完成：${S(err && err.message)}`, 'error', { title: '安装失败', timeout: 0 }))
+    await postInstall(ctx, { installDir: dir, mirror })
+  }
+  /** the shared install on the server (joins one already running); its progress is then polled from asr/status */
+  async function postInstall(ctx, body) {
+    const L = ctx.local
+    const res = await PK.post('asr/install', body)
+    L.install = (res && res.install) || { ...(L.install || {}), state: 'running', progress: 0, message: '正在启动安装…' }
+    L.showAdvanced = false
     ctx.update()
+  }
+  /** 「重试」: the same folder and download source as the attempt that failed, right away */
+  function retryInstall(ctx) {
+    const inst = ctx.local.install || {}
+    return postInstall(ctx, { mirror: inst.mirror === 'global' ? 'global' : 'cn', ...(inst.home ? { installDir: S(inst.home) } : {}) })
+  }
+
+  /** 导出整段字幕 / 文稿: the whole recording on its own timeline (uses the cached recognition, no cut) */
+  async function exportTranscript(ctx) {
+    PK.needProject()
+    const L = ctx.local
+    if (!L.source) throw new PK.Error('请先选择视频')
+    const key = `transcribe:${PK.dir()}`
+    const res = await startJob(key, {
+      label: '导出整段字幕 / 文稿',
+      startText: '正在提交…',
+      start: () => PK.postP('talk/transcribe', { mediaPath: L.source }),
+      doneText: (r) => `已导出：${S(r && r.srt)}、${S(r && r.txt)}`,
+    })
+    ctx.update()
+    if (!res || !res.srt) return
+    const ok = await PK.confirm({ title: '字幕和文稿已导出', text: `已保存在工程里：\n· ${S(res.srt)}（字幕，原视频时间）\n· ${S(res.txt)}（文稿）\n\n要另存一份字幕到别的位置吗？`, ok: '另存字幕', cancel: '不用了' })
+    if (ok) await PK.saveFile({ rel: res.srt, what: '字幕' })
   }
 
   async function runPlan(ctx, { force = false } = {}) {
@@ -344,7 +386,7 @@
     const a = L.asr
     const inst = L.installer || {}
     const pkg = inst.package || {}
-    const installing = jobRunning('install')
+    const auto = L.install || {}
     if (!a) return ui.section({ title: '本地语音识别', en: 'SPEECH ENGINE', icon: 'mic' }, L.asrErr ? ui.errorBox(L.asrErr, () => loadEngine(ctx).then(() => ctx.update(), () => {})) : ui.loading('正在检测…'))
     if (a.ready) {
       return ui.section(
@@ -355,26 +397,66 @@
     if (a.supportedPlatform === false) {
       return ui.section({ title: '本地语音识别', en: 'SPEECH ENGINE', icon: 'mic' }, ui.note(`当前系统（${S(a.platform)}）没有可用的识别引擎：支持 Windows / macOS / Linux 的 x64 与 arm64。`, { level: 'warn' }))
     }
-    const free = inst.freeBytes
+    // being prepared (automatically, or after 「重试」 / 一键安装): progress only, nothing to do
+    if (auto.state === 'running') {
+      const pct = U.clamp(U.num(auto.progress, 0), 0, 100)
+      return ui.section(
+        { title: '本地语音识别', en: 'SPEECH ENGINE · SETUP', icon: 'mic' },
+        ui.meter(pct, {
+          label: auto.trigger === 'manual' ? '正在安装本地语音识别（约 260 MB，装好后一直能用）' : '正在自动准备本地语音识别（首次约 260 MB，装好后一直能用，不用你操作）',
+          valueText: `${Math.round(pct)}%`,
+          indeterminate: pct <= 2,
+        }),
+        auto.message ? ui.text(S(auto.message), { tone: 'muted' }) : null,
+        ui.hint(`可以先选视频、调剪辑规则；现在点「识别并规划粗剪」也行，它会等准备好再开始。关掉这个窗口没关系，准备会在后台继续。${auto.home ? `装在：${S(auto.home)}` : ''}`),
+        licenseToggle(ctx, pkg.license || a.attribution || []),
+      )
+    }
+    // the last attempt failed: why, 「重试」, and the old form for another folder / download source
+    if (auto.state === 'failed') {
+      return ui.section(
+        { title: '本地语音识别', en: 'SPEECH ENGINE · SETUP', icon: 'mic' },
+        ui.note(S(auto.error) || '原因未知', { level: 'warn', title: '本地语音识别没有准备好', actions: [ui.btn('重试', () => retryInstall(ctx), { size: 'sm', kind: 'primary', icon: 'retry', busyText: '正在重试…' })] }),
+        ui.btn(L.showAdvanced ? '收起「自己选安装位置」' : '自己选安装位置（高级）', () => {
+          L.showAdvanced = !L.showAdvanced
+          ctx.update()
+        }, { size: 'sm', kind: 'link', icon: L.showAdvanced ? 'collapse' : 'folder' }),
+        L.showAdvanced ? ui.hint('一直不成功的话：换一个空间大、纯英文路径的文件夹，或者换「官方全球源」再装。') : null,
+        L.showAdvanced ? installForm(ctx) : null,
+        licenseToggle(ctx, pkg.license || a.attribution || []),
+      )
+    }
+    // nothing running (the automatic install is switched off): the one-click install as before
     return ui.section(
       { title: '先安装本地语音识别', en: 'SPEECH ENGINE · ONE-TIME SETUP', icon: 'mic', desc: '口播粗剪要先“听懂”你说了什么。识别在你自己的电脑上完成：不上传、不花钱，装一次以后一直能用。' },
+      auto.state === 'disabled' && auto.disabledReason === 'switched-off' ? ui.hint('自动安装已经关掉了（设置了 DSH_ASR_AUTO_INSTALL=0），需要时在这里一键安装。') : null,
       ui.kv([
         ['能做什么', (pkg.uses || []).join('、') || '口播粗剪、真实字幕'],
         ['支持语言', S(pkg.languages) || '普通话 · 粤语 · 英语 · 日语 · 韩语'],
         ['占用空间', S(pkg.diskRequired) || '约 260 MB'],
         ['预计耗时', S(pkg.etaLabel) || '几分钟'],
       ]),
-      ui.field(
-        { label: '安装位置', en: 'FOLDER', hint: `建议放在系统盘以外、纯英文路径的文件夹${free ? `（这个盘还剩 ${(free / 1024 ** 3).toFixed(1)} GB）` : ''}` },
-        ui.input({ key: 'te-dir', value: S(L.installDir), mono: true, placeholder: 'D:/dsh-ai/asr', onInput: (v) => (L.installDir = v), disabled: installing }),
-      ),
-      ui.field(
-        { label: '下载源', en: 'SOURCE' },
-        ui.seg({ value: L.mirror === 'global' ? 'global' : 'cn', options: [{ value: 'cn', label: '国内镜像（推荐）' }, { value: 'global', label: '官方全球源' }], onChange: (v) => (L.mirror = v), disabled: installing }),
-      ),
-      ui.row([ui.btn(installing ? '正在安装…' : '一键安装（约 260 MB）', () => installEngine(ctx), { kind: 'primary', icon: 'download', disabled: installing })]),
-      jobView('install'),
+      installForm(ctx),
       licenseToggle(ctx, pkg.license || a.attribution || []),
+    )
+  }
+  /** 安装位置 + 下载源 + 一键安装 */
+  function installForm(ctx) {
+    const L = ctx.local
+    const free = (L.installer || {}).freeBytes
+    return ui.stack(
+      [
+        ui.field(
+          { label: '安装位置', en: 'FOLDER', hint: `建议放在系统盘以外、纯英文路径的文件夹${free ? `（这个盘还剩 ${(free / 1024 ** 3).toFixed(1)} GB）` : ''}` },
+          ui.input({ key: 'te-dir', value: S(L.installDir), mono: true, placeholder: 'D:/dsh-ai/asr', onInput: (v) => (L.installDir = v) }),
+        ),
+        ui.field(
+          { label: '下载源', en: 'SOURCE' },
+          ui.seg({ value: L.mirror === 'global' ? 'global' : 'cn', options: [{ value: 'cn', label: '国内镜像（推荐）' }, { value: 'global', label: '官方全球源' }], onChange: (v) => (L.mirror = v) }),
+        ),
+        ui.row([ui.btn('一键安装（约 260 MB）', () => installEngine(ctx), { kind: 'primary', icon: 'download', busyText: '正在启动…' })]),
+      ],
+      { gap: 10 },
     )
   }
   /** 开源授权与出处: collapsed by default (a toggle, so hidden text is never laid out over the rest) */
@@ -548,11 +630,21 @@
     const rc = d.roughcut
     const key = `plan:${PK.dir()}`
     const busy = jobRunning(key) || jobRunning(`build:${PK.dir()}`)
-    const engineReady = Boolean(L.asr && L.asr.ready)
+    // while the engine is being prepared the buttons work too: the job waits for it on the server
+    const preparing = Boolean(L.install && L.install.state === 'running')
+    const engineReady = Boolean(L.asr && (L.asr.ready || preparing))
+    const engineNote = L.asr && L.asr.ready
+      ? null
+      : preparing
+        ? ui.note('本地语音识别正在自动准备（进度见上面），准备好后就能识别；现在点「识别并规划粗剪」也可以，它会自动等。', { level: 'info' })
+        : L.install && L.install.state === 'failed'
+          ? ui.note('本地语音识别还没准备好：请在上面点「重试」。', { level: 'warn' })
+          : ui.note('请先在上面安装本地语音识别。', { level: 'info' })
     const head = ui.row(
       [
         ui.btn(rc ? (L.dirty ? '应用修改并重新规划' : '重新识别并规划') : '识别并规划粗剪', () => runPlan(ctx), { kind: rc && !L.dirty ? 'secondary' : 'primary', icon: 'wave', disabled: busy || !engineReady || !L.source, busyText: '处理中…' }),
         rc && !L.dirty ? ui.btn('从头重新识别', () => runPlan(ctx, { force: true }), { kind: 'ghost', size: 'sm', icon: 'refresh', disabled: busy || !engineReady, title: '识别结果有误时：忽略缓存，重新听写一遍' }) : null,
+        rc ? ui.btn('导出整段字幕 / 文稿', () => exportTranscript(ctx), { kind: 'ghost', size: 'sm', icon: 'download', disabled: busy || !engineReady || jobRunning(`transcribe:${PK.dir()}`), busyText: '导出中…', title: '按原视频的时间导出 SRT 字幕和 TXT 文稿（不剪任何内容）' }) : null,
         ui.spacer(),
         L.dirty ? ui.pill('有未应用的修改', 'warn', { dot: true }) : null,
       ],
@@ -561,7 +653,7 @@
     if (!rc) {
       return ui.section(
         { title: '粗剪结果', en: 'ROUGH CUT', icon: 'scissors', desc: '先“听写”整段视频，再按上面的规则标出要剪掉的地方。第一次识别 1 分钟的视频大约需要几秒钟。' },
-        engineReady ? null : ui.note('请先在上面安装本地语音识别。', { level: 'info' }),
+        engineNote,
         head,
         jobView(key),
       )
@@ -882,6 +974,8 @@
         },
       )
       loadState(ctx, { quiet: true })
+      // the engine prepares itself in the background: follow its progress until it is done
+      ctx.every(2000, () => pollEngine(ctx))
     },
     render(ctx) {
       const L = ctx.local

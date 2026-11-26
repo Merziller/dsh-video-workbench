@@ -265,5 +265,5 @@ export function projectHasSceneRegistry(absDir) {
   return existsSync(join(resolve(absDir), 'src', 'scenes', 'index.ts'))
 }
 
-// HyperFrames HTML locked-scene blocks live in scene-locks.js (setSceneLock captures them at lock time)
+// HTML5 motion engine locked-scene blocks live in scene-locks.js (setSceneLock captures them at lock time)
 export { applyLockedHtmlStore, extractHtmlSceneBlock, LOCKED_HTML_STORE_REL, restoreLockedHtmlScenes, syncLockedHtmlStore } from './scene-locks.js'

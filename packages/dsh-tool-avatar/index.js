@@ -46,7 +46,7 @@ export function apply(ctx) {
   registerTool(ctx, {
     name: 'generate_avatar',
     description:
-      'Generate a transparent alpha-channel (yuva420p .webm) AI digital human or cloned human spokesperson overlay video clip, and mount avatarClip + avatarLayout (fullscreen / pip-bl / pip-br) into script.json for transparent compositing in both Remotion and HyperFrames HTML5. In cloned-human mode the recorded person video (or portrait photo) is lip-synced to the (voice-cloned) narration by the configured engine (AVATAR_LIPSYNC_ENGINE: local MuseTalk 1.5, LatentSync/CLI or fal.ai), aligned to the project timeline, with automatic fallback to the non-lip-sync compositor when no engine is available.',
+      'Generate a transparent alpha-channel (yuva420p .webm) AI digital human or cloned human spokesperson overlay video clip, and mount avatarClip + avatarLayout (fullscreen / pip-bl / pip-br) into script.json for transparent compositing in both Remotion and the HTML5 motion engine. In cloned-human mode the recorded person video (or portrait photo) is lip-synced to the (voice-cloned) narration by the configured engine (AVATAR_LIPSYNC_ENGINE: local MuseTalk 1.5, LatentSync/CLI or fal.ai), aligned to the project timeline, with automatic fallback to the non-lip-sync compositor when no engine is available.',
     parameters: {
       type: 'object',
       properties: {

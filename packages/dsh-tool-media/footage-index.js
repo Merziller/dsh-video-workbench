@@ -327,8 +327,13 @@ export async function indexFootage({ projectDir, assetIds = null, force = false,
       speechApi = await import('./speech-recognition.js')
       const st = await speechApi.getAsrStatus()
       if (!st.ready) {
-        if (transcribe === 'on') throw Object.assign(new Error(st.reason || '本地语音识别引擎未安装'), { code: 'ASR_NOT_INSTALLED' })
-        speechApi = null
+        // asked for explicitly: wait for the (automatic) install of the engine; 'auto': index without speech this
+        // time and let the install start in the background for next time
+        if (transcribe === 'on') await speechApi.ensureAsrEngine({ signal, onProgress: (p) => onProgress?.({ progress: 1, message: p.message }) })
+        else {
+          await speechApi.maybeStartAsrAutoInstall()
+          speechApi = null
+        }
       }
     } catch (err) {
       if (transcribe === 'on') throw err

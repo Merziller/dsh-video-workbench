@@ -53,6 +53,7 @@ import {
   mixVideoAudio,
   quantizeScenesToBeatGrid,
 } from './audio-synth.js'
+import { cutToMusicWindow, musicTimingFields } from './beat-analyzer.js'
 import { buildHtmlCoderSkillsPrompt, buildRemotionCoderSkillsPrompt } from './shotcraft-lib.js'
 import { withStyleGuide } from './style-presets.js'
 import { callLlmChat, createLlmUsageLedger, extractJsonFromLlmText, formatLlmUsageSummary, getSafeLlmConfigSummary, resolveLlmConfig, runWithLlmUsage } from './llm-client.js'
@@ -99,6 +100,7 @@ export function resolvePipelineMode(rawMode) {
   }
 }
 import { masterVoiceTracks } from './voice-master.js'
+import { runNarrationCheck } from './narration-check.js'
 
 /** 作品类型: 'ai-film' (AI 原创成片, the default) | 'talk-edit' (口播剪辑: the user's own talking-head recording). */
 export const PRODUCTION_TYPES = ['ai-film', 'talk-edit']
@@ -289,7 +291,7 @@ async function executeMultiAgentRunner(run, helpers) {
     text: stripPlazaTemplateGuidance(intentFullText),
     narrationMode: spec.narrationMode || initialScriptSnap.narrationMode || 'tts',
     hasVisualAssets: (initialAssetsSnap.items || []).some((it) => it.type === 'image' || it.type === 'video'),
-    bgmDurationSec: Number(uploadedMusicSnap[0]?.durationSec || initialScriptSnap.bgm?.durationSec) || 0,
+    bgmDurationSec: Number(uploadedMusicSnap[0]?.durationSec || initialScriptSnap.bgm?.songDurationSec || initialScriptSnap.bgm?.durationSec) || 0,
     referenceShotCount: Number(refStyleSnap?.pacingSignature?.targetShotCount || refStyleSnap?.shotCount || 0),
     referenceDurationSec: Number(refStyleSnap?.durationSec || 0),
   })
@@ -379,6 +381,8 @@ async function executeMultiAgentRunner(run, helpers) {
         aiBadgeEnabled: spec.aiBadgeEnabled !== undefined ? Boolean(spec.aiBadgeEnabled) : spec.aiBadge !== false,
         aiBadgePosition: spec.aiBadgePosition || 'top-right',
         aiBadgeText: spec.aiBadgeText || (typeof spec.aiBadge === 'string' ? spec.aiBadge : ''),
+        ...(spec.endNotice !== undefined ? { endNotice: spec.endNotice === true } : {}),
+        ...(spec.endNoticeCredit !== undefined ? { endNoticeCredit: spec.endNoticeCredit === true } : {}),
         pacingMode: spec.pacingMode || 'auto',
         visual3dMode: spec.visual3dMode || 'auto',
         fps: effectiveFps,
@@ -689,6 +693,8 @@ async function executeMultiAgentRunner(run, helpers) {
     }
     if (spec.aiBadgePosition) sAfterDir.aiBadgePosition = String(spec.aiBadgePosition)
     if (spec.aiBadgeText !== undefined) sAfterDir.aiBadgeText = String(spec.aiBadgeText)
+    if (spec.endNotice !== undefined) sAfterDir.endNotice = spec.endNotice === true
+    if (spec.endNoticeCredit !== undefined) sAfterDir.endNoticeCredit = spec.endNoticeCredit === true
     if (spec.pacingMode) sAfterDir.pacingMode = String(spec.pacingMode)
     if (spec.visual3dMode) sAfterDir.visual3dMode = String(spec.visual3dMode)
     if (spec.visualReview !== undefined) sAfterDir.visualReview = spec.visualReview !== false
@@ -1002,6 +1008,8 @@ async function executeMultiAgentRunner(run, helpers) {
         return !hasExisting || (!spec.preserveExistingAudio && !isSceneLocked(sc))
       })
 
+      // 配音回听校验: every take synthesised below is listened to before mastering (same settings for a re-dub)
+      const dubbedTakes = []
       for (let i = 0; i < scenesToTts.length; i++) {
         if (signal.aborted) throw createAbortError()
         await waitIfPaused('t-audio')
@@ -1016,7 +1024,7 @@ async function executeMultiAgentRunner(run, helpers) {
         const sceneSpeed = Number(((Number(sc.speechRate) || 1.04) * speechTempo).toFixed(2))
         const displayText = sc.narration || sc.title || '欢迎来到 AI 视频创作工坊'
         const spokenTtsText = sc.ttsText || toTtsText(displayText)
-        await executeGenerateSpeech({
+        const ttsArgs = {
           text: displayText,
           ttsText: spokenTtsText,
           emotion: sc.voiceEmotion || sc.emotion || '自信明快',
@@ -1028,6 +1036,25 @@ async function executeMultiAgentRunner(run, helpers) {
           scriptPath: absDir,
           sceneId: sc.id,
           allowPlaceholder,
+        }
+        await executeGenerateSpeech(ttsArgs)
+        dubbedTakes.push({ sceneId: sc.id, ttsArgs })
+      }
+
+      // 配音回听校验 (narration-check.js): local speech recognition listens to the new takes, a failing take is
+      // re-dubbed once; what still fails is a warning — advisory only, never stops the run (except the stop button)
+      if (dubbedTakes.length) {
+        await runNarrationCheck({
+          projectDir: absDir,
+          takes: dubbedTakes,
+          resynthesize: (take) => executeGenerateSpeech(take.ttsArgs),
+          enabled: spec.narrationCheck !== false,
+          narrationMode: effectiveNarrationMode,
+          signal,
+          onChild,
+          onLog: (msg) => appendLog('audio', msg),
+          onWarn: (msg) => warnUser('audio', msg),
+          onProgress: (msg) => updateTask('t-audio', { status: 'running', progress: 55, message: msg, log: false }),
         })
       }
 
@@ -1094,12 +1121,15 @@ async function executeMultiAgentRunner(run, helpers) {
 
     if (bgmMode === 'uploaded' && chosenUploadPath) {
       const absBgmFile = isAbsolute(chosenUploadPath) ? chosenUploadPath : resolve(absDir, chosenUploadPath)
-      let beatMeta = scriptNow.bgm?.analyzed ? scriptNow.bgm : null
+      // an analysis already moved to film time by an earlier run (bgm.startSec > 0) is measured again in song time
+      let beatMeta = scriptNow.bgm?.analyzed && !(Number(scriptNow.bgm?.startSec) > 0) ? scriptNow.bgm : null
       if (!beatMeta && existsSync(absBgmFile)) {
         try {
           beatMeta = await analyzeAudioBeatStructure(absBgmFile, { signal })
         } catch {}
       }
+      // 配乐从精彩处开始: 'auto' (default) or the user's 「从头开始」 pin ('head'; MCP bgmStartFrom wins)
+      const musicStartFrom = ['auto', 'head'].includes(spec.bgmStartFrom) ? spec.bgmStartFrom : scriptNow.bgm?.startFrom === 'head' ? 'head' : 'auto'
       scriptNow.bgm = {
         ...(scriptNow.bgm || {}),
         ...(beatMeta || {}),
@@ -1108,6 +1138,7 @@ async function executeMultiAgentRunner(run, helpers) {
         source: 'user-imported',
         path: chosenUploadPath,
         uploadedPath: chosenUploadPath,
+        startFrom: musicStartFrom,
       }
       if (beatMeta?.analyzed && (effectiveNarrationMode === 'subtitle-mv' || effectiveNarrationMode === 'tts-beat-sync' || spec.beatSync || true)) {
         const qMode = effectiveNarrationMode === 'subtitle-mv' ? 'subtitle-mv' : 'tts-beat-sync'
@@ -1122,12 +1153,22 @@ async function executeMultiAgentRunner(run, helpers) {
           referenceStyle: scriptNow.referenceStyle,
           sfxPick: customSfxPick,
         }
-        scriptNow.scenes = quantizeScenesToBeatGrid(scriptNow.scenes || [], beatMeta, {
-          ...adaptiveOpts,
-          mode: qMode,
+        // 配乐从精彩处开始: a song clearly longer than the film starts at a well-chosen bar line; the scenes are cut on
+        // the grid in film time and script.bgm (beats, drops, … + startSec) follows it — the mixer starts the song there
+        const sceneInput = scriptNow.scenes || []
+        const musicCut = cutToMusicWindow(beatMeta, {
+          filmSec: qMode === 'subtitle-mv' && effectiveTargetDurationSec > 0 ? effectiveTargetDurationSec : Math.max(totalSec, effectiveTargetDurationSec || 0),
+          exactLength: qMode === 'subtitle-mv' && effectiveTargetDurationSec > 0,
+          musicOnly: qMode === 'subtitle-mv',
+          startFrom: musicStartFrom,
           fps,
-          targetDurationSec: effectiveTargetDurationSec,
+          songPath: chosenUploadPath,
+          cut: (meta) => quantizeScenesToBeatGrid(sceneInput, meta, { ...adaptiveOpts, mode: qMode, fps, targetDurationSec: effectiveTargetDurationSec }),
         })
+        beatMeta = musicCut.meta
+        scriptNow.bgm = { ...scriptNow.bgm, ...musicTimingFields(musicCut.meta) }
+        if (musicCut.window.note) appendLog('audio', musicCut.window.note)
+        scriptNow.scenes = musicCut.scenes
         scriptNow.scenes = choreographBeatSfxCues(scriptNow.scenes, beatMeta, { ...adaptiveOpts, fps })
         scriptNow.subtitles = scriptNow.scenes.flatMap((sc) => sc.subtitles || [])
         const lastSc = scriptNow.scenes[scriptNow.scenes.length - 1]
@@ -1449,7 +1490,7 @@ async function executeMultiAgentRunner(run, helpers) {
     if (enableAiCode && llmSummary.configured) {
       curScript.authoringMode = 'ai-coded'
     }
-    // HyperFrames HTML is regenerated as one page: locked scenes keep the <template data-scene-id> blocks captured
+    // The HTML5 motion engine page is regenerated as one page: locked scenes keep the <template data-scene-id> blocks captured
     // when they were locked (store written at run start / earlier runs, before any rewrite of index.html)
     let lockedHtmlBlocks = {}
     if (engine === 'html' && getLockedSceneIds(curScript).size > 0) {
@@ -1482,7 +1523,7 @@ async function executeMultiAgentRunner(run, helpers) {
         updateTask('t-motion', {
           status: 'running',
           progress: 35,
-          message: `动效质检 Agent 正在分批召唤大模型 (${llmSummary.model}) 手写定制 ${engine === 'remotion' ? 'Remotion TSX' : 'HyperFrames HTML'} 动效模块...`,
+          message: `动效质检 Agent 正在分批召唤大模型 (${llmSummary.model}) 手写定制 ${engine === 'remotion' ? 'Remotion TSX' : 'HTML5 动效'} 动效模块...`,
         })
 
         let repairRes = null

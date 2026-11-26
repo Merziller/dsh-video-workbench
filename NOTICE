@@ -1,25 +1,68 @@
 ================================================================================
-DSH Video Workbench (dsh-video-workbench) — Attribution & Copyright Notice
+禾杨视频工坊 · DSH Video Workbench (dsh-video-workbench) — Attribution & Copyright Notice
 ================================================================================
 
-Original Author  : Merziller
+Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)
+
+Product (产品)   : 禾杨视频工坊（DSH Video Workbench）
+Studio (出品)    : 禾杨智绘 · 绍兴市柯桥区禾杨智绘软件开发工作室
+Original Author  : Merziller (子墨)
 QQ               : 1411574209
 WeChat (微信)    : Merziller
 Email (Gmail)    : k26789228@gmail.com
 Official GitHub  : https://github.com/Merziller/dsh-video-workbench
 License          : MIT License (see LICENSE)
 
+本项目由 Merziller 与旗下绍兴市柯桥区禾杨智绘软件开发工作室原创研发，开源版遵循 MIT 协议保留双署名，商业免配整合包与企业定制由工作室官方提供。
+
 版权与署名保护声明（Open-Source Attribution Notice）：
 1. 本项目以 MIT 协议完全开源免费供个人、学习及商业创作使用；
 2. 依据 MIT 许可证条款，任何复制、二次修改、打包分发、上架插件市场、整合发布或
-   视频演示传播本项目的行为，必须完整保留本 NOTICE 文件、LICENSE 文件及原作者
-   Merziller 的版权署名与联系方式（QQ: 1411574209 / 微信: Merziller /
-   Email: k26789228@gmail.com / GitHub: https://github.com/Merziller/dsh-video-workbench）；
-3. 严禁抹除原作者署名、替换作者信息、将本项目冒充为他人原创或倒卖套壳。
+   视频演示传播本项目的行为，必须完整保留本 NOTICE 文件、LICENSE 文件及双重版权署名
+   （绍兴市柯桥区禾杨智绘软件开发工作室 & 原创作者 Merziller）与联系方式
+   （QQ: 1411574209 / 微信: Merziller / Email: k26789228@gmail.com /
+   GitHub: https://github.com/Merziller/dsh-video-workbench）；
+3. 严禁抹除工作室或原作者署名、替换作者信息、将本项目冒充为他人原创或倒卖套壳；
+4. 商业免配整合包与企业定制由禾杨智绘工作室官方提供。
 
 Notice for Redistributions & Derivative Works (English):
+Originally created by Merziller (子墨) and the studio founded by Merziller, 绍兴市柯桥区禾杨智绘软件开发工作室 (禾杨智绘). The open-source edition is released under the MIT License with both credits retained; ready-to-run commercial bundles and enterprise customization are provided officially by the studio.
 This software is free and open-source under the MIT License. Any copy, fork,
-redistribution, re-packaging, or derivative work MUST preserve the original
-copyright notice and author attribution of Merziller (QQ: 1411574209, WeChat:
-Merziller, Email: k26789228@gmail.com, https://github.com/Merziller/dsh-video-workbench).
+redistribution, re-packaging, or derivative work MUST preserve the copyright
+notice and the attribution of both 绍兴市柯桥区禾杨智绘软件开发工作室 (禾杨智绘)
+and the original author Merziller (QQ: 1411574209, WeChat: Merziller,
+Email: k26789228@gmail.com, https://github.com/Merziller/dsh-video-workbench).
 Removing attribution or misrepresenting authorship is strictly prohibited.
+
+================================================================================
+Third-party notices (第三方开源出处)
+================================================================================
+
+1. AutoClip — https://github.com/zhouxiaoka/autoclip
+   License: MIT — Copyright (c) 2024 AutoClip Team
+   Used in : packages/dsh-tool-media/clip-factory.js, packages/dsh-tool-media/clip-render.js
+             (长视频拆条: the one-pass clip finder design — numbered transcript rows, model windows, checks of every
+             pick, de-duplication, length bounds and selection; layouts for vertical video; burned-in caption
+             detection). Re-implemented for this plugin; the prompts are our own.
+
+   MIT License
+   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+   documentation files (the "Software"), to deal in the Software without restriction, including without limitation
+   the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+   permit persons to whom the Software is furnished to do so, subject to the following conditions:
+   The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+   the Software.
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+   WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+   COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+2. Fonts used for burned-in captions — packages/shared/fonts/ (Noto Sans SC, Source Han Serif SC)
+   License: SIL Open Font License 1.1 (see packages/shared/fonts/LICENSES.md). For FFmpeg captions the plugin makes
+   TrueType copies on the user's computer under its own family names (DSH Caption Sans / DSH Caption Black /
+   DSH Title Serif), as the OFL allows for modified versions; they are never shipped.
+
+Ideas only (no code or text copied): FunClip (MIT, (c) 2023 Alibaba) — keep-only passages and transcript export;
+Lemo-Opuscar (code MIT; docs CC BY-NC 4.0) and OpenMontage (AGPL-3.0) — the narration check and music-window
+ideas were written from our own description; HyperFrames (Apache-2.0, HeyGen) — general practice of frame-seekable
+HTML5 rendering. The plugin is not affiliated with or endorsed by any of these projects.

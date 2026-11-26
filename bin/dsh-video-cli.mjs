@@ -4,14 +4,14 @@
  * Works with DeepSeek Harness (DSH), Claude Code, OpenAI Codex CLI, WorkBuddy,
  * Cursor, Windsurf, Cline, OpenCode, Antigravity, or Standalone Browser.
  *
- * Copyright (c) 2026 Merziller
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨)
  * Author: Merziller | QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com
  * Official Repo: https://github.com/Merziller/dsh-video-workbench (MIT License)
  */
 import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { PACKAGE_ROOT, REPO_ROOT, probeHardwareProfile, resolveBinaries } from '../packages/shared/index.js'
+import { BRAND, PACKAGE_ROOT, REPO_ROOT, probeHardwareProfile, resolveBinaries } from '../packages/shared/index.js'
 import { createUniversalToolRegistry, startMcpStdioServer } from './dsh-video-mcp.mjs'
 
 const pkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8'))
@@ -20,9 +20,9 @@ const cmd = (args[0] || 'studio').toLowerCase()
 
 function printBanner() {
   console.log('======================================================================')
-  console.log(`🎬 DSH Video Workbench v${pkg.version} — Universal Multi-Agent AI Video Studio`)
+  console.log(`🎬 ${BRAND.productName} (${BRAND.productNameEn}) v${pkg.version} — Universal Multi-Agent AI Video Studio`)
   console.log('   Supports: DSH · Claude Code · Codex CLI · WorkBuddy · Cursor · Browser')
-  console.log('   Original Author: Merziller | License: MIT (Must retain attribution)')
+  console.log(`   ${BRAND.producedBy} · ${BRAND.copyright} | License: MIT (Must retain attribution)`)
   console.log('   QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com')
   console.log('   GitHub: https://github.com/Merziller/dsh-video-workbench')
   console.log('======================================================================')

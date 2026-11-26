@@ -14,6 +14,7 @@ import {
   buildComplianceNoticeText,
   PRIMARY_MONO_STACK,
   PRIMARY_SANS_STACK,
+  renderEndNoticeHtml,
   resolveSafeZoneSpec,
 } from '../shared/index.js'
 import { normalizeSceneCuts } from './beat-analyzer.js'
@@ -1731,7 +1732,7 @@ export function buildRichHtmlVideo(script) {
     <div id="ai-badge">${escapeHtml(typeof script?.aiBadgeText === 'string' && script.aiBadgeText.trim() ? script.aiBadgeText : typeof script?.aiBadge === 'string' && script.aiBadge.trim() ? script.aiBadge : complianceNotice.badgeText)}</div>
     <div id="workflow-hud"></div>
     <div id="avatar-overlay-wrap"><video id="avatar-overlay-video" muted playsinline preload="auto"></video></div>
-    <div id="end-notice-wrap"><div id="end-notice">${escapeHtml(complianceNotice.endNoticeBody)}</div></div>
+    ${renderEndNoticeHtml(complianceNotice)}
     <div id="sub-wrap"><div id="sub-pill"></div></div>
     <div id="progress-line"><div id="progress-fill"></div></div>
   </div>

@@ -15,7 +15,7 @@ import { existsSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 import { createAbortError, readScriptJson, writeScriptJson } from '../shared/index.js'
 import { readAssets } from './asset-manager.js'
-import { analyzeAudioBeatStructure } from './beat-analyzer.js'
+import { analyzeAudioBeatStructure, cutToMusicWindow, formatMusicClock } from './beat-analyzer.js'
 import { indexFootage } from './footage-index.js'
 import { safeProjectSnapshot } from './project-history.js'
 import { writeTalkProjectCode } from './talk-edit.js'
@@ -266,7 +266,20 @@ export async function buildHighlightProject({ projectDir, musicAssetId = '', tar
   let target = Number(targetSec) > 0 ? Number(targetSec) : Math.min(HIGHLIGHT_DEFAULTS.autoMaxSec, Math.max(HIGHLIGHT_DEFAULTS.minSec, usable))
   target = Math.max(HIGHLIGHT_DEFAULTS.minSec * 0.5, Math.min(HIGHLIGHT_DEFAULTS.maxSec, target))
   if (musicSec > 0) target = Math.min(target, musicSec)
-  const meta = beatMeta && Array.isArray(beatMeta.beats) && beatMeta.beats.length >= 4 ? beatMeta : syntheticBeats(target, 112)
+  let meta = beatMeta && Array.isArray(beatMeta.beats) && beatMeta.beats.length >= 4 ? beatMeta : syntheticBeats(target, 112)
+  // 配乐从精彩处开始: a song clearly longer than the film starts at a well-chosen bar line (the user's 「从头开始」 pin on
+  // this project is kept); the cuts are then planned on the beats in film time and the mixer starts the song there
+  let musicWindow = null
+  if (meta === beatMeta) {
+    let startFrom = 'auto'
+    try {
+      if (existsSync(join(absDir, 'script.json'))) startFrom = readScriptJson(absDir).data?.bgm?.startFrom === 'head' ? 'head' : 'auto'
+    } catch {}
+    const musicCut = cutToMusicWindow(beatMeta, { filmSec: target, exactLength: true, musicOnly: true, startFrom, songPath: relOf(absDir, music.path) })
+    meta = musicCut.meta
+    musicWindow = { ...musicCut.window, startFrom }
+    if (musicWindow.startSec > 0) report(66, musicWindow.note)
+  }
   // end on a strong beat close to the target when there is one
   const strong = (meta.beats || []).filter((b) => b.strong && b.time >= target * 0.85 && b.time <= target + 0.01).map((b) => b.time)
   if (strong.length) target = strong[strong.length - 1]
@@ -323,7 +336,7 @@ export async function buildHighlightProject({ projectDir, musicAssetId = '', tar
   }
   const displayTitle = String(title || '').trim().slice(0, 20)
   const script = {
-    ...Object.fromEntries(['brandKit', 'brandMark', 'aiBadgeEnabled', 'aiBadgePosition', 'aiBadgeText', 'targetPlatform'].filter((k) => prev[k] !== undefined).map((k) => [k, prev[k]])),
+    ...Object.fromEntries(['brandKit', 'brandMark', 'aiBadgeEnabled', 'aiBadgePosition', 'aiBadgeText', 'endNotice', 'endNoticeCredit', 'targetPlatform'].filter((k) => prev[k] !== undefined).map((k) => [k, prev[k]])),
     title: displayTitle || prev.title || 'Vlog 高光',
     ...(displayTitle ? { displayTitle } : {}),
     productionType: 'highlight',
@@ -340,7 +353,18 @@ export async function buildHighlightProject({ projectDir, musicAssetId = '', tar
     ambienceBed: false,
     bgmMode: music ? 'uploaded' : 'generated',
     bgm: music
-      ? { enabled: true, path: relOf(absDir, music.path), uploadedPath: relOf(absDir, music.path), source: 'user-imported', volume: 1, bpm: Math.round(meta.bpm || 0), analyzed: Boolean(beatMeta) }
+      ? {
+          enabled: true,
+          path: relOf(absDir, music.path),
+          uploadedPath: relOf(absDir, music.path),
+          source: 'user-imported',
+          volume: 1,
+          bpm: Math.round(meta.bpm || 0),
+          analyzed: Boolean(beatMeta),
+          // where the song starts in the film (song seconds) — beatGrid below is already in film time
+          ...(musicWindow ? { startSec: r3(musicWindow.startSec), startFor: relOf(absDir, music.path), songDurationSec: r3(musicSec), ...(musicWindow.startSec > 0 ? { startNote: musicWindow.note } : {}) } : {}),
+          ...(musicWindow?.startFrom === 'head' ? { startFrom: 'head' } : {}),
+        }
       : { enabled: true, mood: 'energetic', bpm: 112, volume: 0.95, source: 'generated' },
     beatGrid: { bpm: meta.bpm, beatSec: meta.beatSec, beats: (meta.beats || []).filter((b) => b.time <= target + 0.01).map((b) => r3(b.time)) },
     highlight: { order: order === 'best' ? 'best' : 'story', targetSec: r3(target), musicAssetId: music?.id || '', aspect, cuts: scenes.length, builtAt: new Date().toISOString() },
@@ -353,6 +377,7 @@ export async function buildHighlightProject({ projectDir, musicAssetId = '', tar
   writeScriptJson(absDir, script)
   writeTalkProjectCode(absDir, readScriptJson(absDir).data)
   const clipsUsed = new Set(picks.map((p) => p.clip.id)).size
-  report(100, `Vlog 高光工程已生成：${scenes.length} 个镜头 · ${Math.round(target)} 秒 · 用了 ${clipsUsed} 段素材${music ? ` · 配乐「${music.name || '音乐'}」` : ' · 配乐自动生成'}`)
-  return { ok: true, projectDir: absDir, scenes: scenes.length, durationSec: r3(target), bpm: Math.round(meta.bpm || 0), clipsUsed, shotsUsed: picks.length, music: music ? { id: music.id, name: music.name } : null, script: readScriptJson(absDir).data }
+  const startLine = musicWindow?.startSec > 0 ? `（从 ${formatMusicClock(musicWindow.startSec)} 开始）` : ''
+  report(100, `Vlog 高光工程已生成：${scenes.length} 个镜头 · ${Math.round(target)} 秒 · 用了 ${clipsUsed} 段素材${music ? ` · 配乐「${music.name || '音乐'}」${startLine}` : ' · 配乐自动生成'}`)
+  return { ok: true, projectDir: absDir, scenes: scenes.length, durationSec: r3(target), bpm: Math.round(meta.bpm || 0), clipsUsed, shotsUsed: picks.length, music: music ? { id: music.id, name: music.name, startSec: r3(musicWindow?.startSec || 0) } : null, script: readScriptJson(absDir).data }
 }

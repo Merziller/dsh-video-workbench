@@ -1,6 +1,6 @@
 /**
  * @dsh-video/tool-media — 影核广场社区 (CinePulse Hub community)
- * Copyright (c) 2026 Merziller (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨) (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
  *
  * There is no server of our own. The flow is:
  *   1. 用户投稿 — the user builds a privacy-checked submission package (zip) of a finished project under

@@ -96,6 +96,16 @@ const requiredEntries = [
   'package/scripts/avatar/tha3/__init__.py',
   'package/scripts/avatar/tha3/LICENSE',
   'package/packages/dsh-web-video-workbench/lib/routes-anime.js',
+  // v0.8.0: 长视频拆条 (clip finder, FFmpeg clip renderer, the job layer) and the caption fonts for FFmpeg (made on the
+  // user's computer from the bundled WOFF2 fonts)
+  'package/packages/dsh-tool-media/clip-factory.js',
+  'package/packages/dsh-tool-media/clip-render.js',
+  'package/packages/dsh-tool-media/short-clips.js',
+  'package/packages/shared/caption-fonts.js',
+  'package/packages/shared/woff2-decode.js',
+  'package/packages/shared/font-instance.js',
+  // product name + dual copyright (禾杨视频工坊 · 禾杨智绘), imported by the shared core
+  'package/packages/shared/brand.js',
   'package/LICENSE',
   'package/NOTICE',
   'package/README.md',

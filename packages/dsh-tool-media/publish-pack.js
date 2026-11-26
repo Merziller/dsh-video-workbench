@@ -17,6 +17,51 @@ function sanitizeSlug(raw) {
     .slice(0, 48) || 'dsh-video'
 }
 
+/** Title / topic limits per platform (characters): what the apps show without cutting off. */
+const PLATFORM_COPY = {
+  douyin: { title: 30, tags: 5 },
+  kuaishou: { title: 30, tags: 5 },
+  xiaohongshu: { title: 20, tags: 8 },
+  bilibili: { title: 80, tags: 10 },
+  shipinhao: { title: 30, tags: 5 },
+  universal: { title: 30, tags: 6 },
+}
+
+const cut = (s, n) => {
+  const a = Array.from(String(s || '').trim())
+  return a.length > n ? a.slice(0, n).join('') : a.join('')
+}
+
+/**
+ * The copy of a publish pack, made only from the film's own title, topic and scene titles — no slogans, no tool
+ * names, nothing the film does not say. Titles fit the platform's length; topics come from the title / topic /
+ * scene titles (2–12 characters each).
+ */
+export function buildPublishCopy(script = {}, { platform = 'douyin', durationSec = 0 } = {}) {
+  const lim = PLATFORM_COPY[platform] || PLATFORM_COPY.universal
+  const title = String(script?.displayTitle || script?.title || '').trim()
+  const topic = String(script?.topic || '').replace(/\s+/g, ' ').trim()
+  const titleBase = title || cut(topic, 20) || '我的视频'
+  const scenes = (Array.isArray(script?.scenes) ? script.scenes : []).map((s) => String(s?.title || '').trim()).filter(Boolean)
+  const titles = []
+  const add = (t) => {
+    const v = cut(t, lim.title)
+    if (v && !titles.includes(v)) titles.push(v)
+  }
+  add(titleBase)
+  if (topic && topic !== titleBase) add(topic.split(/[。！？!?\n]/)[0])
+  if (scenes.length >= 2) add(`${titleBase}：${scenes[0]}`)
+  const words = [title, topic, ...scenes]
+    .join(' ')
+    .split(/[\s,，、/|｜:：;；。！？!?·「」『』“”"'()（）【】《》]+/)
+    .map((s) => s.trim())
+    .filter((s) => Array.from(s).length >= 2 && Array.from(s).length <= 12 && !/^\d+$/.test(s))
+  const hashtags = [...new Set(words)].slice(0, lim.tags).map((k) => `#${k}`)
+  const firstLine = String((script?.scenes || []).map((s) => s?.narration || s?.subtitle || '').find((x) => String(x).trim()) || '').trim()
+  const description = cut(firstLine || topic || titleBase, 120) + (Number(durationSec) > 0 ? `（${Math.round(Number(durationSec))} 秒）` : '')
+  return { titleBase, titles, hashtags, description }
+}
+
 /**
  * Generate a complete platform-ready Publishing Package (`publish/<platform>-pack/`):
  * - Final MP4 copy
@@ -116,48 +161,38 @@ export async function exportPublishPack({
   }
 
   const notice = buildComplianceNoticeText(script)
-  const titleBase = script?.title || 'AI 视觉创作短片'
-  const topicKeywords = (script?.topic || titleBase)
-    .split(/[\s,，、/]+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length >= 2 && s.length <= 12)
-    .slice(0, 4)
-
-  const hashtags = [
-    ...new Set([
-      ...topicKeywords.map((k) => `#${k}`),
-      '#AI视频创作',
-      '#DeepSeekHarness',
-      targetPlatform === 'xiaohongshu' ? '#效率工具分享' : '#科技视觉大片',
-      '#MotionGraphics',
-    ]),
-  ]
+  const copy = buildPublishCopy(script, { platform: targetPlatform, durationSec: durSec })
+  const titleBase = copy.titleBase
+  const hashtags = copy.hashtags
 
   const summaryLines = (script?.scenes || [])
-    .map((s, idx) => `${idx + 1}. **${s.title || `镜头 ${idx + 1}`}** — ${String(s.narration || '').slice(0, 60)}`)
+    .map((s, idx) => ({ idx, title: String(s.title || '').trim(), text: String(s.narration || s.subtitle || '').trim() }))
+    .filter((s) => s.title || s.text)
+    .map((s) => `${s.idx + 1}. ${s.title ? `**${s.title}**` : `第 ${s.idx + 1} 段`}${s.text ? ` — ${Array.from(s.text).slice(0, 60).join('')}` : ''}`)
     .join('\n')
+  // what the picture actually carries (the AI badge and the end line are switches of the project)
+  const badgeOn = script?.aiBadgeEnabled !== undefined ? Boolean(script.aiBadgeEnabled) : script?.aiBadge !== false
+  const markLine = [badgeOn ? `画面角标「${notice.badgeText}」` : '', notice.endNoticeVisible ? '片尾声明' : ''].filter(Boolean)
 
   const metaMd = [
-    `# ${titleBase} · ${platformSpec.label} 一键发布包`,
+    `# ${titleBase} · ${platformSpec.label} 发布包`,
     ``,
     `> 生成时间：${new Date().toISOString()}  |  目标平台：**${platformSpec.label}**  |  画面规格：**${script?.width || 1920}×${script?.height || 1080} (${script?.aspectRatio || '16:9'}) @ ${script?.fps || 30}fps**`,
     ``,
-    `## 1. 推荐发布标题（3 选 1）`,
-    `- **爆款吸睛**：${titleBase}：从想法到成片究竟有多快？`,
-    `- **直给干货**：${titleBase} 全流程拆解 (${Math.round(durSec)} 秒高能版)`,
-    `- **品质大片**：${titleBase} · 帧级动态视觉实测`,
+    `## 1. 发布标题（可选其一，发布前请按你的实际内容修改）`,
+    ...copy.titles.map((t) => `- ${t}`),
     ``,
     `## 2. 发布正文与话题标签`,
-    `用 AI 驱动分镜、动效代码与真人级语音合成的一体化创作体验。`,
+    copy.description,
     ``,
-    summaryLines ? `**分幕看点：**\n${summaryLines}\n` : '',
-    `**话题标签（可直接复制）：**`,
-    `${hashtags.join(' ')}`,
+    summaryLines ? `**分段看点：**\n${summaryLines}\n` : '',
+    hashtags.length ? `**话题标签（可直接复制）：**` : '',
+    hashtags.length ? `${hashtags.join(' ')}` : '',
     ``,
-    `## 3. 内容合规与字体版权说明（平台审核声明）`,
-    `- **AI 合成声明**：${notice.endNoticeBody}`,
-    `- **角标状态**：已在合成器层强制挂载 \`${notice.badgeText}\` 与片尾声明`,
-    `- **商用字体授权**：采用随包分发的 **SIL Open Font License 1.1** 开源字体（Noto Sans SC / Source Han Serif SC），可安全用于商业投放与平台分发`,
+    `## 3. 内容说明（平台审核时可能用到）`,
+    `- **AI 内容说明**：${notice.endNoticeAiBody}。发布时请按平台要求勾选「含 AI 生成内容」类标识。`,
+    `- **画面标识**：${markLine.length ? `已带${markLine.join('和')}` : '画面里没有 AI 角标和片尾声明（可在「画面规格」里打开）'}`,
+    `- **字体授权**：画面文字使用随插件提供的 **SIL Open Font License 1.1** 开源字体（Noto Sans SC / Source Han Serif SC），可用于商业发布`,
     qaData?.loudness?.integratedLufs != null
       ? `- **音频响度与质检**：${qaData.loudness.integratedLufs} LUFS · 峰值 ${qaData.loudness.truePeakDbtp} dBTP · 安全区预检 ${qaData.safeZonePreflight?.passed ? '通过' : '已标记建议'}`
       : '',
@@ -186,11 +221,7 @@ export async function exportPublishPack({
       snapshotPath: packSnap,
       metaPath,
     },
-    suggestedTitles: [
-      `${titleBase}：从想法到成片究竟有多快？`,
-      `${titleBase} 全流程拆解 (${Math.round(durSec)} 秒高能版)`,
-      `${titleBase} · 帧级动态视觉实测`,
-    ],
+    suggestedTitles: copy.titles,
     hashtags,
     cover: existsSync(coverPng) ? cover : null,
     complianceNotice: notice.endNoticeBody,

@@ -6,6 +6,7 @@ import { readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
+import { brandForClient } from '../../../../shared/brand.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const srcDir = join(here, 'src')
@@ -26,6 +27,10 @@ for (const f of files) {
       continue
     }
     jsParts.push(`/* ---- ${f} ---- */\ntry {\n${text}\n} catch (err) {\n  console.error('[PK] module ${f} failed to load', err)\n}\n`)
+    // right after the core: the product name and credits (PK.BRAND), generated from packages/shared/brand.js
+    if (f === '00-core.js') {
+      jsParts.push(`/* ---- brand (generated from packages/shared/brand.js) ---- */\ntry {\n  if (window.PK && !window.PK.BRAND) window.PK.BRAND = Object.freeze(${JSON.stringify(brandForClient())})\n} catch (err) {\n  console.error('[PK] brand failed to load', err)\n}\n`)
+    }
   } else if (f.endsWith('.css')) {
     cssParts.push(`/* ---- ${f} ---- */\n${text}\n`)
   }

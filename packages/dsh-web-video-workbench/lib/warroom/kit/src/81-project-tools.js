@@ -1885,19 +1885,23 @@
     )
 
     const a = data && data.authorInfo
-    const authorText = a ? `作者：${a.name} · QQ：${a.qq} · 微信：${a.wechat} · 邮箱：${a.email} · 官方仓库：${a.github}（${a.license} 开源）` : ''
+    const authorText = a
+      ? `${a.copyright ? `${a.copyright} · ` : ''}${a.studioFullName ? `出品：${a.studioFullName} · ` : ''}原创作者：${a.name}${a.nameZh ? ` (${a.nameZh})` : ''} · QQ：${a.qq} · 微信：${a.wechat} · 邮箱：${a.email} · 官方仓库：${a.github}（${a.license} 开源）`
+      : ''
     const authorSec = a
       ? ui.section(
-          { title: '原创作者署名与开源声明', en: 'AUTHOR · LICENSE', icon: 'user', actions: [copyBtn(authorText, { label: '复制署名', what: '作者署名' })] },
+          { title: '出品与原创作者署名', en: 'STUDIO · AUTHOR · LICENSE', icon: 'user', actions: [copyBtn(authorText, { label: '复制署名', what: '署名' })] },
           ui.kv([
-            ['作者', a.name],
+            ...(a.studioFullName ? [['出品', `${a.studio || ''} · ${a.studioFullName}`]] : []),
+            ['原创作者', a.nameZh ? `${a.name} (${a.nameZh})` : a.name],
             ['QQ', a.qq],
             ['微信', a.wechat],
             ['邮箱', a.email],
             ['官方仓库', a.github],
             ['开源协议', a.license ? `${a.license}（开源免费）` : ''],
+            ...(a.copyright ? [['版权', a.copyright]] : []),
           ]),
-          a.notice ? ui.hint(a.notice) : null,
+          a.origin ? ui.hint(a.origin) : a.notice ? ui.hint(a.notice) : null,
         )
       : null
 
@@ -2064,6 +2068,8 @@
     visual3dMode: '视效偏好',
     aiBadgeEnabled: 'AI 角标',
     aiBadgePosition: 'AI 角标',
+    endNotice: '片尾声明',
+    endNoticeCredit: '片尾署名',
     aiMeta: 'AI 生成记录',
     directorMeta: '导演记录',
     audience: '目标观众',

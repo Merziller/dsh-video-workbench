@@ -1,6 +1,6 @@
 /**
  * @dsh-video/tool-media — 影核广场 · 隐私闸门 (privacy gate for everything that leaves this computer through the plaza)
- * Copyright (c) 2026 Merziller (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨) (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
  *
  * Used by 投稿包 (user submissions), `plaza add` (the author's own publications) and `plaza review` (the author's check of
  * a received package). Two layers:

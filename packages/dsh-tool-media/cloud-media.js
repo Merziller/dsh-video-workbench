@@ -1,6 +1,6 @@
 /**
  * @dsh-video/tool-media — Optional BYOK Cloud AI Media Generation Hub (Image · Video · Music/Audio + Open Custom HTTP Protocol)
- * Copyright (c) 2026 Merziller (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
+ * Copyright (c) 2026 绍兴市柯桥区禾杨智绘软件开发工作室 & Merziller (子墨) (QQ: 1411574209 | WeChat: Merziller | Email: k26789228@gmail.com)
  *
  * 100% Optional BYOK connectors:
  *   - Image : Volcengine 即梦 Seedream · OpenAI/Flux Compatible · BFL Flux Pro · Fal.ai Flux · Kling Image · Custom HTTP Protocol

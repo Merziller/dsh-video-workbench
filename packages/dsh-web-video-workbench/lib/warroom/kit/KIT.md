@@ -40,6 +40,7 @@ Architecture:
 | `src/70-settings.js` | panel agent C | `keys` (设置 · 模型与密钥), `voices` (配音中心), `cloud` (云端媒体), `avatar` (数字人), `hardware` (算力体检) |
 | `src/80-ops.js` | panel agent D | `tasks` (任务中心), `plaza` (影核广场), `reference` (参考复刻), `teleprompter` (提词器录制) |
 | `src/81-project-tools.js` | panel agent E | `export` (发布包导出), `brand` (品牌套件), `history` (版本历史与工程安全) |
+| (generated) | `build.mjs` | `PK.BRAND` — product short name 「禾杨视频工坊」, studio, original author, contacts, dual copyright and footer line, written into kit.js right after `00-core.js` from `packages/shared/brand.js` (never hard-code product names or credits in panels; read `PK.BRAND`) |
 | `src/kit.css` | coordinator | structural base styles + `--pk-*` variables |
 | skin CSS / chrome | skin agents | inside each skin document (and its build sources) |
 
@@ -68,7 +69,7 @@ data refresh), `projectFlags`. Subscribe with `PK.on('state', (st, prev) => …)
 `setDirector` patch keys: `topic, engine, creationMode('ai-coded'|'fast-draft'), aspectRatio(+'custom'), quality(+'custom'), fps,
 durationMode, targetDurationSec, narrationMode, bgmMode, pacingMode, style, voiceId, avatarEnabled, avatarLayout, displayTitle,
 genre, genreLabel, directorNotes, contentOutline(string[]), bgmTtsPrompt, targetPlatform, customWidth, customHeight,
-aiBadgeEnabled, aiBadgePosition, aiBadgeText, visual3dMode, visualReview, visualReviewFine, figureStyleChoice, figureStyleChoiceNote,
+aiBadgeEnabled, aiBadgePosition, aiBadgeText, endNotice, endNoticeCredit, visual3dMode, visualReview, visualReviewFine, figureStyleChoice, figureStyleChoiceNote,
 useDraftReference, speechTempo, useHostVocal, aiAuthorCode, trimClipSec, clipSpeedMult` (validated by the host; invalid
 values are ignored). `setAvatar` keys: `enabled, mode, layout,
 presetId, sourcePath, voiceSamplePath, chromaKeyColor`.
